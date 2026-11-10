@@ -7,6 +7,11 @@ import {
   checkGeneratedAgents,
   loadCanonicalSpecs,
 } from "../../scripts/lib/canonical.ts";
+import {
+  buildSkillAdapterFiles,
+  checkGeneratedSkills,
+  loadCanonicalSkillSpecs,
+} from "../../scripts/lib/canonical-skills.ts";
 import { checkContracts } from "../../scripts/lib/contracts.ts";
 import { checkPluginManifest } from "../../scripts/lib/json-config.ts";
 import { checkMarkdownLinks } from "../../scripts/lib/markdown-links.ts";
@@ -85,6 +90,7 @@ describe("repository foundation", () => {
     expect(manifest.name).toBe("frontier-engineer");
     expect(manifest.name).toBe(pkg.name);
     expect(manifest.version).toBe(pkg.version);
+    expect(manifest.version).toBe("0.3.0");
   });
 
   it("does not ship unverified optional configs", () => {
@@ -101,6 +107,14 @@ describe("repository foundation", () => {
     expect(checkAdapterRegistry(root)).toEqual([]);
   });
 
+  it("ships ten canonical skills and twenty matching generated files", () => {
+    const { specs, findings } = loadCanonicalSkillSpecs(root);
+    expect(findings).toEqual([]);
+    expect(specs).toHaveLength(10);
+    expect(buildSkillAdapterFiles(root).size).toBe(20);
+    expect(checkGeneratedSkills(root)).toEqual([]);
+  });
+
   it("passes the handoff and evaluation contract checks", () => {
     expect(checkContracts(root)).toEqual([]);
   });
@@ -115,16 +129,28 @@ describe("repository foundation", () => {
     }
   });
 
-  it("indexes every Phase 2 document", () => {
+  it("indexes every Phase 1, Phase 2, and Phase 3 document", () => {
     const index = fs.readFileSync(path.join(root, "docs", "README.md"), "utf8");
     for (const name of [
+      "01-PROJECT-OVERVIEW.md",
+      "02-TECHNOLOGY-STACK.md",
+      "03-SYSTEM-ARCHITECTURE.md",
       "04-AGENT-SPECIFICATIONS.md",
       "05-AGENT-COORDINATION.md",
       "06-AGENT-COMMUNICATION.md",
       "07-AGENT-PORTABILITY.md",
       "08-AGENT-EVALUATION.md",
-      "09-ENGINEERING-PRINCIPLES.md",
+      "09-SKILLS-ARCHITECTURE.md",
+      "10-SKILL-SPECIFICATIONS.md",
+      "11-SKILL-ACTIVATION.md",
+      "12-SKILL-AGENT-INTEGRATION.md",
+      "13-SKILL-PORTABILITY.md",
+      "14-ENGINEERING-PRINCIPLES.md",
+      "15-REPOSITORY-STRUCTURE.md",
+      "24-OFFICIAL-FORMAT-VERIFICATION.md",
+      "adr/ADR-001-foundation.md",
       "adr/ADR-002-agent-system.md",
+      "adr/ADR-003-skills-system.md",
     ]) {
       expect(index, name).toContain(name);
     }

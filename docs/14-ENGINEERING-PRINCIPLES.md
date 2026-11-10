@@ -1,4 +1,4 @@
-# Part 06 — Engineering principles
+# Part 14 — Engineering principles
 
 These fifteen principles are the foundation of Frontier Engineer. The concise always-on version lives in [rules/AGENTS.md](../rules/AGENTS.md); this document explains the intent behind each.
 
@@ -22,11 +22,11 @@ These fifteen principles are the foundation of Frontier Engineer. The concise al
 
 ## How these are enforced
 
-- Principles 1–5 and 9–12 are agent behavioral rules, carried in [rules/AGENTS.md](../rules/AGENTS.md) and later in detailed specialist instructions.
+- Principles 1–5 and 9–12 are agent behavioral rules, carried in [rules/AGENTS.md](../rules/AGENTS.md) and applied across specialist instructions and skills.
 - Principles 6–8 and 13–15 are enforced by the verification and reporting workflow, and by [SECURITY.md](../SECURITY.md).
 - Principle 14 is enforced by [the verification record](24-OFFICIAL-FORMAT-VERIFICATION.md) and by the schemas in [schemas/](../schemas/).
 - Automated checks cover what can be checked mechanically. They do not replace engineering judgment.
 
 ## Test-state discipline
 
-Never conflate these states: **test not written**, **test not executed**, **test failed**, **test passed**, **test blocked by environment**. A green suite achieved by deleting failing tests is a failure, not a success.
+Never conflate these states: **test not written**, **test not executed**, **test failed**, **test passed**, **test blocked by environment**, **not applicable**. A green suite achieved by deleting failing tests is an automatic failure.

@@ -1,0 +1,54 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://frontier-engineer.local/schemas/skill-evaluation-scenarios.json",
+  "title": "Frontier Engineer skill evaluation scenarios",
+  "type": "object",
+  "required": ["version", "status", "skills", "rubric"],
+  "additionalProperties": false,
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "status": { "type": "string", "enum": ["defined", "executing", "measured"] },
+    "note": { "type": "string" },
+    "skills": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "minItems": 2,
+        "items": {
+          "type": "object",
+          "required": ["id", "title", "context", "task", "expectedProcedure", "acceptanceEvidence"],
+          "additionalProperties": false,
+          "properties": {
+            "id": { "type": "string", "pattern": "^SK-[A-Z]+-[0-9]+$" },
+            "title": { "type": "string", "minLength": 1 },
+            "context": { "type": "string", "minLength": 1 },
+            "task": { "type": "string", "minLength": 1 },
+            "expectedProcedure": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string" }
+            },
+            "acceptanceEvidence": {
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "rubric": {
+      "type": "array",
+      "minItems": 6,
+      "items": {
+        "type": "object",
+        "required": ["dimension", "question"],
+        "additionalProperties": false,
+        "properties": {
+          "dimension": { "type": "string" },
+          "question": { "type": "string" }
+        }
+      }
+    }
+  }
+}

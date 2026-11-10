@@ -1,8 +1,8 @@
 # Frontier Engineer
 
-An AI software-engineering **agent system** distributed as a Google Antigravity plugin. It packages a coordinating agent, five specialist subagents, reusable skills, persistent rules, and verification tooling into one versioned, installable unit.
+An AI software-engineering **agent system** distributed as a Google Antigravity plugin. It packages a coordinating agent, five specialist subagents, ten reusable engineering skills, persistent rules, and verification tooling into one versioned, installable unit.
 
-> **Status: Phase 2 — Specialized agent system.** Six canonical agent specifications and their generated Antigravity adapters are in place, along with the handoff contract, coordination policy, evaluation scenarios, and portability architecture. The ten skills (Phase 3), MCP integrations (Phase 5), and hooks (Phase 6) are intentionally not implemented yet.
+> **Status: Phase 3 — Portable engineering skills system (v0.3.0).** Ten canonical engineering skill specifications and their generated Antigravity adapters are in place alongside twenty deep technical reference guides, twenty defined evaluation scenarios, and comprehensive validation tooling. The full rule set (Phase 4), MCP integrations (Phase 5), and hooks (Phase 6) are intentionally not implemented yet.
 
 ## What this is
 
@@ -21,25 +21,44 @@ The system is built around one rule: **never claim work is done without evidence
 | `qa-engineer`             | Test strategy, execution, and honest verification reporting           | subagent           |
 | `design-engineer`         | UI/UX, accessibility, interaction states, design systems              | subagent           |
 
-Agent intelligence lives in platform-independent canonical specs under [specs/agents/](specs/agents/). A generator produces the loader-visible Antigravity files in [agents/](agents/) from those specs, so instructions are never duplicated per platform. See [the agent specifications](docs/04-AGENT-SPECIFICATIONS.md) and [the portability architecture](docs/07-AGENT-PORTABILITY.md).
+Agent intelligence lives in platform-independent canonical specs under [specs/agents/](specs/agents/). A generator produces the loader-visible Antigravity files in [agents/](agents/) from those specs. See [the agent specifications](docs/04-AGENT-SPECIFICATIONS.md) and [the portability architecture](docs/07-AGENT-PORTABILITY.md).
+
+## The ten engineering skills
+
+| Skill                     | Focus                                                                          | Primary Agents                         |
+| ------------------------- | ------------------------------------------------------------------------------ | -------------------------------------- |
+| `architecture`            | System decomposition, monolith vs. microservices, boundaries, ADRs             | Architect, Coordinator                 |
+| `advanced-debugging`      | Root-cause analysis, async race conditions, minimal fixes, regression tests    | Implementation, QA, Coordinator        |
+| `security-audit`          | OWASP Top 10, IDOR, injection, token security, secret hygiene                  | Security Auditor, Coordinator          |
+| `code-review`             | Diff analysis, defect identification, P0-P3 prioritization, constructive fixes | Coordinator, Security, QA              |
+| `frontend-engineering`    | React, Next.js, state, 10 interaction states, WCAG AA accessibility            | Implementation, Design, Coordinator    |
+| `backend-engineering`     | REST/GraphQL APIs, server-side auth, persistence transactions, resilience      | Implementation, Architect, Coordinator |
+| `testing-engineering`     | Testing pyramid, unit/integration/E2E, six test states, test isolation         | QA, Implementation, Coordinator        |
+| `deep-research`           | Authoritative documentation research, source hierarchy (Tiers 1-5)             | Architect, Coordinator, Security       |
+| `database-engineering`    | Relational 3NF, B-tree composite indexes, zero-downtime migrations             | Architect, Implementation, Coordinator |
+| `performance-engineering` | Baseline benchmarking, Web Vitals, event loop profiling, bundle optimization   | Implementation, Architect, QA          |
+
+Canonical skill specifications live under [specs/skills/](specs/skills/) and deep references under [specs/skills/references/](specs/skills/references/). A generator produces the loader-visible Antigravity skills in [skills/](skills/). See [skills architecture](docs/09-SKILLS-ARCHITECTURE.md) and [specifications](docs/10-SKILL-SPECIFICATIONS.md).
 
 ## Repository layout
 
-| Path                                                               | Purpose                                                       |
-| ------------------------------------------------------------------ | ------------------------------------------------------------- |
-| [plugin.json](plugin.json)                                         | Antigravity plugin manifest (verified schema)                 |
-| [agents/](agents/)                                                 | Generated Antigravity agent definitions (do not edit by hand) |
-| [specs/agents/](specs/agents/)                                     | Canonical platform-independent agent specifications           |
-| [specs/adapters/](specs/adapters/README.md)                        | Adapter registry and per-platform requirements                |
-| [specs/evaluation/scenarios.json](specs/evaluation/scenarios.json) | Defined evaluation scenarios (unscored)                       |
-| [skills/](skills/)                                                 | Reusable engineering skills — Phase 3                         |
-| [rules/](rules/)                                                   | Always-on engineering principles — Phase 4 extends            |
-| [scripts/](scripts/)                                               | TypeScript validation utilities and the agent generator       |
-| [schemas/](schemas/)                                               | Local schema transcriptions and contract schemas              |
-| [tests/](tests/)                                                   | Unit and integration tests                                    |
-| [docs/](docs/README.md)                                            | Product documentation                                         |
-| [assets/](assets/)                                                 | Plugin logo                                                   |
-| [frontier-engineer-docs/](frontier-engineer-docs/fe/README.md)     | Original 26-part specification archive (unmodified reference) |
+| Path                                                                           | Purpose                                                       |
+| ------------------------------------------------------------------------------ | ------------------------------------------------------------- |
+| [plugin.json](plugin.json)                                                     | Antigravity plugin manifest (verified schema)                 |
+| [agents/](agents/)                                                             | Generated Antigravity agent definitions (do not edit by hand) |
+| [specs/agents/](specs/agents/)                                                 | Canonical platform-independent agent specifications           |
+| [skills/](skills/)                                                             | Generated Antigravity skill definitions and references        |
+| [specs/skills/](specs/skills/)                                                 | Canonical platform-independent skill specifications           |
+| [specs/adapters/](specs/adapters/README.md)                                    | Adapter registry and per-platform requirements                |
+| [specs/evaluation/scenarios.json](specs/evaluation/scenarios.json)             | Defined agent evaluation scenarios (unscored)                 |
+| [specs/evaluation/skill-scenarios.json](specs/evaluation/skill-scenarios.json) | Defined skill evaluation scenarios (unscored)                 |
+| [rules/](rules/)                                                               | Always-on engineering principles — Phase 4 extends            |
+| [scripts/](scripts/)                                                           | TypeScript validation utilities and code generators           |
+| [schemas/](schemas/)                                                           | Local schema transcriptions and contract schemas              |
+| [tests/](tests/)                                                               | Unit and integration tests                                    |
+| [docs/](docs/README.md)                                                        | Product documentation                                         |
+| [assets/](assets/)                                                             | Plugin logo                                                   |
+| [frontier-engineer-docs/](frontier-engineer-docs/fe/README.md)                 | Original 26-part specification archive (unmodified reference) |
 
 ## Getting started
 
@@ -50,11 +69,13 @@ npm install
 npm run verify
 ```
 
-`npm run verify` runs the type check, full validation, unit tests, formatting check, and Markdown lint. After editing a canonical agent spec, regenerate the adapters:
+`npm run verify` runs the type check, full validation, unit tests, formatting check, and Markdown lint. After editing canonical agent or skill specs, regenerate the adapters:
 
 ```bash
 npm run generate:agents
 npm run generate:agents -- --check
+npm run generate:skills
+npm run generate:skills -- --check
 ```
 
 To validate the plugin itself with the installed Antigravity CLI:
@@ -67,23 +88,17 @@ The CLI binary is `agy`. On Windows it is installed at `~/.gemini/bin/agy.exe`; 
 
 ## Documentation
 
-- [Agent specifications](docs/04-AGENT-SPECIFICATIONS.md)
-- [Agent coordination](docs/05-AGENT-COORDINATION.md)
-- [Agent communication](docs/06-AGENT-COMMUNICATION.md)
-- [Agent portability](docs/07-AGENT-PORTABILITY.md)
-- [Agent evaluation](docs/08-AGENT-EVALUATION.md)
-- [Project overview](docs/01-PROJECT-OVERVIEW.md), [Technology stack](docs/02-TECHNOLOGY-STACK.md), [System architecture](docs/03-SYSTEM-ARCHITECTURE.md)
-- [Engineering principles](docs/09-ENGINEERING-PRINCIPLES.md)
-- [Repository structure](docs/15-REPOSITORY-STRUCTURE.md), [Official format verification](docs/24-OFFICIAL-FORMAT-VERIFICATION.md)
-- [ADR-001](docs/adr/ADR-001-foundation.md), [ADR-002](docs/adr/ADR-002-agent-system.md), [Documentation index](docs/README.md)
-
-Project policies: [Security](SECURITY.md), [Contributing](CONTRIBUTING.md), [Changelog](CHANGELOG.md), [License](LICENSE).
+- **Agents:** [Specifications](docs/04-AGENT-SPECIFICATIONS.md), [Coordination](docs/05-AGENT-COORDINATION.md), [Communication](docs/06-AGENT-COMMUNICATION.md), [Portability](docs/07-AGENT-PORTABILITY.md), [Evaluation](docs/08-AGENT-EVALUATION.md)
+- **Skills:** [Architecture](docs/09-SKILLS-ARCHITECTURE.md), [Specifications](docs/10-SKILL-SPECIFICATIONS.md), [Activation](docs/11-SKILL-ACTIVATION.md), [Agent integration](docs/12-SKILL-AGENT-INTEGRATION.md), [Portability](docs/13-SKILL-PORTABILITY.md)
+- **Foundation:** [Project overview](docs/01-PROJECT-OVERVIEW.md), [Technology stack](docs/02-TECHNOLOGY-STACK.md), [System architecture](docs/03-SYSTEM-ARCHITECTURE.md), [Engineering principles](docs/14-ENGINEERING-PRINCIPLES.md), [Repository structure](docs/15-REPOSITORY-STRUCTURE.md), [Official format verification](docs/24-OFFICIAL-FORMAT-VERIFICATION.md)
+- **Decisions:** [ADR-001 Foundation](docs/adr/ADR-001-foundation.md), [ADR-002 Agent system](docs/adr/ADR-002-agent-system.md), [ADR-003 Skills system](docs/adr/ADR-003-skills-system.md), [Documentation index](docs/README.md)
+- **Policies:** [Security](SECURITY.md), [Contributing](CONTRIBUTING.md), [Changelog](CHANGELOG.md), [License](LICENSE).
 
 ## Verified vs proposed
 
-`agy plugin validate --strict .` recognises six agents and one rule with zero findings. Everything that claims Antigravity compatibility is recorded in [the verification record](docs/24-OFFICIAL-FORMAT-VERIFICATION.md) with sources and dates.
+`agy plugin validate --strict .` recognises ten skills, six agents, and one rule with zero findings. Everything that claims Antigravity compatibility is recorded in [the verification record](docs/24-OFFICIAL-FORMAT-VERIFICATION.md) with sources and dates.
 
-**Runtime invocation, actual specialist delegation, and handoff round trips have not been tested.** No non-Antigravity adapter is implemented, and no evaluation score has been assigned. Installation and runtime discovery remain deliberately deferred.
+**Runtime invocation, actual specialist delegation, and skill activation in live user sessions have not been tested.** No non-Antigravity adapter is implemented, and no evaluation score has been assigned. Installation and runtime discovery remain deliberately deferred.
 
 ## License
 

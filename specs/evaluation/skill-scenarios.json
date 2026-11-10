@@ -1,0 +1,397 @@
+{
+  "version": 1,
+  "status": "defined",
+  "note": "Skill evaluation scenarios are defined as reproducible behavioral benchmarks. Per Frontier Engineer honesty rules, no score or pass rate is claimed until evaluations are executed with recorded model runs.",
+  "skills": {
+    "architecture": [
+      {
+        "id": "SK-ARCH-1",
+        "title": "Evaluate Monolith vs. Microservice Architecture for an E-Commerce Platform",
+        "context": "A retail application anticipates scaling from 10k to 500k monthly active users. The team consists of 5 developers.",
+        "task": "Evaluate whether to migrate from the current modular monolith to microservices, define service boundaries, and produce an ADR.",
+        "expectedProcedure": [
+          "Inspect team size and operational overhead constraints",
+          "Compare modular monolith vs. microservices across deployment complexity, data consistency, and operational cost",
+          "Recommend maintaining a modular monolith with clearly isolated bounded contexts",
+          "Record decisions in an ADR with trade-offs and consequences"
+        ],
+        "acceptanceEvidence": [
+          "Documented trade-off matrix citing operational cost",
+          "Clear recommendation avoiding premature distributed system complexity",
+          "Formatted ADR conforming to the standard template"
+        ]
+      },
+      {
+        "id": "SK-ARCH-2",
+        "title": "Design Idempotent Asynchronous Webhook Processing Pipeline",
+        "context": "A payment integration receives external webhooks from Stripe that may be delivered out-of-order or duplicated.",
+        "task": "Design an event-driven webhook processing pipeline with idempotency guarantees, dead-letter queuing, and database isolation.",
+        "expectedProcedure": [
+          "Define webhook ingestion endpoint returning fast 200 OK after signature verification",
+          "Specify message queue transport with Dead Letter Queue (DLQ) for poison pills",
+          "Implement deduplication using idempotency key table inside database transaction",
+          "Document failure isolation and recovery mechanisms"
+        ],
+        "acceptanceEvidence": [
+          "Explicit sequence diagram or step-by-step data flow",
+          "Idempotency table schema with unique constraint on event ID",
+          "DLQ retry policy with exponential backoff and jitter"
+        ]
+      }
+    ],
+    "advanced-debugging": [
+      {
+        "id": "SK-DEBUG-1",
+        "title": "Diagnose Intermittent Race Condition in User Session Hydration",
+        "context": "Users occasionally encounter 'Cannot read properties of undefined (reading user)' immediately after login during fast navigation.",
+        "task": "Isolate the root cause of the race condition, formulate a testable hypothesis, implement a minimal fix, and author a regression test.",
+        "expectedProcedure": [
+          "Examine call stack and timing sequence between auth token resolution and UI mount",
+          "Formulate hypothesis: navigation occurs before auth state provider finishes async token verification",
+          "Implement state guard ensuring auth loading state blocks protected route rendering",
+          "Author regression test proving failure before fix and clean pass after"
+        ],
+        "acceptanceEvidence": [
+          "Hypothesis statement with clear falsification criteria",
+          "Minimal source code patch without touching unrelated components",
+          "Passing automated regression test"
+        ]
+      },
+      {
+        "id": "SK-DEBUG-2",
+        "title": "Isolate Database Connection Pool Starvation Under Heavy Concurrent Traffic",
+        "context": "Under load testing, API response times degrade from 50ms to 30s before failing with connection acquisition timeout.",
+        "task": "Inspect database interaction patterns, locate unreleased connections or slow queries holding locks, and apply remediation.",
+        "expectedProcedure": [
+          "Inspect transaction lifecycle and error handling code",
+          "Identify code path where connection is acquired but not released on external API failure",
+          "Enforce connection release in a structured finally block",
+          "Verify connection pool metrics under simulated concurrency"
+        ],
+        "acceptanceEvidence": [
+          "Identified exact file and line number failing to release connection",
+          "Code patch utilizing try/finally or connection pool manager",
+          "Regression test confirming pool returns to idle state"
+        ]
+      }
+    ],
+    "security-audit": [
+      {
+        "id": "SK-SEC-1",
+        "title": "Audit Multi-Tenant REST API for Insecure Direct Object References (IDOR)",
+        "context": "A multi-tenant SaaS application exposes endpoints such as GET /api/v1/invoices/:invoiceId to authenticated users.",
+        "task": "Audit the route handler and database queries for IDOR vulnerabilities, construct an exploit scenario, and implement tenant-scoped query filtering.",
+        "expectedProcedure": [
+          "Inspect controller and repository query logic for /api/v1/invoices/:invoiceId",
+          "Identify lack of tenant_id verification in WHERE clause",
+          "Construct attack scenario showing how User A accesses Tenant B invoice",
+          "Remediate by scoping query to AND tenant_id = :auth_tenant_id",
+          "Verify remediation with negative test"
+        ],
+        "acceptanceEvidence": [
+          "Security finding using standard template with Critical/High severity",
+          "Step-by-step exploit walkthrough",
+          "Remediated query and automated 403/404 tenant isolation test"
+        ]
+      },
+      {
+        "id": "SK-SEC-2",
+        "title": "Detect Hardcoded API Credentials and Insecure JWT Cookie Attributes",
+        "context": "A repository contains a backend authentication module setting session cookies and configuring external payment gateways.",
+        "task": "Scan for hardcoded secrets, inspect JWT cookie flags, and recommend secure configuration.",
+        "expectedProcedure": [
+          "Scan repository for committed API keys or JWT signing secrets",
+          "Inspect cookie options in Set-Cookie header for missing HttpOnly, Secure, and SameSite flags",
+          "Document severity and exploit scenario (XSS cookie theft, CSRF)",
+          "Provide patch migrating secrets to process.env and adding secure cookie flags"
+        ],
+        "acceptanceEvidence": [
+          "Finding specifying cookie hijacking vulnerability",
+          "Code patch configuring HttpOnly, Secure, SameSite=Lax",
+          "Verification that secrets are read from environment variables"
+        ]
+      }
+    ],
+    "code-review": [
+      {
+        "id": "SK-CR-1",
+        "title": "Review Pull Request Containing High-Risk SQL Migration and Query Concatenation",
+        "context": "A developer submits a pull request introducing user search functionality with raw string concatenation and an unindexed table filter.",
+        "task": "Perform a rigorous code review, classify findings by priority (P0 to P3), and provide actionable remediation code.",
+        "expectedProcedure": [
+          "Inspect PR diff and identify SQL injection vulnerability on search input",
+          "Identify missing index causing sequential scans on search query",
+          "Classify SQL injection as P0 Blocker and missing index as P1 Major",
+          "Deliver constructive review comments with parameterized query replacement"
+        ],
+        "acceptanceEvidence": [
+          "Clear classification separating P0 Blocker from minor nits",
+          "Accurate explanation of SQL injection vulnerability",
+          "Drop-in parameterized query code snippet"
+        ]
+      },
+      {
+        "id": "SK-CR-2",
+        "title": "Review Frontend Refactoring with Deleted Failing Tests and Missing Error States",
+        "context": "A pull request refactors a form component, but comments out two failing validation tests and omits loading and error states.",
+        "task": "Review the changeset, reject the weakening of tests, and require complete interaction states.",
+        "expectedProcedure": [
+          "Identify commented-out test assertions in diff",
+          "Identify missing loading indicator and unhandled API error state",
+          "Classify test weakening as P0 Blocker violation of testing discipline",
+          "Provide constructive feedback requiring restored tests and complete UI states"
+        ],
+        "acceptanceEvidence": [
+          "Explicit rejection of deleted/commented-out tests",
+          "Requirement to implement all 10 interaction states",
+          "Actionable review feedback without stylistic bikeshedding"
+        ]
+      }
+    ],
+    "frontend-engineering": [
+      {
+        "id": "SK-FE-1",
+        "title": "Implement an Accessible, Responsive Multi-Step Checkout Form",
+        "context": "A web application requires a checkout flow covering billing, shipping, and payment confirmation with WCAG AA compliance.",
+        "task": "Build the multi-step form handling all ten interaction states, accessible keyboard navigation, and responsive adaptation from 320px to 1440px.",
+        "expectedProcedure": [
+          "Inspect existing design tokens, typography, and button/input components",
+          "Author semantic form elements with explicit labels and error descriptions",
+          "Implement default, hover, focus, active, disabled, loading, empty, error, success, and mobile states",
+          "Verify keyboard focus management and WCAG AA contrast ratios",
+          "Author component tests verifying validation and state transitions"
+        ],
+        "acceptanceEvidence": [
+          "Component code with typed props and zero any types",
+          "Visible high-contrast focus rings and aria-invalid error bindings",
+          "Responsive CSS avoiding horizontal overflow on 320px viewports"
+        ]
+      },
+      {
+        "id": "SK-FE-2",
+        "title": "Eliminate Cumulative Layout Shift (CLS) and Prevent Hydration Mismatch in Data Table",
+        "context": "A dashboard data table causes page layout jumps (CLS > 0.25) during data fetching and throws React hydration warnings.",
+        "task": "Diagnose the layout shift, implement skeleton placeholders reserving layout dimensions, and resolve the hydration mismatch.",
+        "expectedProcedure": [
+          "Inspect table rendering lifecycle and locate client-only window/date reference causing hydration error",
+          "Design skeleton placeholder matching exact table row heights and column widths",
+          "Ensure deterministic server and client initial render output",
+          "Verify zero layout shift and clean console output"
+        ],
+        "acceptanceEvidence": [
+          "Skeleton component preserving exact table layout dimensions",
+          "Eliminated client-server hydration mismatch",
+          "Passing component tests confirming clean rendering"
+        ]
+      }
+    ],
+    "backend-engineering": [
+      {
+        "id": "SK-BE-1",
+        "title": "Implement Idempotent Financial Transaction API Endpoint",
+        "context": "A fintech backend requires a POST /api/v1/transfers endpoint to transfer funds between accounts with ACID guarantees.",
+        "task": "Build the transfer route handler with schema validation, idempotency key enforcement, server-side authorization, and atomic database transaction.",
+        "expectedProcedure": [
+          "Define strict request payload schema (amount, currency, sourceAccountId, destinationAccountId)",
+          "Check and record Idempotency-Key header in database to prevent double charging",
+          "Verify caller owns sourceAccountId at authorization middleware layer",
+          "Execute balance deduction and credit inside single atomic database transaction",
+          "Return RFC 7807 problem details on insufficient funds or invalid input"
+        ],
+        "acceptanceEvidence": [
+          "Controller and service code separating transport from business logic",
+          "Explicit transaction with row-level locking or optimistic concurrency",
+          "Integration test demonstrating duplicate request with same key returns cached response"
+        ]
+      },
+      {
+        "id": "SK-BE-2",
+        "title": "Design Resilient Third-Party Webhook Dispatcher with Circuit Breaker",
+        "context": "A backend service dispatches event notifications to customer webhooks that may time out or fail intermittently.",
+        "task": "Implement an asynchronous webhook dispatch worker with exponential backoff, jitter, timeout enforcement, and circuit breaking.",
+        "expectedProcedure": [
+          "Implement message queue worker consuming webhook events",
+          "Enforce 5-second HTTP request timeout on outbound calls",
+          "Implement retry policy with exponential backoff and randomized jitter",
+          "Route persistently failing endpoints to dead-letter queue after 5 attempts",
+          "Log structured telemetry with event IDs and attempt counts"
+        ],
+        "acceptanceEvidence": [
+          "Asynchronous worker code with timeout and retry loops",
+          "Dead-letter queue routing logic",
+          "Automated tests simulating downstream timeouts and proving retry limits"
+        ]
+      }
+    ],
+    "testing-engineering": [
+      {
+        "id": "SK-TE-1",
+        "title": "Author Unit and Integration Test Suite for Discount Pricing Engine",
+        "context": "A pricing module applies tiered volume discounts, promotional coupon codes, and regional tax calculations.",
+        "task": "Design and implement comprehensive unit and integration tests covering happy paths, edge cases, and boundary conditions.",
+        "expectedProcedure": [
+          "Extract acceptance criteria: tiers at 10, 50, 100 units; percentage and flat coupons; tax rates",
+          "Author unit tests for pricing calculation functions using boundary value analysis (9, 10, 11 units)",
+          "Author negative tests for expired coupons, negative quantities, and overflow numbers",
+          "Execute tests and record verified execution output with zero skipped tests"
+        ],
+        "acceptanceEvidence": [
+          "Deterministic test suite using Arrange-Act-Assert structure",
+          "Boundary testing covering discount thresholds",
+          "Execution log demonstrating 100% passing tests across all test cases"
+        ]
+      },
+      {
+        "id": "SK-TE-2",
+        "title": "Diagnose and Stabilize a Flaky Asynchronous E2E Test Suite",
+        "context": "An integration test suite fails intermittently on CI with 'Element not found within 5000ms' due to arbitrary sleep calls.",
+        "task": "Eliminate arbitrary sleep timers, replace with explicit state predicate waiting, and ensure deterministic cleanup.",
+        "expectedProcedure": [
+          "Inspect failing test and locate arbitrary setTimeout / sleep calls",
+          "Replace sleep calls with explicit waitForSelector or event-driven polling",
+          "Ensure database fixtures are truncated and reset in afterEach hook",
+          "Execute test suite 20 times in a loop to prove elimination of flakiness"
+        ],
+        "acceptanceEvidence": [
+          "Diff showing removal of artificial sleep statements",
+          "Explicit predicate polling implementation",
+          "Repeated test execution evidence showing 100% stability"
+        ]
+      }
+    ],
+    "deep-research": [
+      {
+        "id": "SK-DR-1",
+        "title": "Investigate Web Crypto API Compatibility Across Node.js, Cloudflare Workers, and Browsers",
+        "context": "A cryptographic token signing utility must run interchangeably across Node.js 22, Cloudflare Workers, and modern browsers.",
+        "task": "Research subtle API differences in globalThis.crypto.subtle, supported algorithms (Ed25519 vs ECDSA), and document compatibility.",
+        "expectedProcedure": [
+          "Consult Tier 1 official specifications (W3C Web Cryptography API, MDN, Node.js docs)",
+          "Verify algorithm support matrices across target runtimes",
+          "Identify Node.js specific prerequisites or runtime flags",
+          "Synthesize findings distinguishing verified runtime facts from assumptions, citing documentation"
+        ],
+        "acceptanceEvidence": [
+          "Compatibility matrix citing official documentation for each runtime",
+          "Explicit code example working across all target runtimes",
+          "Clear distinction between verified facts and assumptions"
+        ]
+      },
+      {
+        "id": "SK-DR-2",
+        "title": "Evaluate Migration from CommonJS to ECMAScript Modules (ESM) in a Shared Library",
+        "context": "An existing TypeScript package must be modernized from CommonJS to dual ESM/CJS or pure ESM without breaking downstream consumers.",
+        "task": "Research package.json exports field semantics, module resolution in TypeScript 5+, and document breaking change risks.",
+        "expectedProcedure": [
+          "Inspect official Node.js package.json exports specification and TypeScript moduleResolution guidelines",
+          "Analyze dual-package hazard risks (duplicate state in singleton instances)",
+          "Determine recommended package.json exports map configuration",
+          "Provide actionable migration guide with version-specific references"
+        ],
+        "acceptanceEvidence": [
+          "Verified package.json exports configuration snippet",
+          "Explanation of conditional exports and dual-package hazards",
+          "Authoritative citations to official Node.js documentation"
+        ]
+      }
+    ],
+    "database-engineering": [
+      {
+        "id": "SK-DB-1",
+        "title": "Design Composite Index and Optimize N+1 Query for Paginated Activity Feed",
+        "context": "An activity feed endpoint GET /api/v1/activities?userId=X&cursor=Y executes 50 individual SQL queries per page load taking 1.8s.",
+        "task": "Eliminate the N+1 query pattern using eager loading / joins, design an optimal composite index, and inspect execution plans.",
+        "expectedProcedure": [
+          "Inspect existing query log showing sequential single-record lookups in a loop",
+          "Refactor query to batch fetch related user and item records in a single query with IN clause",
+          "Design composite index on (user_id, created_at DESC, id DESC) for keyset pagination",
+          "Provide EXPLAIN ANALYZE plan proving transition from sequential scan to index scan"
+        ],
+        "acceptanceEvidence": [
+          "Refactored batch query code",
+          "DDL for composite B-tree index with justified column ordering",
+          "Query execution plan demonstrating sub-10ms execution"
+        ]
+      },
+      {
+        "id": "SK-DB-2",
+        "title": "Plan Zero-Downtime Column Rename on a 10-Million Row Production Table",
+        "context": "A production table with 10M records requires renaming customer_phone to contact_number without table locking or API downtime.",
+        "task": "Design a 3-phase Expand-Contract migration plan, author non-blocking migration scripts, and provide rollback steps.",
+        "expectedProcedure": [
+          "Design Phase 1: Add new column, dual-write trigger, deploy code writing to both and reading old",
+          "Design Phase 2: Background batch backfill historical data, switch application reads to new column",
+          "Design Phase 3: Drop legacy trigger and schedule column drop during maintenance window",
+          "Include non-blocking index creation and lock_timeout safety controls"
+        ],
+        "acceptanceEvidence": [
+          "Structured 3-phase migration plan with explicit rollback steps for each phase",
+          "DDL migration scripts containing lock_timeout guards",
+          "Backfill batch script with sleep throttling to prevent replication lag"
+        ]
+      }
+    ],
+    "performance-engineering": [
+      {
+        "id": "SK-PERF-1",
+        "title": "Profile and Optimize Frontend Bundle Size and Largest Contentful Paint (LCP)",
+        "context": "A web application bundle size is 3.8 MB, causing an initial page load LCP of 4.2 seconds on mobile 4G connections.",
+        "task": "Run bundle analysis, locate oversized dependencies, implement dynamic imports and code splitting, and measure savings.",
+        "expectedProcedure": [
+          "Establish baseline bundle size and LCP metrics",
+          "Inspect bundle report to identify heavy libraries (e.g. moment.js, full icons bundle, chart library)",
+          "Replace moment.js with date-fns or native Intl; dynamically import chart components with React.lazy",
+          "Measure bundle output after changes and calculate total kilobyte and percentage reduction"
+        ],
+        "acceptanceEvidence": [
+          "Baseline vs. post-optimization bundle size table",
+          "Code patch utilizing dynamic import() and tree-shakeable imports",
+          "Measurable bundle reduction (>50%) and improved LCP estimation"
+        ]
+      },
+      {
+        "id": "SK-PERF-2",
+        "title": "Eliminate Node.js Event Loop Lag Caused by Synchronous JSON Serialization",
+        "context": "A reporting API serializing 50MB JSON datasets blocks the single-threaded Node.js event loop for 1.5 seconds, freezing concurrent API requests.",
+        "task": "Profile the event loop lag, replace synchronous serialization with streaming transformation, and verify concurrency.",
+        "expectedProcedure": [
+          "Measure baseline event loop delay using perf_hooks or clinic.js under load",
+          "Identify JSON.stringify(giantPayload) as the CPU-bound blocking bottleneck",
+          "Refactor endpoint to stream response chunks using Node.js stream pipeline or ndjson",
+          "Re-run load test under concurrency to demonstrate sub-10ms event loop latency"
+        ],
+        "acceptanceEvidence": [
+          "Baseline profiling output demonstrating event loop freeze",
+          "Stream-based response implementation",
+          "Post-optimization benchmark showing continuous event loop responsiveness"
+        ]
+      }
+    ]
+  },
+  "rubric": [
+    {
+      "dimension": "Procedural Fidelity",
+      "question": "Did the agent follow the skill's defined step-by-step operating procedure rather than improvising generic actions?"
+    },
+    {
+      "dimension": "Technical Depth",
+      "question": "Does the output exhibit domain-specific engineering standards (e.g. ACID boundaries, WCAG contrast, OWASP vectors, B-tree composite ordering)?"
+    },
+    {
+      "dimension": "Evidence & Verification",
+      "question": "Are claims backed by verifiable evidence (execution logs, test passes, profiling benchmarks, authoritative documentation citations)?"
+    },
+    {
+      "dimension": "Minimal & Focused Intervention",
+      "question": "Did the solution touch only the code and components necessary without collateral refactoring or scope expansion?"
+    },
+    {
+      "dimension": "Boundary & Safety Respect",
+      "question": "Did the agent respect human approval gates, avoid destructive operations, and disclose all unresolved uncertainties?"
+    },
+    {
+      "dimension": "Honest Test-State Discipline",
+      "question": "Were test and verification states categorized truthfully without conflating passed, failed, blocked, or unexecuted states?"
+    }
+  ]
+}

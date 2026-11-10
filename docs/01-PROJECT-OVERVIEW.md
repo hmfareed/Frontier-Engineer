@@ -8,7 +8,7 @@
 | Category              | AI software-engineering agent system |
 | Distribution          | Google Antigravity plugin            |
 | Execution environment | Antigravity App, CLI, or IDE         |
-| Current version       | 0.2.0 (Phase 2 agent system)         |
+| Current version       | 0.3.0 (Phase 3 skills system)        |
 | Target release        | 1.0.0 (Phase 10)                     |
 
 ## Vision
@@ -49,12 +49,14 @@ Phase 1 established a clean, documented, tested, secure foundation compatible wi
 
 Phase 2 added six platform-independent canonical agent specifications, a generator that emits their Antigravity adapters, a structured handoff contract, delegation and conflict-prevention policies, a capability matrix, nineteen unscored evaluation scenarios, and adapter requirements for four other platforms. See [Part 04](04-AGENT-SPECIFICATIONS.md).
 
-Still deliberately deferred: the ten skills (Phase 3), the full rule set (Phase 4), MCP integrations (Phase 5), lifecycle hooks (Phase 6), project intelligence and memory (Phase 7), and release packaging (Phases 9–10).
+Phase 3 implemented ten platform-independent canonical skill specifications under `specs/skills/`, twenty deep technical reference guides under `specs/skills/references/`, a compiler emitting Antigravity skill adapters under `skills/`, twenty defined skill evaluation scenarios, and comprehensive validation tooling. See [Part 09](09-SKILLS-ARCHITECTURE.md) and [Part 10](10-SKILL-SPECIFICATIONS.md).
+
+Still deliberately deferred: the full rule set (Phase 4), MCP integrations (Phase 5), lifecycle hooks (Phase 6), project intelligence and memory (Phase 7), and release packaging (Phases 9–10).
 
 ## Current limitations
 
-- Installation and runtime invocation of the plugin's agents inside Antigravity have not been tested, although static discovery is verified.
-- Real specialist delegation and handoff round trips have not been exercised.
+- Installation and runtime invocation of the plugin's agents and skills inside Antigravity have not been tested in live user sessions, although static discovery is verified by the CLI.
+- Real specialist delegation, handoff round trips, and skill activation have not been exercised in live chat.
 - `mcp_config.json` and `hooks.json` are intentionally absent. Their schemas are available for validation when the components are added.
 - `tools` allowlists are not emitted; see [Part 04](04-AGENT-SPECIFICATIONS.md) for the reason.
 - No adapter other than Antigravity is implemented, and no evaluation score has been assigned.

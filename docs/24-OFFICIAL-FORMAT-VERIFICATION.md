@@ -65,6 +65,16 @@ These have **not** been tested and must not be claimed as working:
 
 The omission of `tools` is a deliberate, documented decision in [ADR-002](adr/ADR-002-agent-system.md), not an oversight.
 
+## Phase 3 additions (checked 2026-11-10)
+
+| Item                                                    | Source                                                           | Result                           | Note                                                                                               |
+| ------------------------------------------------------- | ---------------------------------------------------------------- | -------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Ten generated skill definitions discovered              | local `agy plugin validate --strict --json .`                    | **Confirmed**                    | `components.skills: 10`, `findings: []`, exit 0                                                    |
+| Progressive disclosure via `references/` subdirectory   | builtin `skills.md` (`agy-customizations`), local CLI validation | **Confirmed**                    | Relative markdown links resolve cleanly; validated by official CLI and local link checker          |
+| Canonical-first skills generation and drift check       | `scripts/generate-antigravity-skills.ts`, local test suite       | **Confirmed**                    | Compiles 10 canonical specs into 10 `SKILL.md` files + 10 reference guides; CI enforces zero drift |
+| Skill evaluation scenarios defined (20 scenarios)       | `specs/evaluation/skill-scenarios.json`                          | **Confirmed** (schema validated) | Status locked to `defined`; no empirical scores assigned                                           |
+| Runtime skill activation during live agent conversation | Antigravity agent runtime                                        | **Documented only**              | Verified by official discovery docs, not yet exercised in a recorded live user session             |
+
 ## Rules for future phases
 
 1. Record the exact URL and date checked for any new format claim.

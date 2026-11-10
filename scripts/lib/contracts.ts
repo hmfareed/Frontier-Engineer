@@ -1,4 +1,5 @@
 import { AGENT_IDS } from "./canonical.ts";
+import { SKILL_IDS } from "./canonical-skills.ts";
 import { parseJsonText, validateValueAgainstSchema } from "./json-config.ts";
 import { finding } from "./report.ts";
 import type { Finding } from "./types.ts";
@@ -6,6 +7,7 @@ import { readText } from "./walk.ts";
 
 const HANDOFF_SCHEMA = "schemas/handoff.schema.json";
 const SCENARIOS_SCHEMA = "schemas/evaluation-scenarios.schema.json";
+const SKILL_SCENARIOS_SCHEMA = "schemas/skill-evaluation-scenarios.schema.json";
 
 export const RUBRIC_DIMENSIONS = [
   "Correctness",
@@ -18,6 +20,15 @@ export const RUBRIC_DIMENSIONS = [
   "Appropriate delegation",
 ] as const;
 
+export const SKILL_RUBRIC_DIMENSIONS = [
+  "Procedural Fidelity",
+  "Technical Depth",
+  "Evidence & Verification",
+  "Minimal & Focused Intervention",
+  "Boundary & Safety Respect",
+  "Honest Test-State Discipline",
+] as const;
+
 const SCENARIO_PREFIXES: Record<string, string> = {
   "frontier-engineer": "FE",
   architect: "AR",
@@ -25,6 +36,19 @@ const SCENARIO_PREFIXES: Record<string, string> = {
   "security-auditor": "SE",
   "qa-engineer": "QA",
   "design-engineer": "DE",
+};
+
+const SKILL_SCENARIO_PREFIXES: Record<string, string> = {
+  architecture: "SK-ARCH",
+  "advanced-debugging": "SK-DEBUG",
+  "security-audit": "SK-SEC",
+  "code-review": "SK-CR",
+  "frontend-engineering": "SK-FE",
+  "backend-engineering": "SK-BE",
+  "testing-engineering": "SK-TE",
+  "deep-research": "SK-DR",
+  "database-engineering": "SK-DB",
+  "performance-engineering": "SK-PERF",
 };
 
 function readJson(root: string, relPath: string): { value: unknown; findings: Finding[] } {
@@ -81,77 +105,155 @@ export function checkContracts(root: string): Finding[] {
 
   const scenarios = readJson(root, "specs/evaluation/scenarios.json");
   findings.push(...scenarios.findings);
-  if (!scenarios.value || typeof scenarios.value !== "object") return findings;
-
-  const document = scenarios.value as Record<string, unknown>;
-  findings.push(
-    ...validateValueAgainstSchema(
-      root,
-      document,
-      "specs/evaluation/scenarios.json",
-      SCENARIOS_SCHEMA,
-      "invalid-evaluation-scenarios",
-    ),
-  );
-
-  if (document.status !== "defined") {
+  if (scenarios.value && typeof scenarios.value === "object") {
+    const document = scenarios.value as Record<string, unknown>;
     findings.push(
-      finding(
-        "error",
-        "unevaluated-scores-claimed",
+      ...validateValueAgainstSchema(
+        root,
+        document,
         "specs/evaluation/scenarios.json",
-        'status must remain "defined" until evaluations are actually executed and scored.',
+        SCENARIOS_SCHEMA,
+        "invalid-evaluation-scenarios",
       ),
     );
-  }
 
-  const agents = (document.agents ?? {}) as Record<string, unknown>;
-  const keys = Object.keys(agents);
-  for (const id of AGENT_IDS) {
-    if (!keys.includes(id)) {
+    if (document.status !== "defined") {
       findings.push(
         finding(
           "error",
-          "evaluation-agent-missing",
+          "unevaluated-scores-claimed",
           "specs/evaluation/scenarios.json",
-          `No scenarios defined for "${id}".`,
+          'status must remain "defined" until evaluations are actually executed and scored.',
         ),
       );
     }
-  }
-  for (const [id, entries] of Object.entries(agents)) {
-    if (!Array.isArray(entries)) continue;
-    const prefix = SCENARIO_PREFIXES[id];
-    for (const entry of entries) {
-      if (!entry || typeof entry !== "object") continue;
-      const scenarioId = (entry as Record<string, unknown>).id;
-      if (prefix && typeof scenarioId === "string" && !scenarioId.startsWith(`${prefix}-`)) {
+
+    const agents = (document.agents ?? {}) as Record<string, unknown>;
+    const keys = Object.keys(agents);
+    for (const id of AGENT_IDS) {
+      if (!keys.includes(id)) {
         findings.push(
           finding(
             "error",
-            "evaluation-id-prefix",
+            "evaluation-agent-missing",
             "specs/evaluation/scenarios.json",
-            `Scenario "${scenarioId}" under "${id}" must use the "${prefix}-" prefix.`,
+            `No scenarios defined for "${id}".`,
+          ),
+        );
+      }
+    }
+    for (const [id, entries] of Object.entries(agents)) {
+      if (!Array.isArray(entries)) continue;
+      const prefix = SCENARIO_PREFIXES[id];
+      for (const entry of entries) {
+        if (!entry || typeof entry !== "object") continue;
+        const scenarioId = (entry as Record<string, unknown>).id;
+        if (prefix && typeof scenarioId === "string" && !scenarioId.startsWith(`${prefix}-`)) {
+          findings.push(
+            finding(
+              "error",
+              "evaluation-id-prefix",
+              "specs/evaluation/scenarios.json",
+              `Scenario "${scenarioId}" under "${id}" must use the "${prefix}-" prefix.`,
+            ),
+          );
+        }
+      }
+    }
+
+    const rubric = Array.isArray(document.rubric)
+      ? (document.rubric as Array<Record<string, unknown>>)
+      : [];
+    const dimensions = rubric.map((item) => String(item.dimension ?? ""));
+    for (const dimension of RUBRIC_DIMENSIONS) {
+      if (!dimensions.includes(dimension)) {
+        findings.push(
+          finding(
+            "error",
+            "rubric-dimension-missing",
+            "specs/evaluation/scenarios.json",
+            `Rubric is missing "${dimension}".`,
           ),
         );
       }
     }
   }
 
-  const rubric = Array.isArray(document.rubric)
-    ? (document.rubric as Array<Record<string, unknown>>)
-    : [];
-  const dimensions = rubric.map((item) => String(item.dimension ?? ""));
-  for (const dimension of RUBRIC_DIMENSIONS) {
-    if (!dimensions.includes(dimension)) {
+  // Skill evaluation scenarios validation
+  const skillScenarios = readJson(root, "specs/evaluation/skill-scenarios.json");
+  findings.push(...skillScenarios.findings);
+  if (skillScenarios.value && typeof skillScenarios.value === "object") {
+    const document = skillScenarios.value as Record<string, unknown>;
+    findings.push(
+      ...validateValueAgainstSchema(
+        root,
+        document,
+        "specs/evaluation/skill-scenarios.json",
+        SKILL_SCENARIOS_SCHEMA,
+        "invalid-skill-evaluation-scenarios",
+      ),
+    );
+
+    if (document.status !== "defined") {
       findings.push(
         finding(
           "error",
-          "rubric-dimension-missing",
-          "specs/evaluation/scenarios.json",
-          `Rubric is missing "${dimension}".`,
+          "unevaluated-skill-scores-claimed",
+          "specs/evaluation/skill-scenarios.json",
+          'status must remain "defined" until evaluations are actually executed and scored.',
         ),
       );
+    }
+
+    const skills = (document.skills ?? {}) as Record<string, unknown>;
+    const skillKeys = Object.keys(skills);
+    for (const id of SKILL_IDS) {
+      if (!skillKeys.includes(id)) {
+        findings.push(
+          finding(
+            "error",
+            "evaluation-skill-missing",
+            "specs/evaluation/skill-scenarios.json",
+            `No scenarios defined for skill "${id}".`,
+          ),
+        );
+      }
+    }
+
+    for (const [id, entries] of Object.entries(skills)) {
+      if (!Array.isArray(entries)) continue;
+      const prefix = SKILL_SCENARIO_PREFIXES[id];
+      for (const entry of entries) {
+        if (!entry || typeof entry !== "object") continue;
+        const scenarioId = (entry as Record<string, unknown>).id;
+        if (prefix && typeof scenarioId === "string" && !scenarioId.startsWith(`${prefix}-`)) {
+          findings.push(
+            finding(
+              "error",
+              "skill-evaluation-id-prefix",
+              "specs/evaluation/skill-scenarios.json",
+              `Scenario "${scenarioId}" under "${id}" must use the "${prefix}-" prefix.`,
+            ),
+          );
+        }
+      }
+    }
+
+    const rubric = Array.isArray(document.rubric)
+      ? (document.rubric as Array<Record<string, unknown>>)
+      : [];
+    const dimensions = rubric.map((item) => String(item.dimension ?? ""));
+    for (const dimension of SKILL_RUBRIC_DIMENSIONS) {
+      if (!dimensions.includes(dimension)) {
+        findings.push(
+          finding(
+            "error",
+            "skill-rubric-dimension-missing",
+            "specs/evaluation/skill-scenarios.json",
+            `Skill rubric is missing "${dimension}".`,
+          ),
+        );
+      }
     }
   }
 

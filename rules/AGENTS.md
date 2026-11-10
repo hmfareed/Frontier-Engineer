@@ -1,6 +1,6 @@
 # Frontier Engineer — foundation rules
 
-Always-on engineering rules for this plugin. Detailed rationale lives in [the engineering principles document](../docs/09-ENGINEERING-PRINCIPLES.md).
+Always-on engineering rules for this plugin. Detailed rationale lives in [the engineering principles document](../docs/14-ENGINEERING-PRINCIPLES.md).
 
 1. Inspect before implementing. Read the actual repository first.
 2. Understand the existing architecture before modifying it.
