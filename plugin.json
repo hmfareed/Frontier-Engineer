@@ -1,0 +1,18 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "frontier-engineer",
+  "displayName": "Frontier Engineer",
+  "version": "0.1.0",
+  "description": "A disciplined multi-agent software engineering system for Google Antigravity: specialists, skills, rules, and evidence-based verification.",
+  "logo": "assets/logo.svg",
+  "suggestedPrompts": [
+    "Audit this repository and produce a prioritized engineering report",
+    "Plan a complex feature before implementing it",
+    "Verify the current implementation and report test results honestly"
+  ],
+  "author": {
+    "name": "Frontier Engineer contributors"
+  },
+  "license": "MIT",
+  "keywords": ["engineering", "agents", "skills", "code-review", "security", "testing"]
+}

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://antigravity.google/schemas/v1/plugin.json",
+  "name": "valid-plugin",
+  "displayName": "Valid Plugin",
+  "version": "1.0.0",
+  "description": "A valid test manifest.",
+  "license": "MIT"
+}

@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Frontier Engineer">
+  <rect width="128" height="128" rx="24" fill="#1F2A44"/>
+  <path d="M32 96V32h38M32 64h30" fill="none" stroke="#FFFFFF" stroke-width="11" stroke-linecap="square"/>
+  <path d="M74 96l22-30 22 30" fill="none" stroke="#8FA9F6" stroke-width="11" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://frontier-engineer.local/schemas/agent-frontmatter.json",
+  "title": "Antigravity custom agent / subagent frontmatter",
+  "type": "object",
+  "required": ["name", "description"],
+  "additionalProperties": false,
+  "properties": {
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "description": { "type": "string", "minLength": 1 },
+    "tools": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "mainAgent": { "type": "boolean" },
+    "subagent": { "type": "boolean" },
+    "model": {
+      "type": "string",
+      "enum": ["inherit", "flash_lite", "flash", "pro"]
+    },
+    "commandExecutionPolicy": {
+      "type": "string",
+      "enum": ["off", "auto", "eager", "sandbox"]
+    },
+    "skills": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "plugins": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "mcpServers": {
+      "type": "array",
+      "items": { "type": "object" }
+    },
+    "inheritMcp": { "type": "boolean" },
+    "inheritCustomizations": { "type": "boolean" }
+  }
+}

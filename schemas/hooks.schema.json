@@ -1,0 +1,50 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://frontier-engineer.local/schemas/hooks.json",
+  "title": "Antigravity hooks.json",
+  "type": "object",
+  "additionalProperties": {
+    "type": "object",
+    "properties": {
+      "enabled": { "type": "boolean" },
+      "SessionStart": { "$ref": "#/definitions/flatHandlers" },
+      "PreInvocation": { "$ref": "#/definitions/flatHandlers" },
+      "PostInvocation": { "$ref": "#/definitions/flatHandlers" },
+      "Stop": { "$ref": "#/definitions/flatHandlers" },
+      "PreToolUse": { "$ref": "#/definitions/groupedHandlers" },
+      "PostToolUse": { "$ref": "#/definitions/groupedHandlers" }
+    },
+    "additionalProperties": false
+  },
+  "definitions": {
+    "handler": {
+      "type": "object",
+      "required": ["command"],
+      "additionalProperties": false,
+      "properties": {
+        "type": { "type": "string", "enum": ["command"] },
+        "command": { "type": "string" },
+        "timeout": { "type": "integer" }
+      }
+    },
+    "flatHandlers": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/handler" }
+    },
+    "groupedHandlers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["matcher", "hooks"],
+        "additionalProperties": false,
+        "properties": {
+          "matcher": { "type": "string" },
+          "hooks": {
+            "type": "array",
+            "items": { "$ref": "#/definitions/handler" }
+          }
+        }
+      }
+    }
+  }
+}

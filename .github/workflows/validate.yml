@@ -1,0 +1,40 @@
+name: Validate foundation
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Type check
+        run: npm run typecheck
+
+      - name: Foundation validation
+        run: npm run validate
+
+      - name: Unit and integration tests
+        run: npm run test
+
+      - name: Formatting
+        run: npm run format:check
+
+      - name: Markdown lint
+        run: npm run lint:md
+
+# Antigravity's `agy plugin validate --strict .` is not run here: the CLI is not
+# available on hosted runners. It must be run locally against the installed
+# Antigravity version before any release. See docs/24-OFFICIAL-FORMAT-VERIFICATION.md.

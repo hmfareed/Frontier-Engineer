@@ -1,0 +1,56 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://frontier-engineer.local/schemas/plugin.json",
+  "title": "Antigravity plugin manifest (local draft-07 transcription)",
+  "type": "object",
+  "required": ["name"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "name": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "displayName": { "type": "string" },
+    "description": { "type": "string" },
+    "version": { "type": "string" },
+    "disabled": { "type": "boolean" },
+    "logo": { "type": "string" },
+    "suggestedPrompts": {
+      "type": "array",
+      "maxItems": 3,
+      "items": { "type": "string", "pattern": "\\S" }
+    },
+    "skills": {
+      "oneOf": [
+        { "type": "string", "pattern": "\\S" },
+        { "type": "array", "items": { "type": "string", "pattern": "\\S" } }
+      ]
+    },
+    "author": {
+      "oneOf": [
+        { "type": "string" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "name": { "type": "string" },
+            "email": { "type": "string" },
+            "url": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "homepage": { "type": "string" },
+    "repository": { "type": "string" },
+    "license": { "type": "string" },
+    "keywords": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "extensions": {
+      "type": "object",
+      "additionalProperties": { "type": "object" }
+    }
+  }
+}

@@ -1,0 +1,31 @@
+{
+  "name": "frontier-engineer",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Foundation tooling for the Frontier Engineer Antigravity plugin.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.6.0"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "validate": "node scripts/validate.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "lint:md": "markdownlint-cli2",
+    "verify": "npm run typecheck && npm run validate && npm run test && npm run format:check && npm run lint:md"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "ajv": "^8.20.0",
+    "markdownlint-cli2": "^0.24.0",
+    "prettier": "^3.9.10",
+    "typescript": "^5.9.0",
+    "vite": "^7.0.0",
+    "vitest": "^5.1.0",
+    "yaml": "^2.9.1"
+  }
+}
