@@ -1,6 +1,6 @@
 {
   "name": "frontier-engineer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "description": "Foundation tooling for the Frontier Engineer Antigravity plugin.",
@@ -11,6 +11,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "validate": "node scripts/validate.ts",
+    "generate:agents": "node scripts/generate-antigravity-agents.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "format": "prettier --write .",

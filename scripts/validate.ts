@@ -6,6 +6,8 @@ import {
   checkOptionalConfigs,
   checkPluginManifest,
 } from "./lib/json-config.ts";
+import { checkAdapterRegistry, checkGeneratedAgents } from "./lib/canonical.ts";
+import { checkContracts } from "./lib/contracts.ts";
 import { checkMarkdownLinks } from "./lib/markdown-links.ts";
 import { repoRoot } from "./lib/paths.ts";
 import { checkDocumentationIndex, checkRequiredFiles } from "./lib/required-files.ts";
@@ -32,6 +34,14 @@ export function runChecks(root: string): CheckResult[] {
     {
       name: "YAML syntax and component metadata",
       findings: [...checkYamlSyntax(root), ...checkMetadata(root)],
+    },
+    {
+      name: "canonical agent specifications and generated adapters",
+      findings: [...checkGeneratedAgents(root), ...checkAdapterRegistry(root)],
+    },
+    {
+      name: "handoff and evaluation contracts",
+      findings: checkContracts(root),
     },
     {
       name: "Markdown links and references",

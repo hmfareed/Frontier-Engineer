@@ -1,0 +1,34 @@
+{
+  "handoff": {
+    "contract": "frontier-engineer/handoff",
+    "version": 1,
+    "taskId": "FE-2026-11-10-001",
+    "requestSummary": "Add rate limiting to the public API",
+    "objective": "Assess the security implications of the proposed limiter",
+    "repositoryContext": "Express 5 API; verified from package.json and src/routes",
+    "scope": ["src/routes", "src/middleware"],
+    "constraints": ["Read-only review", "No production changes"],
+    "relevantFiles": ["src/middleware/auth.ts", "src/routes/index.ts"],
+    "expectedDeliverables": ["Prioritized findings report"],
+    "acceptanceCriteria": ["Every finding cites evidence"],
+    "risks": ["Shared cache may leak identifiers between tenants"],
+    "requiredVerification": ["Static inspection of middleware chain"]
+  },
+  "response": {
+    "contract": "frontier-engineer/response",
+    "version": 1,
+    "taskId": "FE-2026-11-10-001",
+    "findings": ["No rate limiter is registered before the auth middleware"],
+    "workCompleted": ["Read-only static review"],
+    "filesAffected": ["src/middleware/auth.ts", "src/routes/index.ts"],
+    "decisions": ["Recommend a per-tenant key rather than a global IP key"],
+    "risks": ["Browser tooling unavailable; no runtime inspection performed"],
+    "verification": {
+      "commands": ["no commands executed"],
+      "outcomes": ["static inspection only"],
+      "testStates": ["not executed"]
+    },
+    "unresolvedQuestions": ["Should anonymous requests share a bucket?"],
+    "handoffStatus": "partial"
+  }
+}

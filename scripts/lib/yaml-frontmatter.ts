@@ -171,18 +171,32 @@ export function checkMetadata(root: string): Finding[] {
 
     findings.push(...validateValueAgainstSchema(root, frontmatter.data, rel, schemaRel, ruleId));
 
-    if (skillMatch && typeof frontmatter.data === "object" && frontmatter.data !== null) {
-      const data = frontmatter.data as Record<string, unknown>;
-      if (data.name !== skillMatch[1]) {
-        findings.push(
-          finding(
-            "error",
-            "skill-name-folder-mismatch",
-            rel,
-            `frontmatter name "${String(data.name)}" must match the parent folder "${skillMatch[1]}".`,
-          ),
-        );
-      }
+    const data =
+      typeof frontmatter.data === "object" && frontmatter.data !== null
+        ? (frontmatter.data as Record<string, unknown>)
+        : null;
+
+    if (skillMatch && data && data.name !== skillMatch[1]) {
+      findings.push(
+        finding(
+          "error",
+          "skill-name-folder-mismatch",
+          rel,
+          `frontmatter name "${String(data.name)}" must match the parent folder "${skillMatch[1]}".`,
+        ),
+      );
+    }
+
+    const agentStem = agentFileMatch?.[1] ?? agentDirMatch?.[1];
+    if (agentStem && data && data.name !== agentStem) {
+      findings.push(
+        finding(
+          "error",
+          "agent-name-filename-mismatch",
+          rel,
+          `frontmatter name "${String(data.name)}" must match the agent path "${agentStem}".`,
+        ),
+      );
     }
   }
   return findings;

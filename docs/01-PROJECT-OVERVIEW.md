@@ -8,7 +8,7 @@
 | Category              | AI software-engineering agent system |
 | Distribution          | Google Antigravity plugin            |
 | Execution environment | Antigravity App, CLI, or IDE         |
-| Current version       | 0.1.0 (Phase 1 foundation)           |
+| Current version       | 0.2.0 (Phase 2 agent system)         |
 | Target release        | 1.0.0 (Phase 10)                     |
 
 ## Vision
@@ -43,16 +43,21 @@ The first of these is the defining characteristic: the system's value comes from
 
 Independent developers, full-stack engineers, frontend and backend engineers, technical founders, engineering teams, and developers maintaining complex production applications.
 
-## Phase 1 scope
+## Phase status
 
-Phase 1 establishes a clean, documented, tested, secure foundation that is compatible with verified Antigravity conventions. It creates the plugin manifest, repository structure, toolchain, validation utilities, tests, security policy, and architecture documentation.
+Phase 1 established a clean, documented, tested, secure foundation compatible with verified Antigravity conventions: the plugin manifest, repository structure, toolchain, validation utilities, tests, security policy, and architecture documentation.
 
-It deliberately does **not** implement the six agents, ten skills, MCP integrations, lifecycle hooks, project intelligence, or the evaluation suite. Those belong to Phases 2 through 9.
+Phase 2 added six platform-independent canonical agent specifications, a generator that emits their Antigravity adapters, a structured handoff contract, delegation and conflict-prevention policies, a capability matrix, nineteen unscored evaluation scenarios, and adapter requirements for four other platforms. See [Part 04](04-AGENT-SPECIFICATIONS.md).
+
+Still deliberately deferred: the ten skills (Phase 3), the full rule set (Phase 4), MCP integrations (Phase 5), lifecycle hooks (Phase 6), project intelligence and memory (Phase 7), and release packaging (Phases 9–10).
 
 ## Current limitations
 
-- Installation, discovery, and runtime execution of the plugin inside Antigravity have not been tested.
+- Installation and runtime invocation of the plugin's agents inside Antigravity have not been tested, although static discovery is verified.
+- Real specialist delegation and handoff round trips have not been exercised.
 - `mcp_config.json` and `hooks.json` are intentionally absent. Their schemas are available for validation when the components are added.
+- `tools` allowlists are not emitted; see [Part 04](04-AGENT-SPECIFICATIONS.md) for the reason.
+- No adapter other than Antigravity is implemented, and no evaluation score has been assigned.
 - The 85/100 quality target in the original specification is a target, not a measured score.
 
 ## Specification archive

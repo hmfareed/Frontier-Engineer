@@ -35,12 +35,22 @@ agy plugin validate --strict .
 
 ## Adding a component
 
-| Component      | Location                 | Required metadata                         |
-| -------------- | ------------------------ | ----------------------------------------- |
-| Agent          | `agents/<name>.md`       | `name`, `description` in YAML frontmatter |
-| Skill          | `skills/<name>/SKILL.md` | `name` matching the folder, `description` |
-| Rule           | `rules/<name>.md`        | `trigger` plus conditional fields         |
-| Always-on rule | `rules/AGENTS.md`        | No frontmatter                            |
+| Component            | Location                 | Required metadata                                    |
+| -------------------- | ------------------------ | ---------------------------------------------------- |
+| Agent                | `agents/<name>.md`       | Generated — do not edit directly                     |
+| Canonical agent spec | `specs/agents/<name>.md` | Canonical frontmatter plus eleven mandatory sections |
+| Skill                | `skills/<name>/SKILL.md` | `name` matching the folder, `description`            |
+| Rule                 | `rules/<name>.md`        | `trigger` plus conditional fields                    |
+| Always-on rule       | `rules/AGENTS.md`        | No frontmatter                                       |
+
+**Agent work starts in `specs/agents/`, never in `agents/`.** Edit a canonical specification, then regenerate:
+
+```bash
+npm run generate:agents
+npm run generate:agents -- --check
+```
+
+Generated files are compared semantically against their canonical source, so formatting-only drift is tolerated but instruction drift fails validation. To add a new platform, add an adapter under `specs/adapters/` that consumes the same canonical specs; do not copy agent instructions. See [the portability guide](docs/07-AGENT-PORTABILITY.md).
 
 The exact verified field sets and their sources are in [docs/24-OFFICIAL-FORMAT-VERIFICATION.md](docs/24-OFFICIAL-FORMAT-VERIFICATION.md). The schemas in [schemas/](schemas/) are local draft-07 transcriptions used for offline validation; `agy plugin validate --strict` remains authoritative.
 

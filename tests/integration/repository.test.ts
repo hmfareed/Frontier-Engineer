@@ -1,6 +1,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import {
+  buildAdapterFiles,
+  checkAdapterRegistry,
+  checkGeneratedAgents,
+  loadCanonicalSpecs,
+} from "../../scripts/lib/canonical.ts";
+import { checkContracts } from "../../scripts/lib/contracts.ts";
 import { checkPluginManifest } from "../../scripts/lib/json-config.ts";
 import { checkMarkdownLinks } from "../../scripts/lib/markdown-links.ts";
 import { repoRoot } from "../../scripts/lib/paths.ts";
@@ -83,6 +90,44 @@ describe("repository foundation", () => {
   it("does not ship unverified optional configs", () => {
     expect(fs.existsSync(path.join(root, "mcp_config.json"))).toBe(false);
     expect(fs.existsSync(path.join(root, "hooks.json"))).toBe(false);
+  });
+
+  it("ships six canonical specs and six matching generated adapters", () => {
+    const { specs, findings } = loadCanonicalSpecs(root);
+    expect(findings).toEqual([]);
+    expect(specs).toHaveLength(6);
+    expect(buildAdapterFiles(root).size).toBe(6);
+    expect(checkGeneratedAgents(root)).toEqual([]);
+    expect(checkAdapterRegistry(root)).toEqual([]);
+  });
+
+  it("passes the handoff and evaluation contract checks", () => {
+    expect(checkContracts(root)).toEqual([]);
+  });
+
+  it("emits only verified Antigravity frontmatter in generated agents", () => {
+    for (const [, content] of buildAdapterFiles(root)) {
+      const data = parseFrontmatter(content).data as Record<string, unknown>;
+      expect(Object.keys(data).sort()).toEqual(
+        ["commandExecutionPolicy", "description", "mainAgent", "model", "name", "subagent"].sort(),
+      );
+      expect(data.commandExecutionPolicy).toBe("sandbox");
+    }
+  });
+
+  it("indexes every Phase 2 document", () => {
+    const index = fs.readFileSync(path.join(root, "docs", "README.md"), "utf8");
+    for (const name of [
+      "04-AGENT-SPECIFICATIONS.md",
+      "05-AGENT-COORDINATION.md",
+      "06-AGENT-COMMUNICATION.md",
+      "07-AGENT-PORTABILITY.md",
+      "08-AGENT-EVALUATION.md",
+      "09-ENGINEERING-PRINCIPLES.md",
+      "adr/ADR-002-agent-system.md",
+    ]) {
+      expect(index, name).toContain(name);
+    }
   });
 
   it("documents the verified component layout", () => {

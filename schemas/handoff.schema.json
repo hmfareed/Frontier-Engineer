@@ -1,0 +1,94 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://frontier-engineer.local/schemas/handoff.json",
+  "title": "Frontier Engineer handoff and specialist response contract",
+  "oneOf": [{ "$ref": "#/definitions/handoff" }, { "$ref": "#/definitions/response" }],
+  "definitions": {
+    "handoff": {
+      "type": "object",
+      "required": [
+        "contract",
+        "version",
+        "taskId",
+        "requestSummary",
+        "objective",
+        "repositoryContext",
+        "scope",
+        "constraints",
+        "relevantFiles",
+        "expectedDeliverables",
+        "acceptanceCriteria",
+        "risks",
+        "requiredVerification"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "contract": { "const": "frontier-engineer/handoff" },
+        "version": { "const": 1 },
+        "taskId": { "type": "string", "minLength": 1 },
+        "requestSummary": { "type": "string", "minLength": 1 },
+        "objective": { "type": "string", "minLength": 1 },
+        "repositoryContext": { "type": "string" },
+        "scope": { "type": "array", "items": { "type": "string" } },
+        "constraints": { "type": "array", "items": { "type": "string" } },
+        "relevantFiles": { "type": "array", "items": { "type": "string" } },
+        "expectedDeliverables": { "type": "array", "items": { "type": "string" } },
+        "acceptanceCriteria": { "type": "array", "items": { "type": "string" } },
+        "risks": { "type": "array", "items": { "type": "string" } },
+        "requiredVerification": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "response": {
+      "type": "object",
+      "required": [
+        "contract",
+        "version",
+        "taskId",
+        "findings",
+        "workCompleted",
+        "filesAffected",
+        "decisions",
+        "risks",
+        "verification",
+        "unresolvedQuestions",
+        "handoffStatus"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "contract": { "const": "frontier-engineer/response" },
+        "version": { "const": 1 },
+        "taskId": { "type": "string", "minLength": 1 },
+        "findings": { "type": "array", "items": { "type": "string" } },
+        "workCompleted": { "type": "array", "items": { "type": "string" } },
+        "filesAffected": { "type": "array", "items": { "type": "string" } },
+        "decisions": { "type": "array", "items": { "type": "string" } },
+        "risks": { "type": "array", "items": { "type": "string" } },
+        "verification": {
+          "type": "object",
+          "required": ["commands", "outcomes", "testStates"],
+          "additionalProperties": false,
+          "properties": {
+            "commands": { "type": "array", "items": { "type": "string" } },
+            "outcomes": { "type": "array", "items": { "type": "string" } },
+            "testStates": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "not written",
+                  "not executed",
+                  "passed",
+                  "failed",
+                  "blocked",
+                  "not applicable"
+                ]
+              }
+            }
+          }
+        },
+        "unresolvedQuestions": { "type": "array", "items": { "type": "string" } },
+        "handoffStatus": { "type": "string", "enum": ["complete", "partial", "blocked"] }
+      }
+    }
+  }
+}

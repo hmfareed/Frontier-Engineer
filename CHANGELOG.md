@@ -2,6 +2,31 @@
 
 All notable changes to Frontier Engineer are documented here. This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.2.0] - 2026-11-10
+
+Specialized agent system (Phase 2).
+
+### Added
+
+- Six platform-independent canonical agent specifications in `specs/agents/`, each with eleven mandatory sections and structured frontmatter.
+- A TypeScript generator (`scripts/generate-antigravity-agents.ts`) that produces the six loader-visible `agents/*.md` files, with a `--check` mode enforced by `npm run validate`.
+- A structured handoff and response contract: `specs/handoff-contract.md`, `specs/handoff-examples.json`, and `schemas/handoff.schema.json`.
+- Nineteen evaluation scenarios and an eight-dimension rubric in `specs/evaluation/scenarios.json`, validated by `schemas/evaluation-scenarios.schema.json`. Status is locked to `defined`; no scores are assigned.
+- Adapter registry and requirements documents for Antigravity (implemented) plus Claude Code, Codex, Cursor, and Windsurf (all explicitly NOT IMPLEMENTED).
+- New documentation: `docs/04` through `docs/08`, plus `ADR-002`.
+- Validator checks for canonical specs, generated-file freshness, adapter status claims, contract examples, evaluation definitions, and agent name/filename consistency.
+
+### Changed
+
+- `docs/06-ENGINEERING-PRINCIPLES.md` moved to `docs/09-ENGINEERING-PRINCIPLES.md` to free Part 06 for agent communication; all references updated.
+- `plugin.json` and `package.json` bumped to `0.2.0`.
+
+### Known limitations
+
+- `tools` allowlists are not emitted. Official documentation conflicts on the default and warns that unmapped tool names can hang subagents; least privilege is enforced behaviourally instead.
+- Runtime agent invocation, real delegation, and handoff round trips have not been tested.
+- No adapter other than Antigravity is implemented or claimed to work.
+
 ## [0.1.0] - 2026-11-10
 
 Foundation release (Phase 1). This is a development version, not the `1.0.0` product release described in the specification.

@@ -34,19 +34,29 @@ frontier-engineer/
 ├── .gitattributes
 ├── assets/
 │   └── logo.svg
-├── agents/                      # Phase 2: agents/<name>.md
+├── agents/                      # Generated Antigravity adapters (6 files)
+├── specs/                       # Platform-independent source of truth
+│   ├── agents/                  # Six canonical agent specifications
+│   ├── adapters/                # Adapter registry and per-platform requirements
+│   ├── evaluation/scenarios.json
+│   ├── handoff-contract.md
+│   └── handoff-examples.json
 ├── skills/                      # Phase 3: skills/<name>/SKILL.md
 ├── rules/
 │   └── AGENTS.md                # Always-on foundation rule
-├── schemas/                     # Local verified-schema transcriptions
+├── schemas/                     # Local verified-schema transcriptions and contracts
 │   ├── plugin.schema.json
 │   ├── skill-frontmatter.schema.json
 │   ├── agent-frontmatter.schema.json
 │   ├── rule-frontmatter.schema.json
 │   ├── mcp-config.schema.json
-│   └── hooks.schema.json
+│   ├── hooks.schema.json
+│   ├── canonical-agent.schema.json
+│   ├── handoff.schema.json
+│   └── evaluation-scenarios.schema.json
 ├── scripts/
 │   ├── validate.ts
+│   ├── generate-antigravity-agents.ts
 │   └── lib/                     # Pure, unit-testable check functions
 ├── tests/
 │   ├── unit/
@@ -61,16 +71,16 @@ frontier-engineer/
 
 ## Component paths
 
-| Component       | Verified path                                      | Status                    |
-| --------------- | -------------------------------------------------- | ------------------------- |
-| Manifest        | `plugin.json` or `.antigravity-plugin/plugin.json` | Present                   |
-| Skills          | `skills/<name>/SKILL.md`                           | Directory prepared; empty |
-| Custom agents   | `agents/<name>.md` or `agents/<name>/agent.md`     | Directory prepared; empty |
-| Always-on rule  | `rules/AGENTS.md`                                  | Present                   |
-| Named rules     | `rules/<name>.md` with `trigger` frontmatter       | Phase 4                   |
-| MCP servers     | `mcp_config.json`                                  | Phase 5; absent           |
-| Lifecycle hooks | `hooks.json`                                       | Phase 6; absent           |
-| Helper scripts  | `scripts/`                                         | Present                   |
+| Component       | Verified path                                      | Status                               |
+| --------------- | -------------------------------------------------- | ------------------------------------ |
+| Manifest        | `plugin.json` or `.antigravity-plugin/plugin.json` | Present                              |
+| Skills          | `skills/<name>/SKILL.md`                           | Directory prepared; empty            |
+| Custom agents   | `agents/<name>.md` or `agents/<name>/agent.md`     | Six generated, statically discovered |
+| Always-on rule  | `rules/AGENTS.md`                                  | Present                              |
+| Named rules     | `rules/<name>.md` with `trigger` frontmatter       | Phase 4                              |
+| MCP servers     | `mcp_config.json`                                  | Phase 5; absent                      |
+| Lifecycle hooks | `hooks.json`                                       | Phase 6; absent                      |
+| Helper scripts  | `scripts/`                                         | Present                              |
 
 Antigravity scans `skills/`, `rules/`, and `agents/` **one level deep**. Nested components require a discovery manifest (`skills.json`, `rules.json`, `agents.json`). The validator warns when a component is placed too deep.
 

@@ -1,6 +1,6 @@
 # Part 03 — System architecture
 
-> **Label:** This document describes the **proposed** target architecture. Only the plugin packaging layer and the formats in [the verification record](24-OFFICIAL-FORMAT-VERIFICATION.md) are verified in Phase 1. No agent, skill, or orchestration behavior has been implemented or runtime-tested yet.
+> **Label:** Mixed. The plugin packaging layer, the six agent definitions, and the formats in [the verification record](24-OFFICIAL-FORMAT-VERIFICATION.md) are statically verified. The six-layer runtime behaviour, delegation in practice, skills, and orchestration remain **proposed and untested**. See [Part 04](04-AGENT-SPECIFICATIONS.md) for the verified/unverified split.
 
 ## Six layers
 
@@ -62,7 +62,7 @@ Specialists must not expand the scope of the developer's request or perform over
 
 Delegation is selective. A small CSS adjustment does not require six agents; a payment system may require architecture, implementation, and security review; a full repository audit may require all five specialists.
 
-Antigravity supports file-based custom agents at `agents/<name>.md` with `subagent: true`, invoked by the primary agent through `invoke_subagent`. Each agent runs with a clean context in its own conversation, in parallel with the main conversation. This mechanism is verified in the official documentation but **has not been exercised by this plugin**. Agent `tools` allowlists should be kept narrow; the documentation warns that misspelled tool names can cause subagent processes to hang.
+Phase 2 implemented all six agents. Antigravity supports file-based custom agents at `agents/<name>.md` with `subagent: true`, invoked by the primary agent through `invoke_subagent`. Each agent runs with a clean context in its own conversation, in parallel with the main conversation. The installed CLI discovers all six definitions with zero findings, but the mechanism **has not been exercised by this plugin at runtime**. Agent `tools` allowlists are deliberately omitted because the official documentation conflicts on their default and warns that misspelled tool names can hang subagents; see [ADR-002](adr/ADR-002-agent-system.md). Full delegation policy and file-ownership rules are in [Part 05](05-AGENT-COORDINATION.md).
 
 ## Communication and reporting
 

@@ -1,0 +1,76 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://frontier-engineer.local/schemas/canonical-agent.json",
+  "title": "Platform-independent canonical agent specification frontmatter",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "role",
+    "kind",
+    "version",
+    "summary",
+    "requiredCapabilities",
+    "optionalCapabilities",
+    "recommendedMcp",
+    "fileAccess",
+    "browserAccess",
+    "terminalAccess",
+    "approvalRequirements",
+    "delegatesTo",
+    "platformConfig"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": { "type": "string", "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$" },
+    "name": { "type": "string", "minLength": 1 },
+    "role": { "type": "string", "minLength": 1 },
+    "kind": { "type": "string", "enum": ["coordinator", "specialist"] },
+    "version": { "type": "integer", "minimum": 1 },
+    "summary": { "type": "string", "minLength": 40, "maxLength": 500 },
+    "requiredCapabilities": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/definitions/capability" }
+    },
+    "optionalCapabilities": {
+      "type": "array",
+      "items": { "$ref": "#/definitions/capability" }
+    },
+    "recommendedMcp": { "type": "array", "items": { "type": "string" } },
+    "fileAccess": { "type": "string", "enum": ["none", "read", "read-write"] },
+    "browserAccess": { "type": "string", "enum": ["none", "optional", "required"] },
+    "terminalAccess": { "type": "string", "enum": ["none", "optional", "required"] },
+    "approvalRequirements": { "type": "array", "items": { "type": "string" } },
+    "delegatesTo": { "type": "array", "items": { "type": "string" } },
+    "platformConfig": { "type": "object", "additionalProperties": false, "maxProperties": 0 }
+  },
+  "definitions": {
+    "capability": {
+      "type": "string",
+      "enum": [
+        "repository-inspection",
+        "requirements-analysis",
+        "planning",
+        "delegation",
+        "architecture-analysis",
+        "data-modeling",
+        "api-design",
+        "code-editing",
+        "refactoring",
+        "debugging",
+        "test-design",
+        "test-execution",
+        "security-review",
+        "threat-modeling",
+        "dependency-analysis",
+        "performance-analysis",
+        "ui-inspection",
+        "accessibility-review",
+        "browser-inspection",
+        "documentation",
+        "verification-reporting"
+      ]
+    }
+  }
+}
