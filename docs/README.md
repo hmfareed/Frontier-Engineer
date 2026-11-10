@@ -10,7 +10,7 @@ Product documentation for Frontier Engineer. The original 26-part specification 
 | 02   | [Technology stack](02-TECHNOLOGY-STACK.md)                         | Runtime, authoring formats, tooling        |
 | 03   | [System architecture](03-SYSTEM-ARCHITECTURE.md)                   | Layers, lifecycle, agents, delegation      |
 | 14   | [Engineering principles](14-ENGINEERING-PRINCIPLES.md)             | The fifteen foundational rules             |
-| 15   | [Repository structure](15-REPOSITORY-STRUCTURE.md)                 | Verified plugin layout and discovery paths |
+| 20   | [Repository structure](20-REPOSITORY-STRUCTURE.md)                 | Verified plugin layout and discovery paths |
 | 24   | [Official format verification](24-OFFICIAL-FORMAT-VERIFICATION.md) | Phase 1 evidence checklist                 |
 
 ## Agent system (Phase 2)
@@ -33,6 +33,16 @@ Product documentation for Frontier Engineer. The original 26-part specification 
 | 12   | [Skill-agent integration](12-SKILL-AGENT-INTEGRATION.md) | Mapping skills to the six agent roles, handoff integration  |
 | 13   | [Skill portability](13-SKILL-PORTABILITY.md)             | Portability across Antigravity, Claude Code, Codex, Cursor  |
 
+## Rules system (Phase 4)
+
+| Part | Document                                                         | Coverage                                                 |
+| ---- | ---------------------------------------------------------------- | -------------------------------------------------------- |
+| 15   | [Rules architecture](15-RULES-ARCHITECTURE.md)                   | Fourteen rules, two layers, canonical compilation        |
+| 16   | [Rule specifications](16-RULE-SPECIFICATIONS.md)                 | Complete catalog of 14 rules and standards               |
+| 17   | [Rule activation](17-RULE-ACTIVATION.md)                         | Always-on, path-triggered (glob), and model-decision     |
+| 18   | [Rule priority and conflicts](18-RULE-PRIORITY-AND-CONFLICTS.md) | Priority scale 1-10, conflict resolution hierarchy       |
+| 19   | [Rule portability](19-RULE-PORTABILITY.md)                       | Canonical specs, Antigravity flat scan, platform mapping |
+
 ## Decision records
 
 | ADR | Title                                                       |
@@ -40,6 +50,7 @@ Product documentation for Frontier Engineer. The original 26-part specification 
 | 001 | [Foundation decisions](adr/ADR-001-foundation.md)           |
 | 002 | [Canonical-first agent system](adr/ADR-002-agent-system.md) |
 | 003 | [Skills system architecture](adr/ADR-003-skills-system.md)  |
+| 004 | [Rules system architecture](adr/ADR-004-rules-system.md)    |
 
 ## Project policies
 
@@ -50,6 +61,7 @@ Product documentation for Frontier Engineer. The original 26-part specification 
 ## Implementation plans
 
 - [Phase 3 implementation plan](superpowers/plans/2026-11-10-phase-3-skills-system.md)
+- [Phase 4 implementation plan](superpowers/plans/2026-11-10-phase-4-rules-system.md)
 
 ## Reading order
 
@@ -57,4 +69,5 @@ Product documentation for Frontier Engineer. The original 26-part specification 
 2. Read [the verification record](24-OFFICIAL-FORMAT-VERIFICATION.md) before adding any Antigravity-specific component.
 3. For agent work, read [the specifications](04-AGENT-SPECIFICATIONS.md), then [coordination](05-AGENT-COORDINATION.md) and [communication](06-AGENT-COMMUNICATION.md).
 4. For skills work, read [skills architecture](09-SKILLS-ARCHITECTURE.md), then [specifications](10-SKILL-SPECIFICATIONS.md) and [activation](11-SKILL-ACTIVATION.md).
-5. Consult [portability](07-AGENT-PORTABILITY.md), [repository structure](15-REPOSITORY-STRUCTURE.md) and [ADR-001](adr/ADR-001-foundation.md) when changing the layout.
+5. For rules work, read [rules architecture](15-RULES-ARCHITECTURE.md), then [specifications](16-RULE-SPECIFICATIONS.md) and [priority and conflicts](18-RULE-PRIORITY-AND-CONFLICTS.md).
+6. Consult [portability](07-AGENT-PORTABILITY.md), [repository structure](20-REPOSITORY-STRUCTURE.md) and [ADR-001](adr/ADR-001-foundation.md) when changing the layout.

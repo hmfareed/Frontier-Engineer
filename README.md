@@ -2,7 +2,7 @@
 
 An AI software-engineering **agent system** distributed as a Google Antigravity plugin. It packages a coordinating agent, five specialist subagents, ten reusable engineering skills, persistent rules, and verification tooling into one versioned, installable unit.
 
-> **Status: Phase 3 — Portable engineering skills system (v0.3.0).** Ten canonical engineering skill specifications and their generated Antigravity adapters are in place alongside twenty deep technical reference guides, twenty defined evaluation scenarios, and comprehensive validation tooling. The full rule set (Phase 4), MCP integrations (Phase 5), and hooks (Phase 6) are intentionally not implemented yet.
+> **Status: Phase 4 — Modular engineering rules system (v0.4.0).** Fourteen engineering rules (one global foundation rule + thirteen modular rules across seven categories) and their generated Antigravity adapters are in place alongside ten skills, six agents, twenty references, and comprehensive validation tooling. MCP integrations (Phase 5) and hooks (Phase 6) are intentionally not implemented yet.
 
 ## What this is
 
@@ -40,6 +40,27 @@ Agent intelligence lives in platform-independent canonical specs under [specs/ag
 
 Canonical skill specifications live under [specs/skills/](specs/skills/) and deep references under [specs/skills/references/](specs/skills/references/). A generator produces the loader-visible Antigravity skills in [skills/](skills/). See [skills architecture](docs/09-SKILLS-ARCHITECTURE.md) and [specifications](docs/10-SKILL-SPECIFICATIONS.md).
 
+## The fourteen engineering rules
+
+| Rule                    | Category    | Trigger                                 | Priority & Level        |
+| :---------------------- | :---------- | :-------------------------------------- | :---------------------- |
+| `AGENTS.md`             | foundation  | Always-on                               | Priority 10 · Mandatory |
+| `general-engineering`   | engineering | Glob (`**/*.{ts,tsx,js,jsx,py,...}`)    | Priority 8 · Mandatory  |
+| `code-quality`          | engineering | Glob (`**/*.{ts,tsx,js,jsx,py,...}`)    | Priority 8 · Mandatory  |
+| `documentation`         | engineering | Glob (`**/*.{md,mdx},docs/**`)          | Priority 6 · Mandatory  |
+| `frontend-standards`    | frontend    | Glob (`**/*.{tsx,jsx,vue,svelte,...}`)  | Priority 7 · Mandatory  |
+| `accessibility`         | frontend    | Glob (`**/*.{tsx,jsx,vue,svelte,html}`) | Priority 8 · Mandatory  |
+| `backend-standards`     | backend     | Glob (`**/*.{ts,js,py,go,java,...}`)    | Priority 7 · Mandatory  |
+| `api-security`          | backend     | Model decision (API security, auth)     | Priority 9 · Mandatory  |
+| `database-standards`    | database    | Glob (`**/*.{sql,prisma,schema,db}`)    | Priority 7 · Mandatory  |
+| `migration-safety`      | database    | Glob (`**/migrations/**,**/*.sql`)      | Priority 9 · Mandatory  |
+| `security-standards`    | security    | Model decision (Security audit, OWASP)  | Priority 9 · Mandatory  |
+| `secrets-management`    | security    | Glob (`**/*.{env*,json,yaml,conf,...}`) | Priority 10 · Mandatory |
+| `testing-standards`     | testing     | Glob (`**/*.{test,spec}.*,tests/**`)    | Priority 8 · Mandatory  |
+| `performance-standards` | performance | Model decision (Latency, profiling)     | Priority 7 · Advisory   |
+
+Canonical rule specifications live under [specs/rules/](specs/rules/). A generator produces the loader-visible Antigravity rules in [rules/](rules/). See [rules architecture](docs/15-RULES-ARCHITECTURE.md) and [specifications](docs/16-RULE-SPECIFICATIONS.md).
+
 ## Repository layout
 
 | Path                                                                           | Purpose                                                       |
@@ -49,10 +70,11 @@ Canonical skill specifications live under [specs/skills/](specs/skills/) and dee
 | [specs/agents/](specs/agents/)                                                 | Canonical platform-independent agent specifications           |
 | [skills/](skills/)                                                             | Generated Antigravity skill definitions and references        |
 | [specs/skills/](specs/skills/)                                                 | Canonical platform-independent skill specifications           |
+| [rules/](rules/)                                                               | Generated Antigravity rules (1 global + 13 modular)           |
+| [specs/rules/](specs/rules/)                                                   | Canonical platform-independent rule specifications            |
 | [specs/adapters/](specs/adapters/README.md)                                    | Adapter registry and per-platform requirements                |
 | [specs/evaluation/scenarios.json](specs/evaluation/scenarios.json)             | Defined agent evaluation scenarios (unscored)                 |
 | [specs/evaluation/skill-scenarios.json](specs/evaluation/skill-scenarios.json) | Defined skill evaluation scenarios (unscored)                 |
-| [rules/](rules/)                                                               | Always-on engineering principles — Phase 4 extends            |
 | [scripts/](scripts/)                                                           | TypeScript validation utilities and code generators           |
 | [schemas/](schemas/)                                                           | Local schema transcriptions and contract schemas              |
 | [tests/](tests/)                                                               | Unit and integration tests                                    |
@@ -69,13 +91,15 @@ npm install
 npm run verify
 ```
 
-`npm run verify` runs the type check, full validation, unit tests, formatting check, and Markdown lint. After editing canonical agent or skill specs, regenerate the adapters:
+`npm run verify` runs the type check, full validation, unit tests, formatting check, and Markdown lint. After editing canonical agent, skill, or rule specs, regenerate the adapters:
 
 ```bash
 npm run generate:agents
 npm run generate:agents -- --check
 npm run generate:skills
 npm run generate:skills -- --check
+npm run generate:rules
+npm run generate:rules -- --check
 ```
 
 To validate the plugin itself with the installed Antigravity CLI:
@@ -90,13 +114,14 @@ The CLI binary is `agy`. On Windows it is installed at `~/.gemini/bin/agy.exe`; 
 
 - **Agents:** [Specifications](docs/04-AGENT-SPECIFICATIONS.md), [Coordination](docs/05-AGENT-COORDINATION.md), [Communication](docs/06-AGENT-COMMUNICATION.md), [Portability](docs/07-AGENT-PORTABILITY.md), [Evaluation](docs/08-AGENT-EVALUATION.md)
 - **Skills:** [Architecture](docs/09-SKILLS-ARCHITECTURE.md), [Specifications](docs/10-SKILL-SPECIFICATIONS.md), [Activation](docs/11-SKILL-ACTIVATION.md), [Agent integration](docs/12-SKILL-AGENT-INTEGRATION.md), [Portability](docs/13-SKILL-PORTABILITY.md)
-- **Foundation:** [Project overview](docs/01-PROJECT-OVERVIEW.md), [Technology stack](docs/02-TECHNOLOGY-STACK.md), [System architecture](docs/03-SYSTEM-ARCHITECTURE.md), [Engineering principles](docs/14-ENGINEERING-PRINCIPLES.md), [Repository structure](docs/15-REPOSITORY-STRUCTURE.md), [Official format verification](docs/24-OFFICIAL-FORMAT-VERIFICATION.md)
-- **Decisions:** [ADR-001 Foundation](docs/adr/ADR-001-foundation.md), [ADR-002 Agent system](docs/adr/ADR-002-agent-system.md), [ADR-003 Skills system](docs/adr/ADR-003-skills-system.md), [Documentation index](docs/README.md)
+- **Rules:** [Architecture](docs/15-RULES-ARCHITECTURE.md), [Specifications](docs/16-RULE-SPECIFICATIONS.md), [Activation](docs/17-RULE-ACTIVATION.md), [Priority and conflicts](docs/18-RULE-PRIORITY-AND-CONFLICTS.md), [Portability](docs/19-RULE-PORTABILITY.md)
+- **Foundation:** [Project overview](docs/01-PROJECT-OVERVIEW.md), [Technology stack](docs/02-TECHNOLOGY-STACK.md), [System architecture](docs/03-SYSTEM-ARCHITECTURE.md), [Engineering principles](docs/14-ENGINEERING-PRINCIPLES.md), [Repository structure](docs/20-REPOSITORY-STRUCTURE.md), [Official format verification](docs/24-OFFICIAL-FORMAT-VERIFICATION.md)
+- **Decisions:** [ADR-001 Foundation](docs/adr/ADR-001-foundation.md), [ADR-002 Agent system](docs/adr/ADR-002-agent-system.md), [ADR-003 Skills system](docs/adr/ADR-003-skills-system.md), [ADR-004 Rules system](docs/adr/ADR-004-rules-system.md), [Documentation index](docs/README.md)
 - **Policies:** [Security](SECURITY.md), [Contributing](CONTRIBUTING.md), [Changelog](CHANGELOG.md), [License](LICENSE).
 
 ## Verified vs proposed
 
-`agy plugin validate --strict .` recognises ten skills, six agents, and one rule with zero findings. Everything that claims Antigravity compatibility is recorded in [the verification record](docs/24-OFFICIAL-FORMAT-VERIFICATION.md) with sources and dates.
+`agy plugin validate --strict .` recognises ten skills, six agents, and fourteen rules with zero findings. Everything that claims Antigravity compatibility is recorded in [the verification record](docs/24-OFFICIAL-FORMAT-VERIFICATION.md) with sources and dates.
 
 **Runtime invocation, actual specialist delegation, and skill activation in live user sessions have not been tested.** No non-Antigravity adapter is implemented, and no evaluation score has been assigned. Installation and runtime discovery remain deliberately deferred.
 

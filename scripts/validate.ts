@@ -8,6 +8,7 @@ import {
 } from "./lib/json-config.ts";
 import { checkAdapterRegistry, checkGeneratedAgents } from "./lib/canonical.ts";
 import { checkGeneratedSkills } from "./lib/canonical-skills.ts";
+import { checkGeneratedRules } from "./lib/canonical-rules.ts";
 import { checkContracts } from "./lib/contracts.ts";
 import { checkMarkdownLinks } from "./lib/markdown-links.ts";
 import { repoRoot } from "./lib/paths.ts";
@@ -43,6 +44,10 @@ export function runChecks(root: string): CheckResult[] {
     {
       name: "canonical skill specifications and generated adapters",
       findings: checkGeneratedSkills(root),
+    },
+    {
+      name: "canonical rule specifications and generated adapters",
+      findings: checkGeneratedRules(root),
     },
     {
       name: "handoff and evaluation contracts",

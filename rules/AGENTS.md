@@ -1,4 +1,4 @@
-# Frontier Engineer — foundation rules
+# Frontier Engineer — Foundation Rules
 
 Always-on engineering rules for this plugin. Detailed rationale lives in [the engineering principles document](../docs/14-ENGINEERING-PRINCIPLES.md).
 
@@ -20,7 +20,7 @@ Always-on engineering rules for this plugin. Detailed rationale lives in [the en
 
 ## Verification discipline
 
-Keep these test states distinct: not written, not executed, failed, passed, blocked by environment. Never remove a failing test to achieve a green suite. Report skipped and blocked checks. A feature is complete only after the relevant checks have actually run.
+Keep these test states distinct: not written, not executed, failed, passed, blocked by environment, not applicable. Never remove a failing test to achieve a green suite. Report skipped and blocked checks. A feature is complete only after the relevant checks have actually run.
 
 ## Scope discipline
 

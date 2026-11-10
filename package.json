@@ -1,6 +1,6 @@
 {
   "name": "frontier-engineer",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "type": "module",
   "description": "Foundation tooling for the Frontier Engineer Antigravity plugin.",
@@ -13,6 +13,8 @@
     "validate": "node scripts/validate.ts",
     "generate:agents": "node scripts/generate-antigravity-agents.ts",
     "generate:skills": "node scripts/generate-antigravity-skills.ts",
+    "generate:rules": "node scripts/generate-antigravity-rules.ts",
+    "generate": "npm run generate:agents && npm run generate:skills && npm run generate:rules",
     "test": "vitest run",
     "test:watch": "vitest",
     "format": "prettier --write .",

@@ -1,4 +1,4 @@
-# Part 15 — Repository structure
+# Part 20 — Repository structure
 
 ## Layout decision
 
@@ -37,13 +37,23 @@ frontier-engineer/
 ├── agents/                      # Generated Antigravity adapters (6 files)
 ├── specs/                       # Platform-independent source of truth
 │   ├── agents/                  # Six canonical agent specifications
+│   ├── skills/                  # Ten canonical skill specifications
+│   │   └── references/          # Ten progressive-disclosure reference guides
+│   ├── rules/                   # Canonical rule specifications
+│   │   ├── engineering/         # General engineering, code quality, documentation
+│   │   ├── frontend/            # Frontend standards, accessibility
+│   │   ├── backend/             # Backend standards, API security
+│   │   ├── database/            # Database standards, migration safety
+│   │   ├── security/            # Security standards, secrets management
+│   │   ├── testing/             # Testing standards
+│   │   ├── performance/         # Performance standards
+│   │   └── AGENTS.md            # Global foundation rule specification
 │   ├── adapters/                # Adapter registry and per-platform requirements
-│   ├── evaluation/scenarios.json
+│   ├── evaluation/              # Agent and skill evaluation scenarios
 │   ├── handoff-contract.md
 │   └── handoff-examples.json
-├── skills/                      # Phase 3: skills/<name>/SKILL.md
-├── rules/
-│   └── AGENTS.md                # Always-on foundation rule
+├── skills/                      # Ten generated Antigravity skills (SKILL.md + references)
+├── rules/                       # Fourteen generated Antigravity rules (1 global + 13 modular)
 ├── schemas/                     # Local verified-schema transcriptions and contracts
 │   ├── plugin.schema.json
 │   ├── skill-frontmatter.schema.json
@@ -52,17 +62,22 @@ frontier-engineer/
 │   ├── mcp-config.schema.json
 │   ├── hooks.schema.json
 │   ├── canonical-agent.schema.json
+│   ├── canonical-skill.schema.json
+│   ├── canonical-rule.schema.json
 │   ├── handoff.schema.json
-│   └── evaluation-scenarios.schema.json
+│   ├── evaluation-scenarios.schema.json
+│   └── skill-evaluation-scenarios.schema.json
 ├── scripts/
 │   ├── validate.ts
 │   ├── generate-antigravity-agents.ts
+│   ├── generate-antigravity-skills.ts
+│   ├── generate-antigravity-rules.ts
 │   └── lib/                     # Pure, unit-testable check functions
 ├── tests/
 │   ├── unit/
 │   ├── integration/
 │   └── fixtures/                # Deliberately invalid inputs
-├── docs/                        # This documentation
+├── docs/                        # Project documentation (Parts 01-20, 24, ADRs)
 │   └── adr/
 ├── .github/workflows/
 │   └── validate.yml
@@ -71,16 +86,16 @@ frontier-engineer/
 
 ## Component paths
 
-| Component       | Verified path                                      | Status                               |
-| --------------- | -------------------------------------------------- | ------------------------------------ |
-| Manifest        | `plugin.json` or `.antigravity-plugin/plugin.json` | Present                              |
-| Skills          | `skills/<name>/SKILL.md`                           | Directory prepared; empty            |
-| Custom agents   | `agents/<name>.md` or `agents/<name>/agent.md`     | Six generated, statically discovered |
-| Always-on rule  | `rules/AGENTS.md`                                  | Present                              |
-| Named rules     | `rules/<name>.md` with `trigger` frontmatter       | Phase 4                              |
-| MCP servers     | `mcp_config.json`                                  | Phase 5; absent                      |
-| Lifecycle hooks | `hooks.json`                                       | Phase 6; absent                      |
-| Helper scripts  | `scripts/`                                         | Present                              |
+| Component       | Verified path                                      | Status                                    |
+| --------------- | -------------------------------------------------- | ----------------------------------------- |
+| Manifest        | `plugin.json` or `.antigravity-plugin/plugin.json` | Present                                   |
+| Skills          | `skills/<name>/SKILL.md`                           | Ten generated, statically discovered      |
+| Custom agents   | `agents/<name>.md` or `agents/<name>/agent.md`     | Six generated, statically discovered      |
+| Always-on rule  | `rules/AGENTS.md`                                  | Present                                   |
+| Named rules     | `rules/<name>.md` with `trigger` frontmatter       | Thirteen generated, statically discovered |
+| MCP servers     | `mcp_config.json`                                  | Phase 5; absent                           |
+| Lifecycle hooks | `hooks.json`                                       | Phase 6; absent                           |
+| Helper scripts  | `scripts/`                                         | Present                                   |
 
 Antigravity scans `skills/`, `rules/`, and `agents/` **one level deep**. Nested components require a discovery manifest (`skills.json`, `rules.json`, `agents.json`). The validator warns when a component is placed too deep.
 

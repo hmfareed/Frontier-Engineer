@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-11-10
 - **Deciders:** Phase 1 foundation work
-- **Related:** [Part 24 verification record](../24-OFFICIAL-FORMAT-VERIFICATION.md), [Part 15 repository structure](../15-REPOSITORY-STRUCTURE.md)
+- **Related:** [Part 24 verification record](../24-OFFICIAL-FORMAT-VERIFICATION.md), [Part 20 repository structure](../20-REPOSITORY-STRUCTURE.md)
 
 ## Context
 

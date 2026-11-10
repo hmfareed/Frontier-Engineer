@@ -2,6 +2,31 @@
 
 All notable changes to Frontier Engineer are documented here. This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.4.0] - 2026-11-10
+
+Modular engineering rules system (Phase 4).
+
+### Added
+
+- Fourteen engineering rules: one global always-on foundation rule (`rules/AGENTS.md`) and thirteen modular rules across seven engineering categories (`engineering`, `frontend`, `backend`, `database`, `security`, `testing`, `performance`).
+- Canonical platform-independent rule specifications under `specs/rules/` validated against `schemas/canonical-rule.schema.json`, each enforcing five mandatory sections (`Purpose`, `Scope and applicability`, `Core standards`, `Invariants and prohibitions`, and `Verification criteria`).
+- A TypeScript generator (`scripts/generate-antigravity-rules.ts`) compiling canonical specifications into flat Antigravity-compatible files under `rules/<id>.md` and `rules/AGENTS.md`.
+- Strict drift detection in `scripts/lib/canonical-rules.ts` checking frontmatter, normalized body content, and absence of unexpected or missing rule files.
+- Official format verification with `agy plugin validate --strict .` recognizing 10 skills, 6 agents, and 14 rules with zero warnings or errors.
+- New documentation: `docs/15-RULES-ARCHITECTURE.md`, `docs/16-RULE-SPECIFICATIONS.md`, `docs/17-RULE-ACTIVATION.md`, `docs/18-RULE-PRIORITY-AND-CONFLICTS.md`, `docs/19-RULE-PORTABILITY.md`, and `docs/adr/ADR-004-rules-system.md`.
+- Comprehensive test coverage in `tests/unit/canonical-rules-schema.test.ts` and `tests/unit/canonical-rules.test.ts`.
+
+### Changed
+
+- `docs/15-REPOSITORY-STRUCTURE.md` moved to `docs/20-REPOSITORY-STRUCTURE.md` to cleanly accommodate the Rules System documentation block (Parts 15–19); all incoming links updated.
+- `plugin.json` and `package.json` bumped to `0.4.0`.
+- Validation script and test runner updated to verify canonical rules and generated adapters.
+
+### Known limitations
+
+- Path-triggered glob rules and model-decision rules depend on Antigravity runtime evaluation during live user sessions.
+- Non-Antigravity rule adapters (Claude Code, Codex, Cursor) remain documented canonical targets but are not compiled.
+
 ## [0.3.0] - 2026-11-10
 
 Portable engineering skills system (Phase 3).

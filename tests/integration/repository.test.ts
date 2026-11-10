@@ -12,6 +12,11 @@ import {
   checkGeneratedSkills,
   loadCanonicalSkillSpecs,
 } from "../../scripts/lib/canonical-skills.ts";
+import {
+  buildRuleAdapterFiles,
+  checkGeneratedRules,
+  loadCanonicalRules,
+} from "../../scripts/lib/canonical-rules.ts";
 import { checkContracts } from "../../scripts/lib/contracts.ts";
 import { checkPluginManifest } from "../../scripts/lib/json-config.ts";
 import { checkMarkdownLinks } from "../../scripts/lib/markdown-links.ts";
@@ -34,7 +39,7 @@ function errors(findings: Finding[]): Finding[] {
 }
 
 describe("repository foundation", () => {
-  it("passes every critical validation check", () => {
+  it("passes every critical validation check", { timeout: 15000 }, () => {
     const results = runChecks(root);
     expect(countBySeverity(results).error).toBe(0);
     for (const result of results) {
@@ -90,7 +95,7 @@ describe("repository foundation", () => {
     expect(manifest.name).toBe("frontier-engineer");
     expect(manifest.name).toBe(pkg.name);
     expect(manifest.version).toBe(pkg.version);
-    expect(manifest.version).toBe("0.3.0");
+    expect(manifest.version).toBe("0.4.0");
   });
 
   it("does not ship unverified optional configs", () => {
@@ -115,6 +120,15 @@ describe("repository foundation", () => {
     expect(checkGeneratedSkills(root)).toEqual([]);
   });
 
+  it("ships fourteen canonical rules and fourteen matching generated files", () => {
+    const { rules, globalRule, findings } = loadCanonicalRules(root);
+    expect(findings).toEqual([]);
+    expect(rules).toHaveLength(13);
+    expect(globalRule).not.toBeNull();
+    expect(buildRuleAdapterFiles(root).size).toBe(14);
+    expect(checkGeneratedRules(root)).toEqual([]);
+  });
+
   it("passes the handoff and evaluation contract checks", () => {
     expect(checkContracts(root)).toEqual([]);
   });
@@ -129,7 +143,7 @@ describe("repository foundation", () => {
     }
   });
 
-  it("indexes every Phase 1, Phase 2, and Phase 3 document", () => {
+  it("indexes every Phase 1, Phase 2, Phase 3, and Phase 4 document", () => {
     const index = fs.readFileSync(path.join(root, "docs", "README.md"), "utf8");
     for (const name of [
       "01-PROJECT-OVERVIEW.md",
@@ -146,11 +160,17 @@ describe("repository foundation", () => {
       "12-SKILL-AGENT-INTEGRATION.md",
       "13-SKILL-PORTABILITY.md",
       "14-ENGINEERING-PRINCIPLES.md",
-      "15-REPOSITORY-STRUCTURE.md",
+      "15-RULES-ARCHITECTURE.md",
+      "16-RULE-SPECIFICATIONS.md",
+      "17-RULE-ACTIVATION.md",
+      "18-RULE-PRIORITY-AND-CONFLICTS.md",
+      "19-RULE-PORTABILITY.md",
+      "20-REPOSITORY-STRUCTURE.md",
       "24-OFFICIAL-FORMAT-VERIFICATION.md",
       "adr/ADR-001-foundation.md",
       "adr/ADR-002-agent-system.md",
       "adr/ADR-003-skills-system.md",
+      "adr/ADR-004-rules-system.md",
     ]) {
       expect(index, name).toContain(name);
     }
@@ -158,7 +178,7 @@ describe("repository foundation", () => {
 
   it("documents the verified component layout", () => {
     const structure = fs.readFileSync(
-      path.join(root, "docs", "15-REPOSITORY-STRUCTURE.md"),
+      path.join(root, "docs", "20-REPOSITORY-STRUCTURE.md"),
       "utf8",
     );
     for (const component of [

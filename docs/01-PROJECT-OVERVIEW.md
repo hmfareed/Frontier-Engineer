@@ -8,7 +8,7 @@
 | Category              | AI software-engineering agent system |
 | Distribution          | Google Antigravity plugin            |
 | Execution environment | Antigravity App, CLI, or IDE         |
-| Current version       | 0.3.0 (Phase 3 skills system)        |
+| Current version       | 0.4.0 (Phase 4 rules system)         |
 | Target release        | 1.0.0 (Phase 10)                     |
 
 ## Vision
@@ -51,7 +51,9 @@ Phase 2 added six platform-independent canonical agent specifications, a generat
 
 Phase 3 implemented ten platform-independent canonical skill specifications under `specs/skills/`, twenty deep technical reference guides under `specs/skills/references/`, a compiler emitting Antigravity skill adapters under `skills/`, twenty defined skill evaluation scenarios, and comprehensive validation tooling. See [Part 09](09-SKILLS-ARCHITECTURE.md) and [Part 10](10-SKILL-SPECIFICATIONS.md).
 
-Still deliberately deferred: the full rule set (Phase 4), MCP integrations (Phase 5), lifecycle hooks (Phase 6), project intelligence and memory (Phase 7), and release packaging (Phases 9–10).
+Phase 4 implemented the modular engineering rules system: one global foundation rule and thirteen specialized modular rules across seven categories, canonical specifications under `specs/rules/`, an adapter compiler emitting flat files under `rules/`, strict drift detection, and full Antigravity CLI discovery verification (14 rules). See [Part 15](15-RULES-ARCHITECTURE.md) and [Part 16](16-RULE-SPECIFICATIONS.md).
+
+Still deliberately deferred: MCP integrations (Phase 5), lifecycle hooks (Phase 6), project intelligence and memory (Phase 7), and release packaging (Phases 9–10).
 
 ## Current limitations
 

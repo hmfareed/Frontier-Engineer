@@ -75,6 +75,16 @@ The omission of `tools` is a deliberate, documented decision in [ADR-002](adr/AD
 | Skill evaluation scenarios defined (20 scenarios)       | `specs/evaluation/skill-scenarios.json`                          | **Confirmed** (schema validated) | Status locked to `defined`; no empirical scores assigned                                           |
 | Runtime skill activation during live agent conversation | Antigravity agent runtime                                        | **Documented only**              | Verified by official discovery docs, not yet exercised in a recorded live user session             |
 
+## Phase 4 additions (checked 2026-11-10)
+
+| Item                                                    | Source                                                           | Result        | Note                                                                                               |
+| ------------------------------------------------------- | ---------------------------------------------------------------- | ------------- | -------------------------------------------------------------------------------------------------- |
+| Fourteen rule definitions discovered                    | local `agy plugin validate --strict --json .`                    | **Confirmed** | `components.rules: 14`, `findings: []`, exit 0                                                     |
+| Flat scan discovery constraint for `rules/`             | local CLI validation & builtin `rules.md` (`agy-customizations`) | **Confirmed** | Antigravity scans `rules/*.md` one level deep; nested subdirectories ignored; flat output required |
+| Always-on rule format (`rules/AGENTS.md`)               | local CLI validation & builtin `rules.md`                        | **Confirmed** | Rule without YAML frontmatter discovered as always-on rule                                         |
+| Named rule frontmatter (`trigger: glob/model_decision`) | local CLI validation & `rule-frontmatter.schema.json`            | **Confirmed** | Glob patterns string and model decision descriptions validated cleanly                             |
+| Canonical-first rules generation and drift check        | `scripts/generate-antigravity-rules.ts`, local test suite        | **Confirmed** | Compiles 13 modular specs + 1 global rule into 14 flat `rules/*.md` files; CI enforces zero drift  |
+
 ## Rules for future phases
 
 1. Record the exact URL and date checked for any new format claim.
