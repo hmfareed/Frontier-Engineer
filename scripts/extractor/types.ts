@@ -41,10 +41,7 @@ export interface SymbolMetadata {
   isReactComponent?: boolean;
   reactComponentConfidence?: number;
   evidenceClassification?:
-    | "syntactic_ast"
-    | "heuristic_jsx_return"
-    | "dynamic_import_inferred"
-    | "convention_inferred";
+    "syntactic_ast" | "heuristic_jsx_return" | "dynamic_import_inferred" | "convention_inferred";
   docComment?: string;
   signature?: string;
   returnType?: string;
@@ -70,10 +67,7 @@ export interface ImportedSymbol {
 }
 
 export type EvidenceClassification =
-  | "syntactic_ast"
-  | "heuristic_jsx_return"
-  | "dynamic_import_inferred"
-  | "external_or_missing";
+  "syntactic_ast" | "heuristic_jsx_return" | "dynamic_import_inferred" | "external_or_missing";
 
 export interface ImportRecord {
   specifier: string;

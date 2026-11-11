@@ -7,10 +7,7 @@ import type {
   SourceEvidence,
   SymbolKind,
 } from "../../scripts/extractor/types.ts";
-import {
-  isExtractionResult,
-  isValidSymbolKind,
-} from "../../scripts/extractor/types.ts";
+import { isExtractionResult, isValidSymbolKind } from "../../scripts/extractor/types.ts";
 
 describe("extractor-types (Extraction Contracts & Invariants)", () => {
   it("validates valid symbol kinds", () => {

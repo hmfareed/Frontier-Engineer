@@ -2,10 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import {
-  loadTsConfig,
-  resolveModuleSpecifier,
-} from "../../scripts/extractor/module-resolver.ts";
+import { loadTsConfig, resolveModuleSpecifier } from "../../scripts/extractor/module-resolver.ts";
 
 describe("extractor-module-resolution (TypeScript Module Resolution Logic)", () => {
   let tmpWorkspace: string;
@@ -31,7 +28,10 @@ describe("extractor-module-resolution (TypeScript Module Resolution Logic)", () 
 
   it("2. resolves relative path with extension probing (.ts, .tsx, .js)", () => {
     fs.mkdirSync(path.join(tmpWorkspace, "src"));
-    fs.writeFileSync(path.join(tmpWorkspace, "src", "button.tsx"), "export const Button = () => null;");
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "src", "button.tsx"),
+      "export const Button = () => null;",
+    );
     fs.writeFileSync(path.join(tmpWorkspace, "src", "util.ts"), "export const u = 1;");
 
     const res1 = resolveModuleSpecifier("./button", "src/main.ts", tmpWorkspace);
@@ -55,7 +55,10 @@ describe("extractor-module-resolution (TypeScript Module Resolution Logic)", () 
 
   it("4. resolves directory index probing (index.ts, index.tsx)", () => {
     fs.mkdirSync(path.join(tmpWorkspace, "src", "components"), { recursive: true });
-    fs.writeFileSync(path.join(tmpWorkspace, "src", "components", "index.ts"), "export * from './button';");
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "src", "components", "index.ts"),
+      "export * from './button';",
+    );
 
     const result = resolveModuleSpecifier("./components", "src/main.ts", tmpWorkspace);
     expect(result.status).toBe("resolved");
@@ -64,7 +67,10 @@ describe("extractor-module-resolution (TypeScript Module Resolution Logic)", () 
 
   it("5. resolves path mapping from tsconfig.json paths (@/* -> src/*)", () => {
     fs.mkdirSync(path.join(tmpWorkspace, "src", "core"), { recursive: true });
-    fs.writeFileSync(path.join(tmpWorkspace, "src", "core", "config.ts"), "export const env = 'dev';");
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "src", "core", "config.ts"),
+      "export const env = 'dev';",
+    );
 
     const tsconfig = {
       compilerOptions: {
@@ -87,7 +93,10 @@ describe("extractor-module-resolution (TypeScript Module Resolution Logic)", () 
       JSON.stringify({ name: "@fe/shared", main: "src/index.ts" }),
     );
     fs.mkdirSync(path.join(tmpWorkspace, "packages", "shared", "src"));
-    fs.writeFileSync(path.join(tmpWorkspace, "packages", "shared", "src", "index.ts"), "export const v = 1;");
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "packages", "shared", "src", "index.ts"),
+      "export const v = 1;",
+    );
 
     const result = resolveModuleSpecifier("../packages/shared", "src/main.ts", tmpWorkspace);
     expect(result.status).toBe("resolved");

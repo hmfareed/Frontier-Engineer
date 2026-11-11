@@ -292,7 +292,10 @@ export function visitSourceFile(
           isWildcard: true,
           sourceEvidence: extractEvidence(node, sourceFile),
         });
-      } else if (node.exportClause.kind === parser.SyntaxKind.NamedExports && node.exportClause.elements) {
+      } else if (
+        node.exportClause.kind === parser.SyntaxKind.NamedExports &&
+        node.exportClause.elements
+      ) {
         for (const el of node.exportClause.elements) {
           const name = el.name.text;
           const localName = el.propertyName?.text || el.name.text;

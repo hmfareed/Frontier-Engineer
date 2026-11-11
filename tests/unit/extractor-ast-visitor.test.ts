@@ -73,7 +73,9 @@ describe("extractor-ast-visitor (AST Node Classification & Declaration Semantics
     const sf = parser.createSourceFile("src/types.ts", code, parser.ScriptTarget.Latest, true);
     const findings = visitSourceFile(sf, "src/types.ts", parser);
 
-    expect(findings.symbols.some((s) => s.name === "UserProfile" && s.kind === "interface")).toBe(true);
+    expect(findings.symbols.some((s) => s.name === "UserProfile" && s.kind === "interface")).toBe(
+      true,
+    );
     expect(findings.symbols.some((s) => s.name === "UserId" && s.kind === "type_alias")).toBe(true);
     expect(findings.symbols.some((s) => s.name === "UserRole" && s.kind === "enum")).toBe(true);
   });
@@ -120,7 +122,12 @@ describe("extractor-ast-visitor (AST Node Classification & Declaration Semantics
       };
     `;
 
-    const sf = parser.createSourceFile("src/components.tsx", code, parser.ScriptTarget.Latest, true);
+    const sf = parser.createSourceFile(
+      "src/components.tsx",
+      code,
+      parser.ScriptTarget.Latest,
+      true,
+    );
     const findings = visitSourceFile(sf, "src/components.tsx", parser);
 
     const userCard = findings.symbols.find((s) => s.name === "UserCard");

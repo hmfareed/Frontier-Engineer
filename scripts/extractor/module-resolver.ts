@@ -78,7 +78,10 @@ const NODE_BUILTINS = new Set<string>([
 /**
  * Loads and parses tsconfig.json from workspace root or specified path.
  */
-export function loadTsConfig(workspaceRoot: string, customPath?: string): TsConfigOptions | undefined {
+export function loadTsConfig(
+  workspaceRoot: string,
+  customPath?: string,
+): TsConfigOptions | undefined {
   const tsconfigPath = customPath || path.join(workspaceRoot, "tsconfig.json");
   if (!fs.existsSync(tsconfigPath)) {
     return undefined;
@@ -179,10 +182,7 @@ export function resolveModuleSpecifier(
 
   // 2. Handle tsconfig path mapping (e.g. @/* -> src/*)
   if (!isRelative && !isNodeBuiltin && tsconfig?.compilerOptions?.paths) {
-    const baseUrl = path.resolve(
-      normWorkspace,
-      tsconfig.compilerOptions.baseUrl || ".",
-    );
+    const baseUrl = path.resolve(normWorkspace, tsconfig.compilerOptions.baseUrl || ".");
     const pathsMap = tsconfig.compilerOptions.paths;
 
     for (const [pattern, targets] of Object.entries(pathsMap)) {
@@ -209,9 +209,7 @@ export function resolveModuleSpecifier(
           const candidateAbs = path.resolve(baseUrl, resolvedTarget);
           const probed = probeCandidate(candidateAbs);
           if (probed && probed.startsWith(normWorkspace)) {
-            const canonical = path
-              .relative(normWorkspace, probed)
-              .replace(/\\/g, "/");
+            const canonical = path.relative(normWorkspace, probed).replace(/\\/g, "/");
             return {
               specifier,
               resolvedCanonicalPath: canonical,
@@ -232,9 +230,7 @@ export function resolveModuleSpecifier(
     const probed = probeCandidate(targetAbs);
 
     if (probed && probed.startsWith(normWorkspace)) {
-      const canonical = path
-        .relative(normWorkspace, probed)
-        .replace(/\\/g, "/");
+      const canonical = path.relative(normWorkspace, probed).replace(/\\/g, "/");
       return {
         specifier,
         resolvedCanonicalPath: canonical,

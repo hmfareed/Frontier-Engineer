@@ -86,6 +86,7 @@ Product documentation for Frontier Engineer. The original 26-part specification 
 
 - [Phase 3 implementation plan](superpowers/plans/2026-11-10-phase-3-skills-system.md)
 - [Phase 4 implementation plan](superpowers/plans/2026-11-10-phase-4-rules-system.md)
+- [Phase 7.2 implementation plan](superpowers/plans/2026-11-11-phase-7-2-structural-extractors.md)
 
 ## Reading order
 

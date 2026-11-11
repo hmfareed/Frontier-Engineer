@@ -28,7 +28,13 @@ export function computeSymbolId(
   qualifiedName: string,
   disambiguator: string | number = 0,
 ): string {
-  const raw = formatCanonicalSymbolId(canonicalPath, parentScope, kind, qualifiedName, disambiguator);
+  const raw = formatCanonicalSymbolId(
+    canonicalPath,
+    parentScope,
+    kind,
+    qualifiedName,
+    disambiguator,
+  );
   return crypto.createHash("sha256").update(raw, "utf8").digest("hex");
 }
 
@@ -49,7 +55,9 @@ function extractNodeTokens(node: any, tokens: NormalizedToken[], parser: ParserA
 
   tokens.push({
     k: node.kind,
-    t: isIdentifierOrLiteral ? node.text ?? (node.escapedText ? String(node.escapedText) : undefined) : undefined,
+    t: isIdentifierOrLiteral
+      ? (node.text ?? (node.escapedText ? String(node.escapedText) : undefined))
+      : undefined,
   });
 
   parser.forEachChild(node, (child) => {

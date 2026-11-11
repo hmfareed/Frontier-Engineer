@@ -18,7 +18,10 @@ describe("extractor-orchestrator (Public Facade & End-to-End Extraction)", () =>
   it("1. extracts complete file symbols, imports, and exports with resolved modules", async () => {
     // Scaffold workspace files
     fs.mkdirSync(path.join(tmpWorkspace, "src"));
-    fs.writeFileSync(path.join(tmpWorkspace, "src", "types.ts"), "export interface User { id: string; }");
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "src", "types.ts"),
+      "export interface User { id: string; }",
+    );
     fs.writeFileSync(
       path.join(tmpWorkspace, "src", "userService.ts"),
       `
@@ -78,7 +81,10 @@ describe("extractor-orchestrator (Public Facade & End-to-End Extraction)", () =>
 
   it("2. handles tsconfig path mappings during end-to-end extraction", async () => {
     fs.mkdirSync(path.join(tmpWorkspace, "src", "utils"), { recursive: true });
-    fs.writeFileSync(path.join(tmpWorkspace, "src", "utils", "math.ts"), "export const add = (a: number, b: number) => a + b;");
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "src", "utils", "math.ts"),
+      "export const add = (a: number, b: number) => a + b;",
+    );
     fs.writeFileSync(
       path.join(tmpWorkspace, "tsconfig.json"),
       JSON.stringify({

@@ -1,11 +1,7 @@
 import { visitSourceFile } from "./ast-visitor.ts";
 import { loadTsConfig, resolveModuleSpecifier } from "./module-resolver.ts";
 import { loadParser, type ParserApi } from "./parser-loader.ts";
-import {
-  computeFingerprint,
-  computeSymbolId,
-  formatCanonicalSymbolId,
-} from "./symbol-identity.ts";
+import { computeFingerprint, computeSymbolId, formatCanonicalSymbolId } from "./symbol-identity.ts";
 import type {
   ExtractionDiagnostic,
   ExtractionResult,
@@ -22,7 +18,11 @@ export * from "./types.ts";
 function getScriptKind(canonicalPath: string, parser: ParserApi): number {
   if (canonicalPath.endsWith(".tsx")) return parser.ScriptKind.TSX;
   if (canonicalPath.endsWith(".jsx")) return parser.ScriptKind.JSX;
-  if (canonicalPath.endsWith(".js") || canonicalPath.endsWith(".mjs") || canonicalPath.endsWith(".cjs")) {
+  if (
+    canonicalPath.endsWith(".js") ||
+    canonicalPath.endsWith(".mjs") ||
+    canonicalPath.endsWith(".cjs")
+  ) {
     return parser.ScriptKind.JS;
   }
   return parser.ScriptKind.TS;
@@ -78,7 +78,10 @@ export async function extractFileSymbols(
     for (const d of sourceFile.parseDiagnostics) {
       diagnostics.push({
         severity: "warning",
-        message: typeof d.messageText === "string" ? d.messageText : d.messageText?.messageText || "Parse diagnostic",
+        message:
+          typeof d.messageText === "string"
+            ? d.messageText
+            : d.messageText?.messageText || "Parse diagnostic",
         line: d.start,
       });
     }
