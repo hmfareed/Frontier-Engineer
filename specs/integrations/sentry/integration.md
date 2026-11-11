@@ -4,7 +4,7 @@ name: "Sentry Observability"
 description: "Provides access to Sentry error monitoring, stack trace inspection, crash reports, and issue triage using official @sentry/mcp-server."
 category: "observability"
 version: "1.1.0"
-lifecycle: "provider_verified"
+lifecycle: "blocked"
 provider:
   name: "Sentry (Official / getsentry)"
   documentationUrl: "https://github.com/getsentry/sentry-mcp"
@@ -18,15 +18,11 @@ runtime:
   executable: "npx"
   args:
     - "-y"
-    - "@sentry/mcp-server@latest"
+    - "@sentry/mcp-server@0.49.0"
   envVars:
-    - name: "SENTRY_ACCESS_TOKEN"
-      required: true
-      description: "Sentry Personal Access Token or User Auth Token with issue read permissions."
-      secret: true
     - name: "SENTRY_AUTH_TOKEN"
-      required: false
-      description: "Alternative Sentry authentication token recognized by Sentry CLI."
+      required: true
+      description: "Sentry User Auth Token with project read permissions (org:read, project:read, event:read)."
       secret: true
     - name: "SENTRY_ORG"
       required: false
@@ -79,7 +75,6 @@ security:
     - "read_only"
   readOnlyAlternative: "Analyze local terminal error logs, reproduction test cases, and application log files."
   credentialEnvVars:
-    - "SENTRY_ACCESS_TOKEN"
     - "SENTRY_AUTH_TOKEN"
 platformConfig: {}
 ---
@@ -93,7 +88,7 @@ The Sentry MCP integration connects Frontier Engineer to live error tracking and
 ## Provider and maintenance
 
 - **Provider:** Sentry (Official / getsentry)
-- **Upstream Package:** `@sentry/mcp-server@latest`
+- **Upstream Package:** `@sentry/mcp-server@0.49.0`
 - **Upstream Repository:** [https://github.com/getsentry/sentry-mcp](https://github.com/getsentry/sentry-mcp)
 - **Documentation:** [https://github.com/getsentry/sentry-mcp](https://github.com/getsentry/sentry-mcp)
 - **Maintainer:** Sentry Team
@@ -104,11 +99,11 @@ The Sentry MCP integration connects Frontier Engineer to live error tracking and
 ## Runtime requirements and transport
 
 - **Transport:** Standard input/output (`stdio`)
-- **Runtime:** Node.js (v18.0.0 or higher)
+- **Runtime:** Node.js (v22.0.0 or higher)
 - **Executable:** `npx`
-- **Execution Command:** `npx -y @sentry/mcp-server@latest`
+- **Execution Command:** `npx -y @sentry/mcp-server@0.49.0`
 - **Environment Variables:**
-  - `SENTRY_ACCESS_TOKEN` / `SENTRY_AUTH_TOKEN`: Personal Access Token with scoped read permissions.
+  - `SENTRY_AUTH_TOKEN`: Official auth token with scoped read permissions (`org:read`, `project:read`, `event:read`). Note: The legacy variable `SENTRY_ACCESS_TOKEN` is deprecated upstream.
   - `SENTRY_ORG` (optional): Default organization slug.
 
 ## Capabilities and tool definitions

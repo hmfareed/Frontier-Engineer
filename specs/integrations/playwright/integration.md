@@ -18,7 +18,7 @@ runtime:
   executable: "npx"
   args:
     - "-y"
-    - "@playwright/mcp@latest"
+    - "@playwright/mcp@0.0.85"
     - "--headless"
     - "--isolated"
   envVars:
@@ -98,7 +98,7 @@ The Playwright MCP integration connects Frontier Engineer to headless browser au
 ## Provider and maintenance
 
 - **Provider:** Playwright (Official / Microsoft)
-- **Upstream Package:** `@playwright/mcp@latest`
+- **Upstream Package:** `@playwright/mcp@0.0.85`
 - **Documentation:** [https://playwright.dev/mcp/installation](https://playwright.dev/mcp/installation)
 - **Repository:** [https://github.com/microsoft/playwright-mcp](https://github.com/microsoft/playwright-mcp)
 - **Maintainer:** Microsoft / Playwright Team
@@ -111,7 +111,7 @@ The Playwright MCP integration connects Frontier Engineer to headless browser au
 - **Transport:** Standard input/output (`stdio`)
 - **Runtime:** Node.js (v20.0.0 or higher) with Playwright browser dependencies
 - **Executable:** `npx`
-- **Execution Command:** `npx -y @playwright/mcp@latest --headless --isolated`
+- **Execution Command:** `npx -y @playwright/mcp@0.0.85 --headless --isolated`
 - **Flags:**
   - `--headless`: Enforces headless execution without opening GUI windows.
   - `--isolated`: Ensures the browser session runs completely in-memory, without persisting cookies or storage to disk, and without accessing the developer's personal browser profiles.

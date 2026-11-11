@@ -5,7 +5,7 @@ integrations:
   - id: "github"
     name: "GitHub Integration"
     category: "repository"
-    lifecycle: "provider_verified"
+    lifecycle: "blocked"
     optional: true
     provider:
       name: "GitHub (Official)"
@@ -75,7 +75,7 @@ integrations:
   - id: "sentry"
     name: "Sentry Observability"
     category: "observability"
-    lifecycle: "provider_verified"
+    lifecycle: "blocked"
     optional: true
     provider:
       name: "Sentry (Official / getsentry)"
@@ -99,7 +99,7 @@ integrations:
   - id: "database"
     name: "PostgreSQL Database Inspection"
     category: "database"
-    lifecycle: "provider_verified"
+    lifecycle: "runtime_tested"
     optional: true
     provider:
       name: "Microsoft (Official / microsoft)"
@@ -128,13 +128,13 @@ The Central MCP Integration Registry defines all external integrations supported
 
 ## Registry Summary
 
-| Integration  | Category          | Lifecycle           | Optional | Provider                          | Transport | Default Status    |
-| :----------- | :---------------- | :------------------ | :------- | :-------------------------------- | :-------- | :---------------- |
-| `github`     | `repository`      | `provider_verified` | Yes      | GitHub (Official)                 | `stdio`   | Disabled (Opt-in) |
-| `context7`   | `documentation`   | `provider_verified` | Yes      | Upstash Context7                  | `stdio`   | Disabled (Opt-in) |
-| `playwright` | `browser_testing` | `provider_verified` | Yes      | Playwright (Official / Microsoft) | `stdio`   | Disabled (Opt-in) |
-| `sentry`     | `observability`   | `provider_verified` | Yes      | Sentry (Official / getsentry)     | `stdio`   | Disabled (Opt-in) |
-| `database`   | `database`        | `provider_verified` | Yes      | Microsoft (Official / microsoft)  | `stdio`   | Disabled (Opt-in) |
+| Integration  | Category          | Lifecycle        | Optional | Provider                          | Transport | Default Status    |
+| :----------- | :---------------- | :--------------- | :------- | :-------------------------------- | :-------- | :---------------- |
+| `github`     | `repository`      | `blocked`        | Yes      | GitHub (Official)                 | `stdio`   | Disabled (Opt-in) |
+| `context7`   | `documentation`   | `runtime_tested` | Yes      | Upstash Context7                  | `stdio`   | Disabled (Opt-in) |
+| `playwright` | `browser_testing` | `runtime_tested` | Yes      | Playwright (Official / Microsoft) | `stdio`   | Disabled (Opt-in) |
+| `sentry`     | `observability`   | `blocked`        | Yes      | Sentry (Official / getsentry)     | `stdio`   | Disabled (Opt-in) |
+| `database`   | `database`        | `runtime_tested` | Yes      | Microsoft (Official / microsoft)  | `stdio`   | Disabled (Opt-in) |
 
 ## Operational Principles
 

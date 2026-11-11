@@ -9,8 +9,8 @@
         "--rm",
         "-e",
         "GITHUB_PERSONAL_ACCESS_TOKEN",
-        "ghcr.io/github/github-mcp-server",
-        "--read-only=true",
+        "ghcr.io/github/github-mcp-server:v2.1.0",
+        "--read-only",
         "--toolsets=context,issues,pull_requests,repos"
       ],
       "disabled": false,
@@ -23,7 +23,10 @@
     },
     "context7": {
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"],
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@4.6.0"
+      ],
       "disabled": false,
       "description": "Enables fast, authoritative technical documentation lookup, library version resolution, and code snippet retrieval from Context7.",
       "requiredEnvironmentVariables": {
@@ -32,7 +35,12 @@
     },
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated"],
+      "args": [
+        "-y",
+        "@playwright/mcp@0.0.85",
+        "--headless",
+        "--isolated"
+      ],
       "disabled": false,
       "description": "Enables browser automation, interactive DOM inspection, accessibility tree validation, and screenshot capture for UI verification using official @playwright/mcp.",
       "requiredEnvironmentVariables": {
@@ -42,22 +50,28 @@
     },
     "sentry": {
       "command": "npx",
-      "args": ["-y", "@sentry/mcp-server@latest"],
+      "args": [
+        "-y",
+        "@sentry/mcp-server@0.49.0"
+      ],
       "disabled": false,
       "description": "Provides access to Sentry error monitoring, stack trace inspection, crash reports, and issue triage using official @sentry/mcp-server.",
       "requiredEnvironmentVariables": {
-        "SENTRY_ACCESS_TOKEN": "Sentry Personal Access Token or User Auth Token with issue read permissions.",
-        "SENTRY_AUTH_TOKEN": "Alternative Sentry authentication token recognized by Sentry CLI.",
+        "SENTRY_AUTH_TOKEN": "Sentry User Auth Token with project read permissions (org:read, project:read, event:read).",
         "SENTRY_ORG": "Default Sentry organization slug."
       }
     },
     "database": {
       "command": "npx",
-      "args": ["-y", "@microsoft/postgres-mcp", "run"],
+      "args": [
+        "-y",
+        "@microsoft/postgres-mcp@0.3.0",
+        "run"
+      ],
       "disabled": false,
       "description": "Enables schema inspection, index analysis, execution plan generation, and safe read-only queries for PostgreSQL using @microsoft/postgres-mcp.",
       "requiredEnvironmentVariables": {
-        "POSTGRES_MCP_CONNECTION_STRING": "PostgreSQL connection string with read-only credentials (e.g., postgresql://readonly_user:pass@host:5432/dbname).",
+        "POSTGRES_MCP_CONNECTION_STRING": "PostgreSQL connection string with read-only credentials (e.g., postgresql://frontier_readonly:pass@host:5432/dbname).",
         "DATABASE_URL": "Alternative PostgreSQL connection URI fallback."
       }
     }

@@ -5,21 +5,33 @@
 Sentry error logs and performance events capture runtime application state from production or staging. Primary security risks:
 
 1. **PII and Sensitive Data Exposure:** Stack traces, HTTP request headers, query parameters, or breadcrumbs containing sensitive customer data (passwords, JWTs, credit card numbers, email addresses, personal health information).
-2. **Token Compromise:** Exposure of `SENTRY_ACCESS_TOKEN` / `SENTRY_AUTH_TOKEN` granting unauthorized access to an entire organization's monitoring infrastructure.
+2. **Token Compromise:** Exposure of `SENTRY_AUTH_TOKEN` granting unauthorized access to an entire organization's monitoring infrastructure. Note: The legacy variable `SENTRY_ACCESS_TOKEN` is officially deprecated upstream.
 3. **Malicious Error Payloads (Prompt Injection):** Error messages or exception payloads deliberately injected by external attackers to manipulate agent analysis when triaging logs.
+
+## Authentication Architecture & Windows Best Practices
+
+The official `@sentry/mcp-server` supports two primary authentication approaches:
+
+1. **Direct `SENTRY_AUTH_TOKEN` Environment Variable (Recommended for Antigravity):**
+   - The token is exported in the user shell or workspace environment.
+   - It takes precedence over any local CLI configuration and avoids interactive terminal logins.
+   - Note: The previous variable `SENTRY_ACCESS_TOKEN` is officially deprecated upstream; `SENTRY_AUTH_TOKEN` must be used.
+2. **Sentry CLI Login (`sentry auth login`):**
+   - Stores user credentials in `~/.sentryclirc` shared with the local `sentry-cli`.
+   - On Windows, interactive prompts in background agent sessions can stall execution; exporting `SENTRY_AUTH_TOKEN` directly is the reliable method.
 
 ## Defense-in-Depth Enforcement Boundaries
 
 ```text
 ┌─────────────────────────────────────────────────────────────────┐
 │ Layer E: Human-in-the-Loop Approval                             │
-│ Read-only queries proceed autonomously                          │
+│ Modifying issue statuses (resolve, ignore) requires consent     │
 ├─────────────────────────────────────────────────────────────────┤
 │ Layer D: Behavioral Rules (Frontier Engineer Rules System)      │
-│ PII redaction; error payloads treated as untrusted text         │
+│ PII redaction; error payloads treated as untrusted data         │
 ├─────────────────────────────────────────────────────────────────┤
-│ Layer C: Provider / Token Scopes                                │
-│ Minimal scopes: event:read, issue:read, project:read            │
+│ Layer C: Provider Token Scopes                                  │
+│ Minimal read-only scopes: org:read, project:read, event:read    │
 ├─────────────────────────────────────────────────────────────────┤
 │ Layer B: Host / Antigravity Configuration Filtering             │
 │ Kept dormant ("disabled": true) in mcp_config.json              │
@@ -41,9 +53,12 @@ Server is registered as `"disabled": true` in `mcp_config.json`, requiring devel
 
 Tokens must be generated with the narrowest permission set:
 
-- Scopes: `event:read`, `issue:read`, `project:read`.
-- No admin, organization write, or release-deletion scopes.
-- Sentry access tokens must never be hardcoded; inject via `SENTRY_ACCESS_TOKEN`.
+- **Verified Required Scopes:**
+  - `org:read`: Enumerate organizations and locate projects.
+  - `project:read`: Access project metadata, environments, and configuration.
+  - `event:read` (or `issue:read`): Access issue lists, event payloads, stack frames, and breadcrumbs.
+- **Prohibited Scopes:** No admin, organization write, member management, or project deletion scopes.
+- Sentry auth tokens must never be hardcoded; inject strictly via `SENTRY_AUTH_TOKEN`.
 
 ### Layer D: Data Scrubbing and PII Protection
 

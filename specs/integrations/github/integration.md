@@ -4,7 +4,7 @@ name: "GitHub Integration"
 description: "Provides secure, read-only-by-default access to GitHub remote repository operations, issue tracking, and pull request inspection using GitHub's official MCP server."
 category: "repository"
 version: "1.1.0"
-lifecycle: "provider_verified"
+lifecycle: "blocked"
 provider:
   name: "GitHub (Official)"
   documentationUrl: "https://github.com/github/github-mcp-server"
@@ -22,8 +22,8 @@ runtime:
     - "--rm"
     - "-e"
     - "GITHUB_PERSONAL_ACCESS_TOKEN"
-    - "ghcr.io/github/github-mcp-server"
-    - "--read-only=true"
+    - "ghcr.io/github/github-mcp-server:v2.1.0"
+    - "--read-only"
     - "--toolsets=context,issues,pull_requests,repos"
   envVars:
     - name: "GITHUB_PERSONAL_ACCESS_TOKEN"
@@ -123,7 +123,7 @@ The GitHub MCP integration connects Frontier Engineer to remote GitHub repositor
 
 - **Transport:** Standard input/output (`stdio`)
 - **Runtime:** Native binary / Container runtime (Docker or pre-built binary `github-mcp-server`)
-- **Execution Command (Docker):** `docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server --read-only=true --toolsets=context,issues,pull_requests,repos`
+- **Execution Command (Docker):** `docker run -i --rm -e GITHUB_PERSONAL_ACCESS_TOKEN ghcr.io/github/github-mcp-server:v2.1.0 --read-only --toolsets=context,issues,pull_requests,repos`
 - **Execution Command (Binary):** `github-mcp-server --read-only=true --toolsets=context,issues,pull_requests,repos`
 - **Environment Variables:**
   - `GITHUB_PERSONAL_ACCESS_TOKEN`: Scoped GitHub Personal Access Token (PAT).

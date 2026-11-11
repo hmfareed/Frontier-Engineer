@@ -52,6 +52,7 @@
               "documented",
               "provider_verified",
               "runtime_tested",
+              "blocked",
               "available",
               "deprecated",
               "disabled"

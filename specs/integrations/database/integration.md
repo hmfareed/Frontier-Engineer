@@ -4,7 +4,7 @@ name: "PostgreSQL Database Inspection"
 description: "Enables schema inspection, index analysis, execution plan generation, and safe read-only queries for PostgreSQL using @microsoft/postgres-mcp."
 category: "database"
 version: "1.1.0"
-lifecycle: "provider_verified"
+lifecycle: "runtime_tested"
 provider:
   name: "Microsoft (Official / microsoft)"
   documentationUrl: "https://github.com/microsoft/postgres-mcp"
@@ -18,12 +18,12 @@ runtime:
   executable: "npx"
   args:
     - "-y"
-    - "@microsoft/postgres-mcp"
+    - "@microsoft/postgres-mcp@0.3.0"
     - "run"
   envVars:
     - name: "POSTGRES_MCP_CONNECTION_STRING"
       required: true
-      description: "PostgreSQL connection string with read-only credentials (e.g., postgresql://readonly_user:pass@host:5432/dbname)."
+      description: "PostgreSQL connection string with read-only credentials (e.g., postgresql://frontier_readonly:pass@host:5432/dbname)."
       secret: true
     - name: "DATABASE_URL"
       required: false
@@ -31,54 +31,33 @@ runtime:
       secret: true
 capabilities:
   tools:
-    - name: "describe_table"
-      description: "Retrieves column names, types, default values, nullability, and foreign key constraints."
+    - name: "postgres_mcp_query"
+      description: "Executes a read-only SQL query (SELECT ...) with result sets and column metadata."
       permissionClass: "read_only"
       agentAffinity:
         - "frontier-engineer"
         - "architect"
         - "implementation-engineer"
-    - name: "list_tables"
-      description: "Lists all tables, views, and materialized views within the target schema."
-      permissionClass: "read_only"
-      agentAffinity:
-        - "frontier-engineer"
-        - "architect"
-        - "implementation-engineer"
-    - name: "show_indexes"
-      description: "Lists all indexes, index types, uniqueness constraints, and column definitions."
-      permissionClass: "read_only"
-      agentAffinity:
-        - "frontier-engineer"
-        - "architect"
-        - "implementation-engineer"
-    - name: "explain_query"
-      description: "Generates EXPLAIN (ANALYZE, BUFFERS) query execution plans without altering data."
-      permissionClass: "read_only"
-      agentAffinity:
-        - "frontier-engineer"
-        - "architect"
-        - "implementation-engineer"
-    - name: "execute_read_only_query"
-      description: "Executes a SELECT query capped at a maximum of 100 rows for debugging and schema verification."
-      permissionClass: "read_only"
-      agentAffinity:
-        - "frontier-engineer"
-        - "implementation-engineer"
-    - name: "query_sensitive_table"
-      description: "Executes a masked/anonymized query against sensitive tables. Requires explicit human approval."
-      permissionClass: "sensitive_data_access"
-      agentAffinity:
-        - "frontier-engineer"
-        - "architect"
         - "security-auditor"
+    - name: "postgres_mcp_db_context"
+      description: "Retrieves structural context including schemas, tables, views, columns, keys, and foreign relationships."
+      permissionClass: "read_only"
+      agentAffinity:
+        - "frontier-engineer"
+        - "architect"
+        - "implementation-engineer"
+    - name: "postgres_mcp_connect"
+      description: "Establishes or switches the active connection session to an authorized read-only profile."
+      permissionClass: "read_only"
+      agentAffinity:
+        - "frontier-engineer"
+        - "architect"
   resources: []
   prompts: []
 security:
   authenticationType: "connection_string"
   permissionClasses:
     - "read_only"
-    - "sensitive_data_access"
   readOnlyAlternative: "Inspect local migration files, schema definitions, and local SQLite/PostgreSQL test fixtures."
   credentialEnvVars:
     - "POSTGRES_MCP_CONNECTION_STRING"
@@ -106,22 +85,24 @@ The PostgreSQL database MCP integration enables Frontier Engineer specialist age
 - **Transport:** Standard input/output (`stdio`)
 - **Runtime:** Node.js (v22.0.0 or higher) executing pre-compiled Rust wrapper
 - **Executable:** `npx`
-- **Execution Command:** `npx -y @microsoft/postgres-mcp run`
+- **Execution Command:** `npx -y @microsoft/postgres-mcp@0.3.0 run`
 - **Environment Variables:**
-  - `POSTGRES_MCP_CONNECTION_STRING`: Standard PostgreSQL connection URI connecting as a strictly read-only role.
+  - `POSTGRES_MCP_CONNECTION_STRING`: Standard PostgreSQL connection URI connecting as a strictly read-only role (`frontier_readonly`).
   - `DATABASE_URL`: Fallback connection string variable.
 
 ## Capabilities and tool definitions
 
-The integration exposes tools categorized across two permission classes:
+The integration exposes verified read-only tools:
 
-1. **Read-only tools:** `describe_table`, `list_tables`, `show_indexes`, `explain_query`, `execute_read_only_query`.
-2. **Sensitive data access tools:** `query_sensitive_table` (requires explicit human approval and data masking).
+1. **`postgres_mcp_query`:** Read-only query execution (`SELECT ...`) with row limits and timeout enforcement.
+2. **`postgres_mcp_db_context`:** Structural introspection for schemas, tables, views, columns, and foreign keys.
+3. **`postgres_mcp_connect`:** Connection profile selection and session initialization.
 
-### Prohibited Operations
+### Prohibited Operations & Excluded Write Tools
 
+- **Excluded Write Tools:** The `@microsoft/postgres-mcp` package contains mutating tools (`postgres_mcp_modify`, `postgres_mcp_bulk_load_csv`). These are classified as `destructive` / `reversible_write` and are **strictly excluded** from Frontier Engineer's autonomous database profile.
 - **DDL Execution:** `CREATE TABLE`, `ALTER TABLE`, `DROP TABLE`, `TRUNCATE` are strictly prohibited via MCP. All database schema migrations must execute through standard version-controlled migration scripts (`npm run migrate`, Alembic, Prisma, etc.), never ad-hoc MCP commands.
-- **DML Mutation:** `INSERT`, `UPDATE`, `DELETE` operations are strictly blocked.
+- **DML Mutation:** `INSERT`, `UPDATE`, `DELETE` operations are strictly blocked by role permissions and transaction settings.
 
 See [`capabilities.md`](capabilities.md) for full tool schemas.
 

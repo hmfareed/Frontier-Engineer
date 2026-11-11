@@ -18,7 +18,7 @@ runtime:
   executable: "npx"
   args:
     - "-y"
-    - "@upstash/context7-mcp"
+    - "@upstash/context7-mcp@4.6.0"
   envVars:
     - name: "CONTEXT7_API_KEY"
       required: false
@@ -76,7 +76,7 @@ The Context7 MCP integration provides Frontier Engineer with live, authoritative
 - **Transport:** Standard input/output (`stdio`)
 - **Runtime:** Node.js (v18.0.0 or higher)
 - **Executable:** `npx`
-- **Execution Command:** `npx -y @upstash/context7-mcp`
+- **Execution Command:** `npx -y @upstash/context7-mcp@4.6.0`
 - **Environment Variables:**
   - `CONTEXT7_API_KEY` (optional): API key for higher query quotas; public index queries do not require a key.
 

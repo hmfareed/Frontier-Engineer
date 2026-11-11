@@ -8,30 +8,45 @@
         "--rm",
         "-e",
         "GITHUB_PERSONAL_ACCESS_TOKEN",
-        "ghcr.io/github/github-mcp-server",
-        "--read-only=true",
+        "ghcr.io/github/github-mcp-server:v2.1.0",
+        "--read-only",
         "--toolsets=context,issues,pull_requests,repos"
       ],
       "disabled": true
     },
     "context7": {
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"],
+      "args": [
+        "-y",
+        "@upstash/context7-mcp@4.6.0"
+      ],
       "disabled": true
     },
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated"],
+      "args": [
+        "-y",
+        "@playwright/mcp@0.0.85",
+        "--headless",
+        "--isolated"
+      ],
       "disabled": true
     },
     "sentry": {
       "command": "npx",
-      "args": ["-y", "@sentry/mcp-server@latest"],
+      "args": [
+        "-y",
+        "@sentry/mcp-server@0.49.0"
+      ],
       "disabled": true
     },
     "database": {
       "command": "npx",
-      "args": ["-y", "@microsoft/postgres-mcp", "run"],
+      "args": [
+        "-y",
+        "@microsoft/postgres-mcp@0.3.0",
+        "run"
+      ],
       "disabled": true
     }
   }

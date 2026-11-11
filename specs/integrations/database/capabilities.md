@@ -1,70 +1,45 @@
 # Database Integration Capabilities
 
-This document provides complete tool specifications and parameter contracts for the PostgreSQL database integration.
+This document provides complete tool specifications and parameter contracts for the PostgreSQL database integration powered by `@microsoft/postgres-mcp`.
 
 ## Permission Class Summary
 
-| Tool Name                 | Permission Class      | Target Scope              | Human Confirmation Required | Agent Affinity                                              |
-| :------------------------ | :-------------------- | :------------------------ | :-------------------------- | :---------------------------------------------------------- |
-| `describe_table`          | Read-only             | Table schema              | No                          | `frontier-engineer`, `architect`, `implementation-engineer` |
-| `list_tables`             | Read-only             | Database schema catalog   | No                          | `frontier-engineer`, `architect`, `implementation-engineer` |
-| `show_indexes`            | Read-only             | Index catalog             | No                          | `frontier-engineer`, `architect`, `implementation-engineer` |
-| `explain_query`           | Read-only             | Query planner             | No                          | `frontier-engineer`, `architect`, `implementation-engineer` |
-| `execute_read_only_query` | Read-only             | Database rows (max 100)   | No                          | `frontier-engineer`, `implementation-engineer`              |
-| `query_sensitive_table`   | Sensitive data access | Masked PII/Sensitive rows | Yes                         | `frontier-engineer`, `architect`, `security-auditor`        |
+| Tool Name                 | Permission Class | Target Scope                             | Human Confirmation Required | Agent Affinity                                              |
+| :------------------------ | :--------------- | :--------------------------------------- | :-------------------------- | :---------------------------------------------------------- |
+| `postgres_mcp_query`      | Read-only        | Database rows via read-only SQL (SELECT) | No (capped at 100 rows)     | `frontier-engineer`, `architect`, `implementation-engineer`, `security-auditor` |
+| `postgres_mcp_db_context` | Read-only        | Schema metadata, tables, views, keys     | No                          | `frontier-engineer`, `architect`, `implementation-engineer` |
+| `postgres_mcp_connect`    | Read-only        | Named connection profiles & session init | No                          | `frontier-engineer`, `architect`                            |
 
-## Strictly Prohibited Operations
+## Excluded & Strictly Prohibited Write Tools
 
-The following database operations are **never exposed** through MCP tools in Frontier Engineer:
+The official `@microsoft/postgres-mcp` package contains additional mutating tools that are **strictly excluded** from Frontier Engineer's autonomous profile:
 
-- `execute_ddl`: `CREATE`, `ALTER`, `DROP`, `TRUNCATE` operations are prohibited. Migrations must run via repository migration pipelines.
-- `execute_mutation`: `INSERT`, `UPDATE`, `DELETE` operations are prohibited. Modifying production data directly via LLM prompts violates data integrity standards.
+- `postgres_mcp_modify`: Executes DDL (`CREATE`, `ALTER`, `DROP`, `TRUNCATE`) and DML (`INSERT`, `UPDATE`, `DELETE`). Classified as `destructive` / `reversible_write`. Excluded from agent discovery to protect production state. Database schema migrations must execute exclusively through version-controlled repository migration workflows.
+- `postgres_mcp_bulk_load_csv`: Executes server-side `COPY` commands from local CSV files. Classified as `external_side_effect`. Excluded from autonomous workflows.
 
 ## Tool Specifications
 
-### `describe_table`
+### `postgres_mcp_query`
 
-- **Description:** Returns column names, data types, constraints, default expressions, and foreign keys for a specific table.
+- **Description:** Executes a read-only SQL query (`SELECT ...` or `EXPLAIN ...`) against the connected database, returning structured tabular records and column metadata.
 - **Parameters:**
-  - `table_name` (string, required): Table name to inspect.
-  - `schema` (string, optional): Database schema (defaults to `public`).
-- **Output:** Array of column definitions and table constraints.
+  - `query` (string, required): SQL query string (must begin with `SELECT`, `WITH`, or `EXPLAIN`).
+  - `params` (array, optional): Parameterized query arguments.
+- **Enforcement:** Enforces transaction-level read-only mode (`SET default_transaction_read_only = on`) and statement timeouts (5,000ms max).
+- **Output:** JSON object containing column schemas, returned rows (max 100 rows), and execution metadata.
 
-### `list_tables`
+### `postgres_mcp_db_context`
 
-- **Description:** Lists all base tables, views, and partitioned tables in the connected database.
+- **Description:** Introspects structural database context, returning table definitions, views, column data types, foreign key constraints, primary keys, and index specifications.
 - **Parameters:**
-  - `schema` (string, optional): Database schema (defaults to `public`).
-- **Output:** Array of table names and types (`BASE TABLE`, `VIEW`, `MATERIALIZED VIEW`).
+  - `schema` (string, optional): Target schema name (defaults to `public`).
+  - `table` (string, optional): Specific table name to isolate.
+- **Output:** Structured context tree detailing schema definitions, relations, and index architectures.
 
-### `show_indexes`
+### `postgres_mcp_connect`
 
-- **Description:** Lists indexes defined on a table, including composite columns, index methods (B-tree, GIN, GiST), and partial predicates.
+- **Description:** Establishes connection state to a pre-configured connection profile or active PostgreSQL endpoint.
 - **Parameters:**
-  - `table_name` (string, required): Table name.
-- **Output:** Array of index objects with index name, definition, and uniqueness indicator.
-
-### `explain_query`
-
-- **Description:** Runs `EXPLAIN (FORMAT JSON)` or `EXPLAIN (ANALYZE, BUFFERS)` to evaluate query performance and index usage without modifying data.
-- **Parameters:**
-  - `query` (string, required): SQL SELECT query string.
-  - `analyze` (boolean, optional): Include actual execution timings (defaults to false).
-- **Output:** Query plan tree showing scan types, cost estimates, filter conditions, and memory usage.
-
-### `execute_read_only_query`
-
-- **Description:** Executes a read-only SQL query against the database. Automatically capped at 100 rows.
-- **Parameters:**
-  - `query` (string, required): SQL query string (must begin with `SELECT` or `WITH`).
-  - `params` (array, optional): Parameterized values for query placeholders.
-- **Output:** Result set rows (maximum 100 rows) and execution duration.
-
-### `query_sensitive_table`
-
-- **Description:** Queries tables flagged as containing sensitive PII or credentials. Columns containing sensitive values are masked before display. Requires human confirmation.
-- **Parameters:**
-  - `table_name` (string, required): Sensitive table name.
-  - `masked_columns` (array of strings, required): Columns to hash or mask.
-  - `filter_clause` (string, required): WHERE condition.
-- **Output:** Masked result set.
+  - `profile_name` (string, optional): Named connection profile previously registered with `access_mode: ro`.
+  - `connection_string` (string, optional): Explicit PostgreSQL connection URI (must connect using read-only credentials).
+- **Output:** Confirmation of active database session, connected role identity, server version, and read-only status.
