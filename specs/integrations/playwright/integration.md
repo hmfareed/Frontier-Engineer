@@ -114,7 +114,7 @@ The Playwright MCP integration connects Frontier Engineer to headless browser au
 - **Execution Command:** `npx -y @playwright/mcp@0.0.85 --headless --isolated`
 - **Flags:**
   - `--headless`: Enforces headless execution without opening GUI windows.
-  - `--isolated`: Ensures the browser session runs completely in-memory, without persisting cookies or storage to disk, and without accessing the developer's personal browser profiles.
+  - `--isolated`: Ensures the browser session runs with an in-memory browser context without persisting cookies or storage to disk, and without accessing the developer's personal browser profiles. Note that `--isolated` governs browser profile state only and does not provide an operating system sandbox for the host process.
 
 ## Capabilities and tool definitions
 
@@ -129,7 +129,7 @@ See [`capabilities.md`](capabilities.md) for full parameter definitions.
 
 Enforcement operates across five defensive layers:
 
-1. **Server-Level Isolation (Layer A):** `--isolated` flag ensures zero access to personal user browser profiles, history, or saved passwords. All sessions start pristine in memory.
+1. **Server-Level Isolation (Layer A):** `--isolated` flag ensures zero access to personal user browser profiles, history, or saved passwords. All sessions start pristine in memory. This isolates browser profile state but does not constitute an operating system sandbox or network jail for the host process.
 2. **Host-Level Configuration (Layer B):** Configured with `"disabled": true` in `mcp_config.json`.
 3. **Environment Boundaries (Layer C):** Browser execution is constrained to `localhost`, `127.0.0.1`, and explicit test URLs. Cloud metadata endpoints (`169.254.169.254`) are strictly blocked.
 4. **Behavioral Governance (Layer D):** Frontier Engineer rules prohibit autofilling real production credentials or personal user data.

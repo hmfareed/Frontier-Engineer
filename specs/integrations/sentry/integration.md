@@ -132,7 +132,7 @@ See [`security.md`](security.md) for data governance and threat modeling.
 
 ## Operational behavior and failure handling
 
-- **Offline Default:** If `SENTRY_ACCESS_TOKEN` is unset or invalid, the integration remains disabled. Agents rely on local test reproductions, local log files, and debug outputs.
+- **Offline Default:** If `SENTRY_AUTH_TOKEN` is unset or invalid, the integration remains disabled. Agents rely on local test reproductions, local log files, and debug outputs.
 - **Rate Limiting:** Sentry API rate limits (HTTP 429) trigger backoff and fall back to cached issue context.
 - **Project Isolation:** All queries must explicitly specify the organization and project slug.
 

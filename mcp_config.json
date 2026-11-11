@@ -16,38 +16,33 @@
     },
     "context7": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@upstash/context7-mcp@4.6.0"
-      ],
+      "args": ["-y", "@upstash/context7-mcp@4.6.0"],
       "disabled": true
     },
     "playwright": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@playwright/mcp@0.0.85",
-        "--headless",
-        "--isolated"
-      ],
+      "args": ["-y", "@playwright/mcp@0.0.85", "--headless", "--isolated"],
       "disabled": true
     },
     "sentry": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@sentry/mcp-server@0.49.0"
-      ],
+      "args": ["-y", "@sentry/mcp-server@0.49.0"],
       "disabled": true
     },
     "database": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@microsoft/postgres-mcp@0.3.0",
-        "run"
-      ],
-      "disabled": true
+      "args": ["-y", "@microsoft/postgres-mcp@0.3.0", "run"],
+      "disabled": true,
+      "enabledTools": [
+        "postgres_mcp_query",
+        "postgres_mcp_db_context",
+        "postgres_mcp_connect",
+        "postgres_mcp_list_connection_profiles",
+        "postgres_mcp_list_databases",
+        "postgres_mcp_get_server_capabilities",
+        "postgres_mcp_get_metrics_group",
+        "postgres_mcp_disconnect"
+      ]
     }
   }
 }

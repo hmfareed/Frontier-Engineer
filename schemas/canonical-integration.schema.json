@@ -207,6 +207,10 @@
         "credentialEnvVars": {
           "type": "array",
           "items": { "type": "string" }
+        },
+        "toolFiltering": {
+          "type": "string",
+          "enum": ["allowlist", "server_side", "none"]
         }
       }
     },

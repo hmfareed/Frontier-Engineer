@@ -17,31 +17,37 @@ Browser automation tools control a dynamic rendering engine capable of executing
 To ensure complete technical precision, Frontier Engineer separates browser behavioral controls from host operating system security. The system explicitly distinguishes six distinct dimensions:
 
 ### 1. Browser Profile Isolation
+
 - **Mechanism:** Passing `--isolated` to `@playwright/mcp`.
 - **Scope & Meaning:** Enforces a clean, in-memory `BrowserContext` for the session. It starts with zero cookies, zero localStorage/IndexedDB entries, and zero saved authentication tokens. When the process terminates, all session state is discarded.
 - **Limitation:** It guarantees that the agent cannot read or alter the developer's personal Chrome/Edge/Firefox profiles. It does **not** restrict host process capabilities or provide an operating-system sandbox.
 
 ### 2. Browser Process Isolation
+
 - **Mechanism:** Chromium multi-process architecture.
 - **Scope & Meaning:** Chromium separates the browser engine, network service, and renderer processes. Rendering tabs run in isolated renderer processes with site isolation.
 - **Limitation:** While renderer processes isolate website scripts from each other, the overarching Node.js process and Playwright controller run as the host developer user.
 
 ### 3. Operating-System Sandboxing
+
 - **Mechanism:** Chromium platform sandboxes (seccomp-bpf on Linux, AppContainer/Token restriction on Windows).
 - **Scope & Meaning:** Chromium limits the syscall surface of untrusted renderer processes.
 - **Limitation:** The Node.js MCP server process itself is **not** sandboxed by default and executes with standard developer shell permissions. Do not assume or claim that Playwright is barred from host system execution unless running inside a separate Docker container, microVM, or restricted jail.
 
 ### 4. Filesystem Access
+
 - **Mechanism:** `--allow-unrestricted-file-access` flag default behavior.
 - **Scope & Meaning:** By default, `@playwright/mcp` restricts navigation to `file://` URLs and constrains file reads to workspace directories. However, artifacts (screenshots, traces, recordings) are written to local disk (e.g., `--output-dir`).
 - **Limitation:** The agent process retains developer file read/write permissions on the host filesystem.
 
 ### 5. Network Access
+
 - **Mechanism:** `--allowed-origins` and `--blocked-origins`.
 - **Scope & Meaning:** Outbound network requests are permitted by default across reachable network adapters.
 - **Requirement:** Frontier Engineer policy restricts navigation to `localhost`, `127.0.0.1`, `[::1]`, and explicitly whitelisted staging origins. Access to cloud metadata services (`169.254.169.254`) is strictly prohibited.
 
 ### 6. Website Interaction & External Side Effects
+
 - **Mechanism:** Human-in-the-Loop approval for external origins (Layer E).
 - **Scope & Meaning:** Interacting with pages (clicking buttons, filling forms) triggers real HTTP mutations on target web applications.
 - **Requirement:** Autonomous interaction is confined to local development or disposable staging instances. Interacting with external payment, authentication, or production systems requires explicit developer confirmation.

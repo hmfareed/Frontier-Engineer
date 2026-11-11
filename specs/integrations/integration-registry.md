@@ -1,5 +1,5 @@
 ---
-version: "0.5.1"
+version: "0.5.3"
 lastUpdated: "2026-11-11"
 integrations:
   - id: "github"

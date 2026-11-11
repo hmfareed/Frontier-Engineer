@@ -52,6 +52,38 @@ capabilities:
       agentAffinity:
         - "frontier-engineer"
         - "architect"
+    - name: "postgres_mcp_list_connection_profiles"
+      description: "Lists all available PostgreSQL connection profiles with ID, name, host, and database."
+      permissionClass: "read_only"
+      agentAffinity:
+        - "frontier-engineer"
+        - "architect"
+    - name: "postgres_mcp_list_databases"
+      description: "Lists all databases available on the connected PostgreSQL server."
+      permissionClass: "read_only"
+      agentAffinity:
+        - "frontier-engineer"
+        - "architect"
+    - name: "postgres_mcp_get_server_capabilities"
+      description: "Discovers available diagnostic capabilities, PostgreSQL version, and metric groups."
+      permissionClass: "read_only"
+      agentAffinity:
+        - "frontier-engineer"
+        - "architect"
+        - "implementation-engineer"
+    - name: "postgres_mcp_get_metrics_group"
+      description: "Collects performance and diagnostic metrics groups for server and query performance."
+      permissionClass: "read_only"
+      agentAffinity:
+        - "frontier-engineer"
+        - "architect"
+        - "implementation-engineer"
+    - name: "postgres_mcp_disconnect"
+      description: "Disconnects an active database connection session."
+      permissionClass: "read_only"
+      agentAffinity:
+        - "frontier-engineer"
+        - "architect"
   resources: []
   prompts: []
 security:
@@ -62,6 +94,7 @@ security:
   credentialEnvVars:
     - "POSTGRES_MCP_CONNECTION_STRING"
     - "DATABASE_URL"
+  toolFiltering: "allowlist"
 platformConfig: {}
 ---
 
@@ -92,29 +125,33 @@ The PostgreSQL database MCP integration enables Frontier Engineer specialist age
 
 ## Capabilities and tool definitions
 
-The integration exposes verified read-only tools:
+The integration exposes 8 verified and approved read-only tools through Antigravity host-level allowlisting (`enabledTools`):
 
-1. **`postgres_mcp_query`:** Read-only query execution (`SELECT ...`) with row limits and timeout enforcement.
+1. **`postgres_mcp_query`:** Read-only query execution (`SELECT ...` or `EXPLAIN ...`) with row limits and timeout enforcement.
 2. **`postgres_mcp_db_context`:** Structural introspection for schemas, tables, views, columns, and foreign keys.
 3. **`postgres_mcp_connect`:** Connection profile selection and session initialization.
+4. **`postgres_mcp_disconnect`:** Explicit session termination and resource release.
+5. **`postgres_mcp_list_connection_profiles`:** Enumeration of configured read-only connection profiles.
+6. **`postgres_mcp_list_databases`:** Enumeration of accessible databases on the server.
+7. **`postgres_mcp_get_server_capabilities`:** Diagnostic and feature capability probe.
+8. **`postgres_mcp_get_metrics_group`:** Performance and operational metric collection.
 
-### Prohibited Operations & Excluded Write Tools
+### Prohibited Operations & Excluded Tools (5 Tools)
 
-- **Excluded Write Tools:** The `@microsoft/postgres-mcp` package contains mutating tools (`postgres_mcp_modify`, `postgres_mcp_bulk_load_csv`). These are classified as `destructive` / `reversible_write` and are **strictly excluded** from Frontier Engineer's autonomous database profile.
+- **Excluded Mutating Tools:** The `@microsoft/postgres-mcp` package contains mutating tools (`postgres_mcp_modify`, `postgres_mcp_bulk_load_csv`, `postgres_mcp_add_connection`, `postgres_mcp_remove_connection`). These are classified as `destructive` / `external_side_effect` and are **strictly excluded** from Frontier Engineer's host-exposed tool catalogue.
+- **Excluded Local Filesystem Tool:** `postgres_mcp_describe_csv` is excluded from the Antigravity `enabledTools` allowlist to eliminate arbitrary local filesystem path-traversal exposure, as CSV import preparation is unnecessary when `postgres_mcp_bulk_load_csv` is prohibited.
 - **DDL Execution:** `CREATE TABLE`, `ALTER TABLE`, `DROP TABLE`, `TRUNCATE` are strictly prohibited via MCP. All database schema migrations must execute through standard version-controlled migration scripts (`npm run migrate`, Alembic, Prisma, etc.), never ad-hoc MCP commands.
-- **DML Mutation:** `INSERT`, `UPDATE`, `DELETE` operations are strictly blocked by role permissions and transaction settings.
+- **DML Mutation:** `INSERT`, `UPDATE`, `DELETE` operations are strictly blocked by host-level filtering, profile mode, role permissions, and transaction settings.
 
-See [`capabilities.md`](capabilities.md) for full tool schemas.
+See [`capabilities.md`](capabilities.md) for full tool schemas and exclusions.
 
 ## Security and permission boundaries
 
-Database security does not rely on natural language instructions alone. Defense is enforced across five layers:
+Database security does not rely on natural language instructions alone. Defense is enforced across three independent, verifiable layers:
 
-1. **Database Role Privileges (Layer C):** Dedicated database user with read-only privileges (`GRANT SELECT` only; all `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `TRUNCATE` revoked). No superuser or schema ownership privileges.
-2. **Server-Level Enforcement (Layer A):** Server parses queries and rejects mutation statements.
-3. **Host-Level Configuration (Layer B):** Registered dormant (`"disabled": true`) in `mcp_config.json`.
-4. **Behavioral Governance (Layer D):** Hard statement timeout (5,000ms), row limit caps (max 100 rows), and SELECT-only validation.
-5. **Human Approval (Layer E):** Querying sensitive tables requires explicit developer confirmation.
+1. **Host-Level Filtering (Antigravity `enabledTools`):** Antigravity's MCP client explicitly filters server-advertised tools using the `enabledTools` allowlist. Unapproved mutating tools (`postgres_mcp_modify`, `postgres_mcp_bulk_load_csv`, `postgres_mcp_add_connection`, `postgres_mcp_remove_connection`) and the local filesystem inspection tool (`postgres_mcp_describe_csv`) are completely absent from the agent's available tool catalogue.
+2. **MCP Server Profile Enforcement (`access_mode: ro`):** The active connection profile configures read-only access mode, preventing write tools from functioning even if invoked.
+3. **Database Engine Permissions (PostgreSQL Role Level):** Dedicated database user (`frontier_readonly`) with read-only privileges (`GRANT SELECT` only; all `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `TRUNCATE` revoked; `default_transaction_read_only = on`; `statement_timeout = 5000`; `CONNECTION LIMIT 2`). The database engine independently rejects mutation attempts with code `25006` regardless of client state.
 
 See [`security.md`](security.md) for full defense-in-depth specifications.
 

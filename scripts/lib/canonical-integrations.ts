@@ -29,6 +29,25 @@ export const PERMISSION_CLASSES = [
 
 export type PermissionClass = (typeof PERMISSION_CLASSES)[number];
 
+export const POSTGRES_APPROVED_TOOLS = [
+  "postgres_mcp_query",
+  "postgres_mcp_db_context",
+  "postgres_mcp_connect",
+  "postgres_mcp_disconnect",
+  "postgres_mcp_list_connection_profiles",
+  "postgres_mcp_list_databases",
+  "postgres_mcp_get_server_capabilities",
+  "postgres_mcp_get_metrics_group",
+] as const;
+
+export const POSTGRES_PROHIBITED_TOOLS = [
+  "postgres_mcp_modify",
+  "postgres_mcp_bulk_load_csv",
+  "postgres_mcp_add_connection",
+  "postgres_mcp_remove_connection",
+  "postgres_mcp_describe_csv",
+] as const;
+
 export const REQUIRED_INTEGRATION_SECTIONS = [
   "Purpose and overview",
   "Provider and maintenance",
@@ -85,6 +104,7 @@ export interface CanonicalIntegrationSpec {
     permissionClasses: PermissionClass[];
     readOnlyAlternative: string;
     credentialEnvVars: string[];
+    toolFiltering?: "allowlist" | "server_side" | "none";
   };
   body: string;
   frontmatter: Record<string, unknown>;
@@ -229,6 +249,62 @@ export function loadCanonicalIntegrations(root: string): {
       }
     }
 
+    // Specific security validation for database integration
+    if (id === "database") {
+      const declaredTools = Array.isArray((data.capabilities as Record<string, unknown>)?.tools)
+        ? ((data.capabilities as Record<string, unknown>).tools as Array<Record<string, unknown>>)
+        : [];
+
+      if (declaredTools.length === 0) {
+        findings.push(
+          finding(
+            "error",
+            "empty-database-tool-allowlist",
+            integrationPath,
+            "PostgreSQL database integration must declare a non-empty tool allowlist.",
+          ),
+        );
+      }
+
+      for (const t of declaredTools) {
+        const toolName = String(t?.name || "");
+        if (
+          POSTGRES_PROHIBITED_TOOLS.includes(toolName as (typeof POSTGRES_PROHIBITED_TOOLS)[number])
+        ) {
+          findings.push(
+            finding(
+              "error",
+              "prohibited-database-tool",
+              integrationPath,
+              `Tool '${toolName}' is strictly prohibited from the database tool allowlist due to risk classification.`,
+            ),
+          );
+        } else if (
+          !POSTGRES_APPROVED_TOOLS.includes(toolName as (typeof POSTGRES_APPROVED_TOOLS)[number])
+        ) {
+          findings.push(
+            finding(
+              "error",
+              "unapproved-database-tool",
+              integrationPath,
+              `Tool '${toolName}' is not an approved PostgreSQL inspection tool.`,
+            ),
+          );
+        }
+
+        if (t?.permissionClass !== "read_only") {
+          findings.push(
+            finding(
+              "error",
+              "invalid-database-tool-permission",
+              integrationPath,
+              `Database tool '${toolName}' must have permissionClass 'read_only' (found '${t?.permissionClass}').`,
+            ),
+          );
+        }
+      }
+    }
+
     integrations.push({
       relPath: integrationPath,
       id,
@@ -351,24 +427,48 @@ export function buildAntigravityMcpConfig(root: string): {
   > = {};
 
   for (const integration of integrations) {
-    mcpServers[integration.id] = {
+    const serverConfig: {
+      command: string;
+      args: string[];
+      disabled: boolean;
+      enabledTools?: string[];
+    } = {
       command: integration.runtime.executable,
       args: integration.runtime.args,
       disabled: true,
     };
+
+    if (integration.security.toolFiltering === "allowlist" || integration.id === "database") {
+      serverConfig.enabledTools = integration.capabilities.tools.map((t) => t.name);
+    }
+
+    mcpServers[integration.id] = serverConfig;
 
     const envMap: Record<string, string> = {};
     for (const envVar of integration.runtime.envVars) {
       envMap[envVar.name] = envVar.description;
     }
 
-    exampleServers[integration.id] = {
+    const exampleConfig: {
+      command: string;
+      args: string[];
+      disabled: boolean;
+      enabledTools?: string[];
+      description: string;
+      requiredEnvironmentVariables: Record<string, string>;
+    } = {
       command: integration.runtime.executable,
       args: integration.runtime.args,
       disabled: false,
       description: integration.description,
       requiredEnvironmentVariables: envMap,
     };
+
+    if (integration.security.toolFiltering === "allowlist" || integration.id === "database") {
+      exampleConfig.enabledTools = integration.capabilities.tools.map((t) => t.name);
+    }
+
+    exampleServers[integration.id] = exampleConfig;
   }
 
   const mcp_config = JSON.stringify({ mcpServers }, null, 2) + "\n";

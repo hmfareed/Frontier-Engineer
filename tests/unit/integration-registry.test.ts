@@ -40,4 +40,18 @@ describe("canonical integration registry", () => {
       expect(entry.compatibility.codex).toBe("supported");
     }
   });
+
+  it("confirms lifecycles match audited states (context7, playwright, database as runtime_tested; github, sentry as blocked)", () => {
+    const { registry } = loadIntegrationRegistry(root);
+    const expectedLifecycles: Record<string, string> = {
+      github: "blocked",
+      context7: "runtime_tested",
+      playwright: "runtime_tested",
+      sentry: "blocked",
+      database: "runtime_tested",
+    };
+    for (const entry of registry?.integrations ?? []) {
+      expect(entry.lifecycle).toBe(expectedLifecycles[entry.id]);
+    }
+  });
 });

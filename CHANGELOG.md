@@ -2,6 +2,55 @@
 
 All notable changes to Frontier Engineer are documented here. This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.5.3] - 2026-11-11
+
+PostgreSQL MCP Tool Allowlisting & Three-Tier Boundary Security Acceptance (Phase 5.1.2).
+
+### Added
+
+- Antigravity host-level tool allowlist (`enabledTools`) configured for PostgreSQL database integration in `mcp_config.json` and `mcp_config.example.json`, restricting exposed tools to exactly 8 approved inspection tools (`postgres_mcp_query`, `postgres_mcp_db_context`, `postgres_mcp_connect`, `postgres_mcp_disconnect`, `postgres_mcp_list_connection_profiles`, `postgres_mcp_list_databases`, `postgres_mcp_get_server_capabilities`, `postgres_mcp_get_metrics_group`).
+- Canonical schema extension in `schemas/canonical-integration.schema.json` supporting `toolFiltering: "allowlist"`, enabling deterministic compilation of Antigravity host allowlists directly from platform-independent specifications.
+- Comprehensive security evaluation and exclusion of `postgres_mcp_describe_csv` documented in `specs/integrations/database/capabilities.md` and `security.md`, mitigating local filesystem path traversal and arbitrary file inspection risks.
+- Five new regression tests in `tests/unit/integration-security.test.ts` verifying:
+  - Non-empty `enabledTools` allowlist containing only approved tool names.
+  - Absence of destructive, external-side-effect, and filesystem tools.
+  - Strict validator rejection (`prohibited-database-tool`, `unapproved-database-tool`, `invalid-database-tool-permission`) on any attempt to introduce unapproved tools or non-read-only permission classes.
+  - Complete isolation ensuring other integrations (`github`, `context7`, `playwright`, `sentry`) do not inherit `enabledTools`.
+  - Invariant that database configurations remain disabled by default (`disabled: true`).
+- Phase 5.1.2 Addendum in `docs/adr/ADR-005-mcp-integration-architecture.md` and updated configuration reference in `docs/24-MCP-CONFIGURATION.md`.
+
+### Changed
+
+- Updated `specs/integrations/database/integration.md` to declare `toolFiltering: "allowlist"` and strictly contain the 8 approved tools in its canonical tool definitions.
+- Updated `scripts/test-mcp-runtime.ts` to test and report all three independent security boundaries: Control 1 (Antigravity Host Filtering: 8 exposed vs 5 excluded), Control 2 (MCP Profile Mode: `access_mode: ro`), and Control 3 (PostgreSQL Engine: 18/18 psql assertions passed + transaction boundary denial).
+- Bumped project version to `0.5.3` across `package.json`, `plugin.json`, `specs/integrations/integration-registry.md`, and repository tests.
+
+## [0.5.2] - 2026-11-11
+
+Live PostgreSQL MCP Verification, Database Security Audit & Runtime Remediation (Phase 5.1.1).
+
+### Added
+
+- Automated live PostgreSQL 18.6 security audit executed against an ephemeral cluster in `scripts/test-mcp-runtime.ts`, verifying 18/18 security assertions covering connection limits, query timeouts, table and view read access, schema creation denials, and DDL/DML mutation rejections.
+- Live `@microsoft/postgres-mcp@0.3.0 run` stdio JSON-RPC runtime acceptance test verifying protocol handshake (`2024-11-05`), full 13-tool discovery, connection using the restricted `frontier_readonly` role, permitted `SELECT` query execution, and database-level transaction read-only denial on mutations.
+- Phase 5.1.1 Addendum in `docs/adr/ADR-005-mcp-integration-architecture.md` detailing the live PostgreSQL MCP verification, actual 13-tool catalogue, Sentry auth token migration, and Playwright isolation clarifications.
+- Expanded automated test coverage in `tests/unit/integration-security.test.ts` (11 tests) and `tests/unit/integration-registry.test.ts` (5 tests) enforcing official provider packages, mandatory arguments (`run`, `--read-only`, `--headless`, `--isolated`), token specifications, and lifecycle consistency.
+
+### Changed
+
+- Corrected Microsoft PostgreSQL MCP launch command across canonical specifications, documentation, and adapter configuration to include the mandatory `run` subcommand (`npx -y @microsoft/postgres-mcp@0.3.0 run`).
+- Documented the verified 13-tool catalogue for `@microsoft/postgres-mcp@0.3.0` in `specs/integrations/database/integration.md` and `capabilities.md`, distinguishing inspection tools from excluded mutating tools (`postgres_mcp_modify`, `postgres_mcp_bulk_load_csv`, `postgres_mcp_add_connection`, `postgres_mcp_remove_connection`).
+- Updated PostgreSQL database integration lifecycle status to `runtime_tested` following successful live stdio JSON-RPC handshake, tool discovery, and mutation denials.
+- Canonicalized Sentry authentication environment variable from `SENTRY_ACCESS_TOKEN` to `SENTRY_AUTH_TOKEN` per current official `@sentry/mcp-server` documentation.
+- Clarified Playwright isolation documentation in `specs/integrations/playwright/integration.md` and `security.md`, defining `--isolated` as in-memory `BrowserContext` profile isolation (cookies, storage, history) rather than host operating system containerization.
+- Verified GitHub read-only configuration (`--read-only`) and documented required fine-grained PAT scopes (`Contents: Read`, `Issues: Read`, `Pull requests: Read`, `Metadata: Read`) in `specs/integrations/github/security.md`.
+- Pinned exact provider versions across all integrations: `ghcr.io/github/github-mcp-server:v2.1.0`, `@upstash/context7-mcp@4.6.0`, `@playwright/mcp@0.0.85`, `@sentry/mcp-server@0.49.0`, and `@microsoft/postgres-mcp@0.3.0`.
+- Bumped project version to `0.5.2` across `package.json`, `plugin.json`, and `specs/integrations/integration-registry.md`.
+
+### Known limitations
+
+- External credential-dependent integrations (`github`, `sentry`) remain accurately classified as `BLOCKED` in the runtime test harness when host credentials (`GITHUB_PERSONAL_ACCESS_TOKEN`, `SENTRY_AUTH_TOKEN`) or Docker daemon are absent.
+
 ## [0.5.1] - 2026-11-11
 
 MCP Provider Verification, Correction & Runtime Hardening (Phase 5.1).

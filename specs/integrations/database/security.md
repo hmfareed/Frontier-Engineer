@@ -26,14 +26,25 @@ Frontier Engineer rejects reliance on prompt instructions alone. Database securi
 ├─────────────────────────────────────────────────────────────────┤
 │ Layer C: Database Engine Permissions (PostgreSQL Role Level)    │
 │ Dedicated NOINHERIT read-only role; REVOKE ALL; GRANT SELECT    │
+│ default_transaction_read_only = on; statement_timeout = 5000ms  │
 ├─────────────────────────────────────────────────────────────────┤
 │ Layer B: Host / Antigravity Configuration Filtering             │
+│ Explicit enabledTools allowlist (8 approved tools); 5 excluded  │
 │ Registered dormant ("disabled": true) in mcp_config.json        │
 ├─────────────────────────────────────────────────────────────────┤
-│ Layer A: MCP Server-Side Validation                             │
-│ access_mode: ro rejects registering mutating tools at startup   │
+│ Layer A: MCP Server Profile Enforcement                         │
+│ access_mode: ro rejects registering mutating operations         │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+> [!IMPORTANT]
+> **Complete Security Boundary (Three Independent Controls):**
+>
+> 1. **Antigravity Host Filtering:** Confirm allowed tools (8) are visible. Excluded mutating tools (`postgres_mcp_modify`, `postgres_mcp_bulk_load_csv`, `postgres_mcp_add_connection`, `postgres_mcp_remove_connection`) and the local filesystem tool (`postgres_mcp_describe_csv`) are completely absent from the agent's available tool catalogue. Agents cannot discover or invoke excluded tools through normal MCP invocation.
+> 2. **Microsoft PostgreSQL MCP Profile:** Active connection profiles enforce `access_mode: ro`.
+> 3. **PostgreSQL Database Engine:** The `frontier_readonly` role rejects any mutation or DDL statement at the transaction boundary (`ERROR: cannot execute ... in a read-only transaction`).
+>
+> Never claim a tool is hidden merely because its operation fails at the database layer. Host filtering ensures dangerous tools are absent from the host-exposed catalogue, not merely denied after invocation.
 
 The ten mandatory security invariants:
 
@@ -42,7 +53,7 @@ The ten mandatory security invariants:
 3. **No Superuser Privileges:** Superuser, `CREATEROLE`, `CREATEDB`, `REPLICATION`, and `BYPASSRLS` privileges are strictly prohibited.
 4. **No DDL Permissions:** All `CREATE`, `ALTER`, and `DROP` privileges are revoked across all schemas and the target database.
 5. **No DML Mutation Permissions:** `INSERT`, `UPDATE`, `DELETE`, and `TRUNCATE` privileges are revoked across all current and future tables.
-6. **Server-Side Profile Enforcement:** The MCP server profile explicitly declares `access_mode: ro` (or `accessMode: ro`), preventing mutating tools from being exposed.
+6. **Host-Level Tool Allowlist Enforcement:** Antigravity configuration explicitly restricts exposed tools via `enabledTools` to the 8 approved read-only tools.
 7. **Transaction Safeguards:** Queries execute inside read-only transactions (`SET default_transaction_read_only = on`).
 8. **Hard Query Timeouts:** A statement timeout (max 5,000ms) is enforced at the database role level to terminate long-running queries automatically.
 9. **Strict Connection Limits:** The role is restricted to a maximum of 2 concurrent connections (`CONNECTION LIMIT 2`).
@@ -52,18 +63,22 @@ The ten mandatory security invariants:
 
 ## Explicit Read-Only Profile Configuration
 
-Frontier Engineer requires two independent layers of read-only enforcement:
-1. **MCP Profile Access Mode:** The MCP server configuration must specify read-only mode (`access_mode: ro`).
-2. **PostgreSQL Role Privileges:** The database role must independently have `SELECT`-only privileges.
+Frontier Engineer requires three independent layers of read-only enforcement:
+
+1. **Antigravity Host Filtering (`enabledTools`):** Restricts the tool catalogue to the 8 approved tools, hiding `postgres_mcp_modify`, `postgres_mcp_bulk_load_csv`, `postgres_mcp_add_connection`, `postgres_mcp_remove_connection`, and `postgres_mcp_describe_csv`.
+2. **MCP Profile Access Mode:** The MCP server configuration must specify read-only mode (`access_mode: ro`).
+3. **PostgreSQL Role Privileges:** The database role must independently have `SELECT`-only privileges.
 
 ### Saved Keyring Profile vs Environment Variable
 
 1. **Saved Keyring Profile (Recommended for local developer workstations):**
+
    ```bash
    # Add profile with read-only access mode
    npx -y @microsoft/postgres-mcp connection add dev_ro "postgresql://frontier_readonly@localhost:5432/app_dev"
    npx -y @microsoft/postgres-mcp connection set-password dev_ro
    ```
+
    The password is encrypted in the operating system keyring and never written to repository config files.
 
 2. **Environment Variable (`POSTGRES_MCP_CONNECTION_STRING`):**
@@ -83,7 +98,7 @@ Merely running `REVOKE` statements against `frontier_readonly` does **not** guar
    - `PUBLIC` possesses `CONNECT` and `TEMP` (create temporary tables) on databases.
    - `PUBLIC` had `CREATE` on schema `public` (in PostgreSQL < 15).
    - `PUBLIC` has `EXECUTE` on functions by default.
-   Therefore, `CREATE` and `TEMP` must be explicitly revoked from `PUBLIC` on the target database and schema.
+     Therefore, `CREATE` and `TEMP` must be explicitly revoked from `PUBLIC` on the target database and schema.
 3. **Database Level Grants:** Granting `CONNECT` grants connection rights. `TEMP` privileges must be explicitly revoked to prevent creating temporary tables that could consume server disk space.
 4. **Sequence Mutations:** In PostgreSQL, sequences (`nextval()`) are modified during query evaluation. `USAGE` and `UPDATE` on sequences must not be granted to `frontier_readonly`.
 5. **Future Object Grants (`ALTER DEFAULT PRIVILEGES`):**
@@ -104,14 +119,14 @@ Execute the following SQL script as a database superuser on your development or 
 -- ============================================================================
 
 -- 1. Create dedicated role with NOINHERIT and connection limits
-CREATE ROLE frontier_readonly WITH 
-    LOGIN 
-    NOINHERIT 
-    NOCREATEDB 
-    NOCREATEROLE 
-    NOREPLICATION 
-    NOBYPASSRLS 
-    CONNECTION LIMIT 2 
+CREATE ROLE frontier_readonly WITH
+    LOGIN
+    NOINHERIT
+    NOCREATEDB
+    NOCREATEROLE
+    NOREPLICATION
+    NOBYPASSRLS
+    CONNECTION LIMIT 2
     PASSWORD 'replace_with_strong_random_password';
 
 -- 2. Restrict Database-level permissions
@@ -136,11 +151,11 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA public FROM frontier_readonly;
 
 -- 6. Configure future objects for all relevant creator roles
 -- Ensures tables created by migrations/app_owner automatically grant SELECT
-ALTER DEFAULT PRIVILEGES FOR ROLE app_owner IN SCHEMA public 
+ALTER DEFAULT PRIVILEGES FOR ROLE app_owner IN SCHEMA public
     GRANT SELECT ON TABLES TO frontier_readonly;
 
 -- Explicitly ensure default privileges revoke mutations on future tables
-ALTER DEFAULT PRIVILEGES FOR ROLE app_owner IN SCHEMA public 
+ALTER DEFAULT PRIVILEGES FOR ROLE app_owner IN SCHEMA public
     REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES ON TABLES FROM frontier_readonly;
 
 -- 7. Configure session-level defense-in-depth settings
@@ -151,11 +166,11 @@ ALTER ROLE frontier_readonly SET statement_timeout = '5000ms';
 -- VERIFICATION QUERIES (Run to verify effective permissions)
 -- ============================================================================
 -- Check role attributes:
--- SELECT rolname, rolsuper, rolinherit, rolcreaterole, rolcreatedb, rolcanlogin, rolconnlimit 
+-- SELECT rolname, rolsuper, rolinherit, rolcreaterole, rolcreatedb, rolcanlogin, rolconnlimit
 -- FROM pg_roles WHERE rolname = 'frontier_readonly';
 
 -- Check table-level permissions:
--- SELECT grantee, table_schema, table_name, privilege_type 
+-- SELECT grantee, table_schema, table_name, privilege_type
 -- FROM information_schema.role_table_grants WHERE grantee = 'frontier_readonly';
 ```
 
@@ -165,23 +180,23 @@ ALTER ROLE frontier_readonly SET statement_timeout = '5000ms';
 
 Every proposed security constraint must be verified against an actual database engine:
 
-| # | Test Scenario | Operation Tested | Expected Outcome | Engine Rejection Reason |
-| :--- | :--- | :--- | :--- | :--- |
-| **1** | Permitted Table Read | `SELECT * FROM products` | **Allowed** | Valid SELECT on permitted schema table |
-| **2** | Permitted View Read | `SELECT * FROM active_products` | **Allowed** | Valid SELECT on permitted view |
-| **3** | Unauthorized Schema Access | `SELECT * FROM sales.invoices` | **Denied** | `permission denied for schema sales` |
-| **4** | Table Row Insertion | `INSERT INTO products (name, price) VALUES ('x', 1)` | **Denied** | `permission denied for table products` |
-| **5** | Table Row Modification | `UPDATE products SET price = 0 WHERE id = 1` | **Denied** | `permission denied for table products` |
-| **6** | Table Row Deletion | `DELETE FROM products WHERE id = 1` | **Denied** | `permission denied for table products` |
-| **7** | Table Truncation | `TRUNCATE products` | **Denied** | `permission denied for table products` |
-| **8** | DDL Table Creation | `CREATE TABLE evil (id int)` | **Denied** | `permission denied for schema public` |
-| **9** | DDL Table Alteration | `ALTER TABLE products ADD COLUMN leak text` | **Denied** | `must be owner of table products` |
-| **10** | DDL Table Dropping | `DROP TABLE products` | **Denied** | `must be owner of table products` |
-| **11** | DDL Schema Creation | `CREATE SCHEMA evil_schema` | **Denied** | `permission denied for database app_dev` |
-| **12** | Function Creation | `CREATE FUNCTION evil() RETURNS void ...` | **Denied** | `permission denied for schema public` |
-| **13** | Sequence Mutation | `SELECT nextval('products_id_seq')` | **Denied** | `permission denied for sequence products_id_seq` |
-| **14** | Multi-Statement Mutation | `SELECT 1; INSERT INTO products ...` | **Denied** | `permission denied for table products` |
-| **15** | Transaction Read-Write Override | `SET TRANSACTION READ WRITE; INSERT ...` | **Denied** | Role-level REVOKE prevents mutation regardless of transaction mode |
-| **16** | Privilege Escalation / SET ROLE | `SET ROLE postgres` | **Denied** | `permission denied to set role "postgres"` |
-| **17** | Query Timeout Termination | `SELECT pg_sleep(10)` | **Terminated** | `canceling statement due to statement timeout` (exceeded 5,000ms) |
-| **18** | Security-Definer Function Invocation | `SELECT dangerous_mutate()` | **Denied** | `permission denied for function dangerous_mutate` |
+| #      | Test Scenario                        | Operation Tested                                     | Expected Outcome | Engine Rejection Reason                                            |
+| :----- | :----------------------------------- | :--------------------------------------------------- | :--------------- | :----------------------------------------------------------------- |
+| **1**  | Permitted Table Read                 | `SELECT * FROM products`                             | **Allowed**      | Valid SELECT on permitted schema table                             |
+| **2**  | Permitted View Read                  | `SELECT * FROM active_products`                      | **Allowed**      | Valid SELECT on permitted view                                     |
+| **3**  | Unauthorized Schema Access           | `SELECT * FROM sales.invoices`                       | **Denied**       | `permission denied for schema sales`                               |
+| **4**  | Table Row Insertion                  | `INSERT INTO products (name, price) VALUES ('x', 1)` | **Denied**       | `permission denied for table products`                             |
+| **5**  | Table Row Modification               | `UPDATE products SET price = 0 WHERE id = 1`         | **Denied**       | `permission denied for table products`                             |
+| **6**  | Table Row Deletion                   | `DELETE FROM products WHERE id = 1`                  | **Denied**       | `permission denied for table products`                             |
+| **7**  | Table Truncation                     | `TRUNCATE products`                                  | **Denied**       | `permission denied for table products`                             |
+| **8**  | DDL Table Creation                   | `CREATE TABLE evil (id int)`                         | **Denied**       | `permission denied for schema public`                              |
+| **9**  | DDL Table Alteration                 | `ALTER TABLE products ADD COLUMN leak text`          | **Denied**       | `must be owner of table products`                                  |
+| **10** | DDL Table Dropping                   | `DROP TABLE products`                                | **Denied**       | `must be owner of table products`                                  |
+| **11** | DDL Schema Creation                  | `CREATE SCHEMA evil_schema`                          | **Denied**       | `permission denied for database app_dev`                           |
+| **12** | Function Creation                    | `CREATE FUNCTION evil() RETURNS void ...`            | **Denied**       | `permission denied for schema public`                              |
+| **13** | Sequence Mutation                    | `SELECT nextval('products_id_seq')`                  | **Denied**       | `permission denied for sequence products_id_seq`                   |
+| **14** | Multi-Statement Mutation             | `SELECT 1; INSERT INTO products ...`                 | **Denied**       | `permission denied for table products`                             |
+| **15** | Transaction Read-Write Override      | `SET TRANSACTION READ WRITE; INSERT ...`             | **Denied**       | Role-level REVOKE prevents mutation regardless of transaction mode |
+| **16** | Privilege Escalation / SET ROLE      | `SET ROLE postgres`                                  | **Denied**       | `permission denied to set role "postgres"`                         |
+| **17** | Query Timeout Termination            | `SELECT pg_sleep(10)`                                | **Terminated**   | `canceling statement due to statement timeout` (exceeded 5,000ms)  |
+| **18** | Security-Definer Function Invocation | `SELECT dangerous_mutate()`                          | **Denied**       | `permission denied for function dangerous_mutate`                  |

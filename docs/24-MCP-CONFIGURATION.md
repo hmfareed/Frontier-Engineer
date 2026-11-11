@@ -33,7 +33,7 @@ Spawns a local executable or command-line process and communicates over standard
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated"],
+      "args": ["-y", "@playwright/mcp@0.0.85", "--headless", "--isolated"],
       "disabled": false
     }
   }
@@ -88,31 +88,41 @@ Frontier Engineer ships with an authoritative `mcp_config.json` registering the 
         "--rm",
         "-e",
         "GITHUB_PERSONAL_ACCESS_TOKEN",
-        "ghcr.io/github/github-mcp-server:latest",
-        "--read-only=true",
+        "ghcr.io/github/github-mcp-server:v2.1.0",
+        "--read-only",
         "--toolsets=context,issues,pull_requests,repos"
       ],
       "disabled": true
     },
     "context7": {
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"],
+      "args": ["-y", "@upstash/context7-mcp@4.6.0"],
       "disabled": true
     },
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated"],
+      "args": ["-y", "@playwright/mcp@0.0.85", "--headless", "--isolated"],
       "disabled": true
     },
     "sentry": {
       "command": "npx",
-      "args": ["-y", "@sentry/mcp-server"],
+      "args": ["-y", "@sentry/mcp-server@0.49.0"],
       "disabled": true
     },
     "database": {
       "command": "npx",
-      "args": ["-y", "@microsoft/postgres-mcp"],
-      "disabled": true
+      "args": ["-y", "@microsoft/postgres-mcp@0.3.0", "run"],
+      "disabled": true,
+      "enabledTools": [
+        "postgres_mcp_query",
+        "postgres_mcp_db_context",
+        "postgres_mcp_connect",
+        "postgres_mcp_list_connection_profiles",
+        "postgres_mcp_list_databases",
+        "postgres_mcp_get_server_capabilities",
+        "postgres_mcp_get_metrics_group",
+        "postgres_mcp_disconnect"
+      ]
     }
   }
 }
@@ -140,11 +150,11 @@ Create or edit `.agents/mcp_config.json` in your project root:
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated"]
+      "args": ["-y", "@playwright/mcp@0.0.85", "--headless", "--isolated"]
     },
     "database": {
       "command": "npx",
-      "args": ["-y", "@microsoft/postgres-mcp"],
+      "args": ["-y", "@microsoft/postgres-mcp@0.3.0", "run"],
       "env": {
         "POSTGRES_MCP_CONNECTION_STRING": "postgresql://frontier_readonly:password@localhost:5432/app_dev"
       }
@@ -160,5 +170,5 @@ Create or edit `.agents/mcp_config.json` in your project root:
 | `github`     | `GITHUB_PERSONAL_ACCESS_TOKEN`   | Fine-grained PAT: repo content read, issues read, PR read         |
 | `context7`   | `CONTEXT7_API_KEY`               | Optional; default public rate tier available                      |
 | `playwright` | _None_                           | Browser binaries managed in-memory with `--isolated` profile      |
-| `sentry`     | `SENTRY_ACCESS_TOKEN`            | Read-only auth token (`org:read`, `project:read`, `event:read`)   |
+| `sentry`     | `SENTRY_AUTH_TOKEN`              | Read-only auth token (`org:read`, `project:read`, `event:read`)   |
 | `database`   | `POSTGRES_MCP_CONNECTION_STRING` | Dedicated read-only development connection string (10 invariants) |

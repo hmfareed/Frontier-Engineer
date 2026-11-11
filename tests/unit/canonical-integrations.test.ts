@@ -74,7 +74,7 @@ describe("canonical integration specifications", () => {
   it("verifies all integrations use officially verified provider references and licenses", () => {
     const { integrations } = loadCanonicalIntegrations(root);
     for (const integration of integrations) {
-      expect(["provider_verified", "runtime_tested"]).toContain(integration.lifecycle);
+      expect(["provider_verified", "runtime_tested", "blocked"]).toContain(integration.lifecycle);
       expect(integration.provider.documentationUrl).toMatch(/^https?:\/\//);
       expect(integration.provider.maintainer.length).toBeGreaterThan(0);
     }

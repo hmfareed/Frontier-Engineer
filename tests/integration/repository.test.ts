@@ -95,7 +95,7 @@ describe("repository foundation", () => {
     expect(manifest.name).toBe("frontier-engineer");
     expect(manifest.name).toBe(pkg.name);
     expect(manifest.version).toBe(pkg.version);
-    expect(manifest.version).toBe("0.5.1");
+    expect(manifest.version).toBe("0.5.3");
   });
 
   it("ships verified mcp_config.json and avoids unverified hooks.json", () => {

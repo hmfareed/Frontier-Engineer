@@ -117,3 +117,62 @@ A dedicated runtime test harness (`scripts/test-mcp-runtime.ts`) executes contro
 
 - **Playwright & Context7:** Classified as `PASSED` after successful process execution, protocol handshake, and tool discovery.
 - **GitHub, Sentry, & PostgreSQL:** Classified as `BLOCKED` with empirical evidence documenting missing tokens, inactive Docker daemon, or unauthenticated database endpoints. Strict verification discipline prohibits conflating `BLOCKED` with `PASSED` or `FAILED`.
+
+---
+
+### Addendum: Phase 5.1.1 Live Verification, Tool Discovery, and Hardening Remediation (v0.5.2)
+
+#### 1. Live Database Acceptance & Runtime MCP Verification
+
+- **18/18 SQL Acceptance Tests Passed:** An ephemeral PostgreSQL 18.6 cluster was spun up and provisioned with the dedicated `frontier_readonly` role (`NOINHERIT`, `CONNECTION LIMIT 2`, `REVOKE ALL`, `GRANT SELECT`, `SET default_transaction_read_only = on`, `statement_timeout = '2000ms'`). All 18 assertions passed, demonstrating that PostgreSQL engine rules enforce read-only isolation, timeout termination, and schema boundaries independently of LLM prompt compliance.
+- **MCP Server Stdio Runtime Verification:** `@microsoft/postgres-mcp@0.3.0 run` was launched against the active ephemeral database. The server completed protocol initialization (`2024-11-05`), discovered 13 actual tools, connected using `frontier_readonly`, successfully executed a permitted read query (`SELECT count(*) FROM public.products` -> `count 2`), and rejected mutating statements (`INSERT`, `CREATE TABLE`) with `"cannot execute ... in a read-only transaction"`. PostgreSQL integration lifecycle was updated from `blocked` to `runtime_tested`.
+- **Launch Command Correction:** Verified that `@microsoft/postgres-mcp` requires the `run` argument to start stdio JSON-RPC MCP mode (`npx -y @microsoft/postgres-mcp@0.3.0 run`).
+
+#### 2. Sentry Authentication Canonicalization
+
+- Upgraded Sentry specification and configuration to use the documented `SENTRY_AUTH_TOKEN` environment variable. The deprecated variable `SENTRY_ACCESS_TOKEN` was removed across all specifications, tests, and configuration templates.
+- Sentry integration remains accurately marked as `BLOCKED` pending developer environment token injection.
+
+#### 3. Playwright Security Specification Precision
+
+- Playwright integration documentation was corrected to explicitly articulate the distinction between browser profile isolation and host operating system sandboxing across the six technical security dimensions.
+- The `--isolated` flag guarantees a pristine in-memory `BrowserContext` (no persistent cookies or access to personal browser profiles), but does not restrict host Node.js process syscalls or filesystem capabilities.
+
+#### 4. GitHub Read-Only Boundary and Scope Hardening
+
+- Verified `--read-only` server-side enforcement on `ghcr.io/github/github-mcp-server:v2.1.0`.
+- Documented least-privilege fine-grained PAT requirements scoped strictly to read-only access on target repositories (`Contents: Read`, `Issues: Read`, `Pull requests: Read`, `Metadata: Read`). Lifecycle remains `BLOCKED` in the absence of a token and container runtime.
+
+#### 5. Strict Version Pinning & Reproducible Update Strategy
+
+- All 5 canonical integrations enforce exact pinned package and image versions (`ghcr.io/github/github-mcp-server:v2.1.0`, `@upstash/context7-mcp@4.6.0`, `@playwright/mcp@0.0.85`, `@sentry/mcp-server@0.49.0`, `@microsoft/postgres-mcp@0.3.0`).
+- Established an empirical verification protocol for future updates, requiring stdio handshake testing and regression checks before version increments.
+
+---
+
+### Addendum: Phase 5.1.2 Antigravity Tool Allowlisting & Three-Tier Boundary (v0.5.3)
+
+#### 1. Explicit Antigravity Host Filtering (`enabledTools`)
+
+- **Host-Level Control:** Upstream `@microsoft/postgres-mcp@0.3.0` advertises 13 tools by default over stdio `tools/list`, including mutating tools (`postgres_mcp_modify`, `postgres_mcp_bulk_load_csv`, `postgres_mcp_add_connection`, `postgres_mcp_remove_connection`) and local file inspection tools (`postgres_mcp_describe_csv`).
+- **Approved Allowlist (8 Tools):** Generated deterministically from canonical specifications (`toolFiltering: "allowlist"`), the Antigravity adapter `mcp_config.json` restricts exposed tools via `enabledTools` to:
+  1. `postgres_mcp_query`
+  2. `postgres_mcp_db_context`
+  3. `postgres_mcp_connect`
+  4. `postgres_mcp_disconnect`
+  5. `postgres_mcp_list_connection_profiles`
+  6. `postgres_mcp_list_databases`
+  7. `postgres_mcp_get_server_capabilities`
+  8. `postgres_mcp_get_metrics_group`
+- **Isolation of Other Integrations:** Verified that other canonical integrations (`github`, `context7`, `playwright`, `sentry`) do not inherit `enabledTools`, preserving their individual toolset and scoping models.
+
+#### 2. Local Filesystem Access Evaluation (`postgres_mcp_describe_csv`)
+
+- **Risk Assessment:** Evaluated `postgres_mcp_describe_csv` independently. Because it accepts an unconstrained host file path (`csvPath`) and executes without path containment or chroot boundaries, exposing it introduces arbitrary local filesystem file read / path traversal risks.
+- **Decision:** Because `postgres_mcp_bulk_load_csv` is prohibited, CSV description serves no legitimate role in relational query inspection. `postgres_mcp_describe_csv` is strictly excluded from `enabledTools`.
+
+#### 3. Complete Three-Tier Defense-in-Depth Verification
+
+- **Tier 1 (Antigravity Host Filtering):** Excluded dangerous tools (5 tools) are absent from the host-exposed catalogue; host-level invocation blocks any attempt to dispatch them.
+- **Tier 2 (MCP Profile Mode):** The active connection profile configures read-only access mode (`access_mode: ro`).
+- **Tier 3 (PostgreSQL Database Engine):** The `frontier_readonly` role independently enforces `default_transaction_read_only = on` and revokes all DDL/DML, rejecting mutations with error code `25006` even if tiers 1 and 2 were bypassed.
