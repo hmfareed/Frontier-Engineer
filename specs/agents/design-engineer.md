@@ -89,4 +89,4 @@ Design specifications, information hierarchy and layout definitions, responsive 
 
 ## Restrictions
 
-Do not redesign unrelated pages. Do not introduce inconsistent visual styles. Do not prioritize appearance over usability or accessibility. Do not present placeholder functionality as complete. Do not edit files owned by another agent in the same task. Do not claim a rendered interface was inspected when no browser tool was available.
+Do not redesign unrelated pages. Do not introduce inconsistent visual styles. Do not prioritize appearance over usability or accessibility. Do not present placeholder functionality as complete. Do not edit files owned by another agent in the same task. Do not claim a rendered interface was inspected when no browser tool was available. Operate under the same central execution safeguards and lifecycle hook constraints without special bypass privileges.

@@ -1,0 +1,86 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://frontier-engineer.local/schemas/hook-evaluation-scenarios.json",
+  "title": "Frontier Engineer hook evaluation scenarios schema",
+  "type": "array",
+  "minItems": 15,
+  "items": {
+    "type": "object",
+    "required": [
+      "id",
+      "name",
+      "event",
+      "expectedDecision",
+      "securityObjective",
+      "expectedFailureBehavior",
+      "evaluationStatus"
+    ],
+    "properties": {
+      "id": {
+        "type": "string",
+        "pattern": "^HOOK-SCEN-[0-9]{2}$"
+      },
+      "name": {
+        "type": "string",
+        "minLength": 1
+      },
+      "event": {
+        "type": "string",
+        "enum": [
+          "SessionStart",
+          "PreToolUse",
+          "PostToolUse",
+          "PreInvocation",
+          "PostInvocation",
+          "Stop"
+        ]
+      },
+      "toolName": {
+        "type": "string"
+      },
+      "args": {
+        "type": "object"
+      },
+      "rawInput": {
+        "type": "string"
+      },
+      "simulateCrash": {
+        "type": "boolean"
+      },
+      "simulateTimeout": {
+        "type": "boolean"
+      },
+      "simulateWriteFailure": {
+        "type": "boolean"
+      },
+      "invocationNum": {
+        "type": "integer"
+      },
+      "workspacePaths": {
+        "type": "array",
+        "items": { "type": "string" }
+      },
+      "executionNum": {
+        "type": "integer"
+      },
+      "duplicateCall": {
+        "type": "boolean"
+      },
+      "expectedDecision": {
+        "type": "string"
+      },
+      "securityObjective": {
+        "type": "string",
+        "minLength": 5
+      },
+      "expectedFailureBehavior": {
+        "type": "string",
+        "enum": ["fail_closed", "fail_open", "degrade_gracefully"]
+      },
+      "evaluationStatus": {
+        "type": "string",
+        "enum": ["verified", "pending", "blocked"]
+      }
+    }
+  }
+}

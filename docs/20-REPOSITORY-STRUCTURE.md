@@ -20,6 +20,7 @@ frontier-engineer/
 ├── plugin.json                  # Required manifest
 ├── mcp_config.json              # Antigravity MCP server adapter (disabled by default)
 ├── mcp_config.example.json      # Example MCP environment variable setup guide
+├── hooks.json                   # Verified Antigravity lifecycle hooks configuration
 ├── README.md                    # Pre-install documentation
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
@@ -58,8 +59,18 @@ frontier-engineer/
 │   │   ├── playwright/          # integration.md, capabilities.md, security.md
 │   │   ├── sentry/              # integration.md, capabilities.md, security.md
 │   │   └── database/            # integration.md, capabilities.md, security.md
+│   ├── hooks/                   # Six canonical lifecycle hook specifications
+│   │   ├── README.md
+│   │   ├── hook-registry.md
+│   │   ├── hook-security-model.md
+│   │   ├── session-start.md
+│   │   ├── pre-tool-use.md
+│   │   ├── post-tool-use.md
+│   │   ├── pre-invocation.md
+│   │   ├── post-invocation.md
+│   │   └── stop.md
 │   ├── adapters/                # Adapter registry and per-platform requirements
-│   ├── evaluation/              # Agent and skill evaluation scenarios
+│   ├── evaluation/              # Agent, skill, and hook evaluation scenarios
 │   ├── handoff-contract.md
 │   └── handoff-examples.json
 ├── skills/                      # Ten generated Antigravity skills (SKILL.md + references)
@@ -75,7 +86,10 @@ frontier-engineer/
 │   ├── canonical-skill.schema.json
 │   ├── canonical-rule.schema.json
 │   ├── canonical-integration.schema.json
+│   ├── canonical-hook.schema.json
 │   ├── integration-registry.schema.json
+│   ├── hook-registry.schema.json
+│   ├── hook-evaluation-scenarios.schema.json
 │   ├── handoff.schema.json
 │   ├── evaluation-scenarios.schema.json
 │   └── skill-evaluation-scenarios.schema.json
@@ -86,12 +100,17 @@ frontier-engineer/
 │   ├── generate-antigravity-skills.ts
 │   ├── generate-antigravity-rules.ts
 │   ├── generate-antigravity-integrations.ts
+│   ├── generate-antigravity-hooks.ts
+│   ├── hooks/                   # Hook runtime, handlers, and security libraries
+│   │   ├── runtime/             # dispatcher, input, output, logger, security, validation
+│   │   ├── handlers/            # session-start, pre-tool-use, post-tool, etc.
+│   │   └── lib/                 # command-classifier, secret-redactor, workspace
 │   └── lib/                     # Pure, unit-testable check functions
 ├── tests/
 │   ├── unit/
 │   ├── integration/
 │   └── fixtures/                # Deliberately invalid inputs
-├── docs/                        # Project documentation (Parts 01-27, ADRs)
+├── docs/                        # Project documentation (Parts 01-33, ADRs)
 │   └── adr/
 ├── .github/workflows/
 │   └── validate.yml
@@ -108,14 +127,14 @@ frontier-engineer/
 | Always-on rule  | `rules/AGENTS.md`                                  | Present                                   |
 | Named rules     | `rules/<name>.md` with `trigger` frontmatter       | Thirteen generated, statically discovered |
 | MCP servers     | `mcp_config.json`                                  | Present (5 servers, disabled by default)  |
-| Lifecycle hooks | `hooks.json`                                       | Phase 6; absent                           |
+| Lifecycle hooks | `hooks.json`                                       | Present (6 lifecycle hooks verified)      |
 | Helper scripts  | `scripts/`                                         | Present                                   |
 
 Antigravity scans `skills/`, `rules/`, and `agents/` **one level deep**. Nested components require a discovery manifest (`skills.json`, `rules.json`, `agents.json`). The validator warns when a component is placed too deep.
 
 ## Files intentionally absent
 
-`hooks.json`, `skills.json`, `rules.json`, `agents.json`, and `plugins.json` are not present. Adding an unused config file would introduce configuration that has not been verified in a real installation. Their schemas exist so they can be validated the moment they are added.
+`skills.json`, `rules.json`, `agents.json`, and `plugins.json` are not present. Adding an unused config file would introduce configuration that has not been verified in a real installation. Their schemas exist so they can be validated the moment they are added.
 
 Likewise, no `.claude-plugin/`, `.cursor-plugin/`, or `hooks/hooks.json` paths exist: those belong to other agent platforms or to staged extensions. The validator flags them.
 

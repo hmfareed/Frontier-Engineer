@@ -13,6 +13,7 @@ import {
   checkGeneratedIntegrations,
   validateCanonicalIntegrations,
 } from "./lib/canonical-integrations.ts";
+import { checkGeneratedHooks, validateCanonicalHooks } from "./lib/canonical-hooks.ts";
 import { checkContracts } from "./lib/contracts.ts";
 import { checkMarkdownLinks } from "./lib/markdown-links.ts";
 import { repoRoot } from "./lib/paths.ts";
@@ -56,6 +57,10 @@ export function runChecks(root: string): CheckResult[] {
     {
       name: "canonical integration specifications and generated adapters",
       findings: [...validateCanonicalIntegrations(root), ...checkGeneratedIntegrations(root)],
+    },
+    {
+      name: "canonical hook specifications and generated configuration",
+      findings: [...validateCanonicalHooks(root), ...checkGeneratedHooks(root)],
     },
     {
       name: "handoff and evaluation contracts",

@@ -1,0 +1,257 @@
+/**
+ * Command and tool call classification engine for PreToolUse safety gating.
+ * Evaluates proposed tool executions against Frontier Engineer security boundaries.
+ */
+
+export type ToolDecision = "allow" | "deny" | "ask";
+
+export interface ClassificationResult {
+  decision: ToolDecision;
+  reason?: string;
+  category?:
+    | "safe"
+    | "destructive_filesystem"
+    | "secret_exposure"
+    | "dangerous_permissions"
+    | "database_mutation"
+    | "high_risk_git"
+    | "ambiguous";
+}
+
+/** Patterns that immediately deny tool execution due to destructive filesystem impact. */
+const PROHIBITED_DESTRUCTIVE_COMMANDS: Array<{ pattern: RegExp; reason: string }> = [
+  // Formatting drives or partitions
+  {
+    pattern: /\b(?:format\s+[a-zA-Z]:|mkfs(?:\.[a-z0-9]+)?\b|diskpart\b)/i,
+    reason: "Drive formatting and partition manipulation are strictly prohibited.",
+  },
+  // Recursive deletion of root or drive roots
+  {
+    pattern: /\brm\s+-(?:r|rf|fr|r\s+-f)\s+(?:\/|\/\*|~|\.\.|\*)/i,
+    reason: "Recursive deletion of filesystem root, home, or wildcards is strictly prohibited.",
+  },
+  // Windows recursive deletion of root or core system folders
+  {
+    pattern:
+      /\b(?:rmdir|rd)\s+(?:\/s\s+\/q|\/q\s+\/s)\s+(?:[a-zA-Z]:\\|\/|\\|\.\.|\bC:\\Windows\b|\bC:\\Projects\b)/i,
+    reason: "Recursive removal of root or parent directory trees is prohibited.",
+  },
+  // PowerShell Remove-Item recursive root deletion
+  {
+    pattern: /\bRemove-Item\b.*-(?:Recurse|r)\b.*-(?:Force|f)\b.*(?:[a-zA-Z]:\\|\/|\\|\.\.)/i,
+    reason: "PowerShell recursive root deletion is prohibited.",
+  },
+  // Deletion of essential VCS metadata
+  {
+    pattern: /\b(?:rm|del|rmdir|rd|Remove-Item)\b.*(?:\.git\b|\.git[\/\\])/i,
+    reason: "Direct deletion of git repository metadata (.git) is prohibited.",
+  },
+  // Deleting critical project descriptors
+  {
+    pattern: /\b(?:rm|del|Remove-Item)\s+.*(?:package\.json|plugin\.json|tsconfig\.json)\b/i,
+    reason: "Direct deletion of critical repository configuration manifests is prohibited.",
+  },
+];
+
+/** Patterns indicating sensitive secret file access or transmission. */
+const SENSITIVE_FILE_NAMES = [
+  /\.env(?:\.[a-z0-9]+)?$/i,
+  /\bid_rsa(?:\.pub)?$/i,
+  /\bid_ed25519(?:\.pub)?$/i,
+  /\.pem$/i,
+  /\.key$/i,
+  /\.pfx$/i,
+  /\bcredentials\.json$/i,
+  /\/etc\/(?:shadow|passwd)$/i,
+];
+
+/** Shell commands attempting to read or dump sensitive credentials. */
+const PROHIBITED_SECRET_PRINT_COMMANDS: Array<{ pattern: RegExp; reason: string }> = [
+  {
+    pattern:
+      /\b(?:cat|type|Get-Content|gc|head|tail|more|less)\s+.*(?:\.env|\.git-credentials|id_rsa|id_ed25519|credentials\.json)\b/i,
+    reason: "Directly printing or outputting secret credential files is prohibited.",
+  },
+  // Exfiltration via curl/wget with secret file payload
+  {
+    pattern:
+      /\b(?:curl|wget|Invoke-RestMethod|Invoke-WebRequest)\b.*(?:--data|-d|--post-file)\s*[@'"]?.*(?:\.env|id_rsa|id_ed25519|credentials\.json)\b/i,
+    reason: "Transmitting sensitive credential files to external endpoints is prohibited.",
+  },
+];
+
+/** Destructive SQL mutations that violate read-only database policy. */
+const PROHIBITED_DATABASE_MUTATIONS: Array<{ pattern: RegExp; reason: string }> = [
+  {
+    pattern:
+      /\b(?:DROP\s+DATABASE|DROP\s+SCHEMA|DROP\s+TABLE|TRUNCATE\s+TABLE|ALTER\s+TABLE\s+.*\bDROP\s+COLUMN)\b/i,
+    reason: "Destructive database mutations (DROP, TRUNCATE) violate read-only database policy.",
+  },
+];
+
+/** Commands that require human developer review (escalate to 'ask'). */
+const HIGH_RISK_COMMANDS: Array<{ pattern: RegExp; reason: string }> = [
+  // Git operations with untracked/uncommitted data loss
+  {
+    pattern: /\bgit\s+clean\s+-(?:[a-z]*f[a-z]*d|[a-z]*d[a-z]*f|fdx|f)/i,
+    reason: "Destructive git clean operations require developer review.",
+  },
+  {
+    pattern: /\bgit\s+reset\s+--hard\b/i,
+    reason: "Hard git reset discards uncommitted work and requires developer confirmation.",
+  },
+  // Dangerous privilege escalation or permission broadening
+  {
+    pattern: /\b(?:chmod\s+(?:-R\s+)?(?:777|666)|icacls\s+.*\/grant\s+.*Everyone:F)\b/i,
+    reason:
+      "Broadening filesystem permissions (777 / Everyone:Full) requires developer confirmation.",
+  },
+  {
+    pattern: /\b(?:sudo\b|takeown\b|Set-MpPreference\b)/i,
+    reason: "Administrative privilege escalation requires developer confirmation.",
+  },
+];
+
+/** Classifies a shell command string. */
+export function classifyCommandLine(commandLine: string): ClassificationResult {
+  if (!commandLine || typeof commandLine !== "string") {
+    return { decision: "allow", category: "safe" };
+  }
+
+  const trimmed = commandLine.trim();
+
+  // 1. Check prohibited destructive filesystem operations
+  for (const { pattern, reason } of PROHIBITED_DESTRUCTIVE_COMMANDS) {
+    if (pattern.test(trimmed)) {
+      return { decision: "deny", reason: `Blocked: ${reason}`, category: "destructive_filesystem" };
+    }
+  }
+
+  // 2. Check secret exposure and exfiltration
+  for (const { pattern, reason } of PROHIBITED_SECRET_PRINT_COMMANDS) {
+    if (pattern.test(trimmed)) {
+      return { decision: "deny", reason: `Blocked: ${reason}`, category: "secret_exposure" };
+    }
+  }
+
+  // 3. Check destructive database mutations
+  for (const { pattern, reason } of PROHIBITED_DATABASE_MUTATIONS) {
+    if (pattern.test(trimmed)) {
+      return { decision: "deny", reason: `Blocked: ${reason}`, category: "database_mutation" };
+    }
+  }
+
+  // 4. Check high risk operations requiring confirmation ('ask')
+  for (const { pattern, reason } of HIGH_RISK_COMMANDS) {
+    if (pattern.test(trimmed)) {
+      return {
+        decision: "ask",
+        reason: `Confirmation required: ${reason}`,
+        category: "high_risk_git",
+      };
+    }
+  }
+
+  return { decision: "allow", category: "safe" };
+}
+
+/** Classifies a file access or modification path. */
+export function classifyFilePath(
+  targetPath: string,
+  operation: "read" | "write" | "edit",
+): ClassificationResult {
+  if (!targetPath || typeof targetPath !== "string") {
+    return { decision: "allow", category: "safe" };
+  }
+
+  // Normalize path separators
+  const normalized = targetPath.replace(/\\/g, "/");
+
+  // Prohibit reading or leaking private credential files
+  if (operation === "read") {
+    for (const pattern of SENSITIVE_FILE_NAMES) {
+      if (pattern.test(normalized)) {
+        return {
+          decision: "deny",
+          reason: `Blocked: Access to sensitive credential file (${pathBasename(normalized)}) is prohibited.`,
+          category: "secret_exposure",
+        };
+      }
+    }
+  }
+
+  // Prohibit overwriting essential repository manifests or .git files directly
+  if (operation === "write" || operation === "edit") {
+    if (/(?:^|\/)\.git(?:\/|$)/i.test(normalized)) {
+      return {
+        decision: "deny",
+        reason: "Blocked: Direct modification of internal .git structures is prohibited.",
+        category: "destructive_filesystem",
+      };
+    }
+  }
+
+  return { decision: "allow", category: "safe" };
+}
+
+function pathBasename(p: string): string {
+  const parts = p.split("/");
+  return parts[parts.length - 1] || p;
+}
+
+/** General classifier for any tool call. */
+export function classifyToolCall(
+  toolName: string,
+  args: Record<string, unknown>,
+): ClassificationResult {
+  if (!toolName) {
+    return { decision: "deny", reason: "Blocked: Missing tool name in toolCall payload." };
+  }
+
+  if (toolName === "run_command") {
+    const cmd = typeof args.CommandLine === "string" ? args.CommandLine : "";
+    return classifyCommandLine(cmd);
+  }
+
+  if (toolName === "read_file") {
+    const p = typeof args.Path === "string" ? args.Path : "";
+    return classifyFilePath(p, "read");
+  }
+
+  if (toolName === "write_file") {
+    const p = typeof args.Path === "string" ? args.Path : "";
+    return classifyFilePath(p, "write");
+  }
+
+  if (toolName === "edit_file") {
+    const p = typeof args.Path === "string" ? args.Path : "";
+    return classifyFilePath(p, "edit");
+  }
+
+  if (toolName === "call_mcp_tool") {
+    // If calling database tool, check queries
+    const tool = typeof args.ToolName === "string" ? args.ToolName : "";
+    const toolArgs =
+      typeof args.Arguments === "object" && args.Arguments !== null
+        ? (args.Arguments as Record<string, unknown>)
+        : {};
+    if (tool === "postgres_mcp_query" || tool === "query") {
+      const sql = typeof toolArgs.query === "string" ? toolArgs.query : "";
+      for (const { pattern, reason } of PROHIBITED_DATABASE_MUTATIONS) {
+        if (pattern.test(sql)) {
+          return { decision: "deny", reason: `Blocked: ${reason}`, category: "database_mutation" };
+        }
+      }
+    }
+    // Prohibited tools check
+    if (tool === "postgres_mcp_modify" || tool === "postgres_mcp_bulk_load_csv") {
+      return {
+        decision: "deny",
+        reason: `Blocked: Prohibited mutating database tool "${tool}" is not allowed.`,
+        category: "database_mutation",
+      };
+    }
+  }
+
+  return { decision: "allow", category: "safe" };
+}

@@ -73,7 +73,7 @@ Security findings report, severity summary, evidence references, remediation pla
 
 ## Restrictions
 
-Never expose credentials or secrets in reports. Never perform destructive security testing without authorization. Never claim a system is secure because no obvious vulnerability was found. Never conflate a confirmed vulnerability with a theoretical risk. Never modify production infrastructure without approval. Do not edit source files; recommend fixes and hand them to the coordinator.
+Never expose credentials or secrets in reports. Never perform destructive security testing without authorization. Never claim a system is secure because no obvious vulnerability was found. Never conflate a confirmed vulnerability with a theoretical risk. Never modify production infrastructure without approval. Do not edit source files; recommend fixes and hand them to the coordinator. Actively review hook policies and execution safeguards for potential bypasses or gaps between behavioral rules and runtime enforcement.
 
 ## Antigravity runtime adapter
 

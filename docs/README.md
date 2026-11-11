@@ -54,6 +54,17 @@ Product documentation for Frontier Engineer. The original 26-part specification 
 | 25   | [MCP portability](25-MCP-PORTABILITY.md)     | Platform mapping: Antigravity, Claude Code, Cursor, Codex  |
 | 26   | [MCP operations](26-MCP-OPERATIONS.md)       | Health checks, audit logging, fallbacks, incident response |
 
+## Lifecycle hooks subsystem (Phase 6)
+
+| Part | Document                                           | Coverage                                                     |
+| ---- | -------------------------------------------------- | ------------------------------------------------------------ |
+| 28   | [Hooks architecture](28-HOOKS-ARCHITECTURE.md)     | Execution-time safeguards, 6 lifecycle events, agent loop    |
+| 29   | [Hooks specifications](29-HOOKS-SPECIFICATIONS.md) | Six canonical hooks, contracts, timeouts, and handlers       |
+| 30   | [Hooks security](30-HOOKS-SECURITY.md)             | Permission matrix, fail-closed policy, threat mitigations    |
+| 31   | [Hooks runtime](31-HOOKS-RUNTIME.md)               | Runtime modules, stdin/stdout protocol, Windows support      |
+| 32   | [Hooks testing](32-HOOKS-TESTING.md)               | 15 adversarial scenarios, live acceptance HOOK-01 to HOOK-10 |
+| 33   | [Hooks portability](33-HOOKS-PORTABILITY.md)       | Canonical policies, Antigravity adapter, planned platforms   |
+
 ## Decision records
 
 | ADR | Title                                                                       |
@@ -63,6 +74,7 @@ Product documentation for Frontier Engineer. The original 26-part specification 
 | 003 | [Skills system architecture](adr/ADR-003-skills-system.md)                  |
 | 004 | [Rules system architecture](adr/ADR-004-rules-system.md)                    |
 | 005 | [MCP integration architecture](adr/ADR-005-mcp-integration-architecture.md) |
+| 006 | [Lifecycle hooks architecture](adr/ADR-006-lifecycle-hooks-architecture.md) |
 
 ## Project policies
 

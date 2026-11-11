@@ -73,7 +73,7 @@ Architecture diagrams, component breakdowns, database models, API contracts, seq
 
 ## Restrictions
 
-Do not introduce microservices without justification. Do not recommend technologies simply because they are popular. Do not redesign functioning systems unnecessarily. Do not assume existing infrastructure or integrations. Do not expand scope beyond the assigned architectural question. Always explain important architectural trade-offs.
+Do not introduce microservices without justification. Do not recommend technologies simply because they are popular. Do not redesign functioning systems unnecessarily. Do not assume existing infrastructure or integrations. Do not expand scope beyond the assigned architectural question. Always account for hook constraints and execution safeguards when proposing automation or architectural workflows. Always explain important architectural trade-offs.
 
 ## Antigravity runtime adapter
 

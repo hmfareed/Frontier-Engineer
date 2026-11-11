@@ -1,0 +1,72 @@
+{
+  "frontier-session-init": {
+    "enabled": true,
+    "SessionStart": [
+      {
+        "type": "command",
+        "command": "node scripts/hooks/runtime/dispatcher.ts --hook frontier-session-init --event SessionStart",
+        "timeout": 10
+      }
+    ]
+  },
+  "frontier-pre-tool-safety": {
+    "enabled": true,
+    "PreToolUse": [
+      {
+        "matcher": "run_command|read_file|write_file|edit_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/hooks/runtime/dispatcher.ts --hook frontier-pre-tool-safety --event PreToolUse",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  },
+  "frontier-post-tool-audit": {
+    "enabled": true,
+    "PostToolUse": [
+      {
+        "matcher": "run_command|read_file|write_file|edit_file",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node scripts/hooks/runtime/dispatcher.ts --hook frontier-post-tool-audit --event PostToolUse",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  },
+  "frontier-engineering-context": {
+    "enabled": true,
+    "PreInvocation": [
+      {
+        "type": "command",
+        "command": "node scripts/hooks/runtime/dispatcher.ts --hook frontier-engineering-context --event PreInvocation",
+        "timeout": 5
+      }
+    ]
+  },
+  "frontier-invocation-audit": {
+    "enabled": true,
+    "PostInvocation": [
+      {
+        "type": "command",
+        "command": "node scripts/hooks/runtime/dispatcher.ts --hook frontier-invocation-audit --event PostInvocation",
+        "timeout": 5
+      }
+    ]
+  },
+  "frontier-session-stop": {
+    "enabled": true,
+    "Stop": [
+      {
+        "type": "command",
+        "command": "node scripts/hooks/runtime/dispatcher.ts --hook frontier-session-stop --event Stop",
+        "timeout": 5
+      }
+    ]
+  }
+}

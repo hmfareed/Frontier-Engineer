@@ -2,7 +2,7 @@
 
 An AI software-engineering **agent system** distributed as a Google Antigravity plugin. It packages a coordinating agent, five specialist subagents, ten reusable engineering skills, persistent rules, and verification tooling into one versioned, installable unit.
 
-> **Status: Phase 5.1 — MCP Provider Verification, Correction & Runtime Hardening (v0.5.1).** Five verified integrations (GitHub, Context7, Playwright, Sentry, PostgreSQL) and their generated Antigravity adapters (`mcp_config.json`, disabled by default) are in place alongside fourteen rules, ten skills, six agents, twenty references, and comprehensive validation tooling. Hooks (Phase 6) are intentionally not implemented yet.
+> **Status: Phase 6 — Lifecycle Hooks & Execution-Time Safeguards (v0.6.0).** Six verified lifecycle hooks (`SessionStart`, `PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`) and their generated Antigravity configuration (`hooks.json`) are in place alongside five MCP integrations, fourteen rules, ten skills, six agents, twenty references, and comprehensive validation tooling. Destructive filesystem operations, secret exfiltration, and prohibited database mutations are blocked at execution time.
 
 ## What this is
 
@@ -134,7 +134,7 @@ The CLI binary is `agy`. On Windows it is installed at `~/.gemini/bin/agy.exe`; 
 - **Rules:** [Architecture](docs/15-RULES-ARCHITECTURE.md), [Specifications](docs/16-RULE-SPECIFICATIONS.md), [Activation](docs/17-RULE-ACTIVATION.md), [Priority and conflicts](docs/18-RULE-PRIORITY-AND-CONFLICTS.md), [Portability](docs/19-RULE-PORTABILITY.md)
 - **Integrations:** [MCP architecture](docs/21-MCP-ARCHITECTURE.md), [MCP integrations](docs/22-MCP-INTEGRATIONS.md), [MCP security](docs/23-MCP-SECURITY.md), [MCP configuration](docs/24-MCP-CONFIGURATION.md), [MCP portability](docs/25-MCP-PORTABILITY.md), [MCP operations](docs/26-MCP-OPERATIONS.md)
 - **Foundation:** [Project overview](docs/01-PROJECT-OVERVIEW.md), [Technology stack](docs/02-TECHNOLOGY-STACK.md), [System architecture](docs/03-SYSTEM-ARCHITECTURE.md), [Engineering principles](docs/14-ENGINEERING-PRINCIPLES.md), [Repository structure](docs/20-REPOSITORY-STRUCTURE.md), [Official format verification](docs/27-OFFICIAL-FORMAT-VERIFICATION.md)
-- **Decisions:** [ADR-001 Foundation](docs/adr/ADR-001-foundation.md), [ADR-002 Agent system](docs/adr/ADR-002-agent-system.md), [ADR-003 Skills system](docs/adr/ADR-003-skills-system.md), [ADR-004 Rules system](docs/adr/ADR-004-rules-system.md), [ADR-005 MCP integration architecture](docs/adr/ADR-005-mcp-integration-architecture.md), [Documentation index](docs/README.md)
+- **Decisions:** [ADR-001 Foundation](docs/adr/ADR-001-foundation.md), [ADR-002 Agent system](docs/adr/ADR-002-agent-system.md), [ADR-003 Skills system](docs/adr/ADR-003-skills-system.md), [ADR-004 Rules system](docs/adr/ADR-004-rules-system.md), [ADR-005 MCP integration architecture](docs/adr/ADR-005-mcp-integration-architecture.md), [ADR-006 Lifecycle hooks architecture](docs/adr/ADR-006-lifecycle-hooks-architecture.md), [Documentation index](docs/README.md)
 - **Policies:** [Security](SECURITY.md), [Contributing](CONTRIBUTING.md), [Changelog](CHANGELOG.md), [License](LICENSE).
 
 ## Verified vs proposed

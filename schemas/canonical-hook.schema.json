@@ -1,0 +1,81 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://frontier-engineer.local/schemas/canonical-hook.json",
+  "title": "Platform-independent canonical hook specification frontmatter",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "description",
+    "event",
+    "handler",
+    "securityClassification",
+    "failureMode",
+    "enabled",
+    "platformConfig"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 1024
+    },
+    "event": {
+      "type": "string",
+      "enum": [
+        "SessionStart",
+        "PreToolUse",
+        "PostToolUse",
+        "PreInvocation",
+        "PostInvocation",
+        "Stop"
+      ]
+    },
+    "matcher": {
+      "type": "string"
+    },
+    "handler": {
+      "type": "object",
+      "required": ["type", "command", "timeout"],
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["command"]
+        },
+        "command": {
+          "type": "string",
+          "minLength": 1
+        },
+        "timeout": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 120
+        }
+      }
+    },
+    "securityClassification": {
+      "type": "string",
+      "enum": ["critical_security", "audit_logging", "context_injection", "session_lifecycle"]
+    },
+    "failureMode": {
+      "type": "string",
+      "enum": ["fail_closed", "fail_open", "degrade_gracefully"]
+    },
+    "enabled": {
+      "type": "boolean"
+    },
+    "platformConfig": {
+      "type": "object"
+    }
+  }
+}

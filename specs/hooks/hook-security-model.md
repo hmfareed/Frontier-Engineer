@@ -1,0 +1,88 @@
+# Frontier Engineer — Hook Security Model
+
+This document establishes the security architecture, permission matrix, trust boundaries, and failure behaviors for the Frontier Engineer Lifecycle Hooks System.
+
+## 1. Security Philosophy & Trust Boundaries
+
+The lifecycle hooks execute locally within the developer's development environment. They are invoked by the Antigravity agent runner through standard process communication (stdin/stdout).
+
+Safeguards operate at the point of action to catch high-risk, destructive, or exfiltrating operations before they occur. However:
+
+> [!CRITICAL]
+> A `PreToolUse` hook does not provide an operating-system sandbox or complete virtualization barrier. Hooks only govern executions passing through the Antigravity hook mechanism. They complement—and never replace—OS user permissions, container isolation, database roles, or provider authentication barriers.
+
+## 2. Operation Permission Classification
+
+| Operation                                                          | Permission Tier | Rationale                                                                           |
+| ------------------------------------------------------------------ | --------------- | ----------------------------------------------------------------------------------- |
+| Read hook event input via stdin                                    | **Allowed**     | Core execution protocol requirement.                                                |
+| Validate event input against schema                                | **Allowed**     | Required for robust payload processing.                                             |
+| Write sanitized diagnostics to local audit log                     | **Allowed**     | Operational observability with strict secret redaction.                             |
+| Read approved project metadata (`package.json`, `.git/config`)     | **Restricted**  | Permitted only for session initialization context without scanning full filesystem. |
+| Inspect selected tool arguments (`CommandLine`, `Path`, `Content`) | **Restricted**  | Required for pre-tool safety gating; must never leak inspected secrets to stdout.   |
+| Block a clearly prohibited tool action (`deny`)                    | **Allowed**     | Core enforcement capability for destructive commands and secret leaks.              |
+| Prompt user confirmation (`ask`)                                   | **Allowed**     | Escalates ambiguous or high-risk commands to the human developer.                   |
+| Automatically approve user-sensitive actions (`auto_approve`)      | **Prohibited**  | Never bypasses standard human confirmation or security approvals.                   |
+| Read arbitrary host files outside workspace                        | **Prohibited**  | Hooks must strictly respect workspace boundaries.                                   |
+| Exfiltrate workspace information or telemetry externally           | **Prohibited**  | Zero external telemetry or remote HTTP transmission.                                |
+| Modify project files from audit or lifecycle hooks                 | **Prohibited**  | Hooks are observational and protective, never mutative.                             |
+| Change database privileges or execute DDL                          | **Prohibited**  | Enforced by PostgreSQL read-only role from Phase 5.                                 |
+| Modify Antigravity host security settings                          | **Prohibited**  | Hooks cannot alter global host security configurations.                             |
+
+## 3. Fail-Open vs Fail-Closed Policy
+
+Failure behavior is defined per lifecycle event rather than by a blanket policy:
+
+```text
++------------------------------+--------------------+-----------------------------------------------------+
+| Lifecycle Event              | Failure Strategy   | Operational Behavior on Crash / Timeout / Bad Input |
++------------------------------+--------------------+-----------------------------------------------------+
+| PreToolUse (Safety Gate)     | Fail-Closed        | Denies tool execution or escalates to `ask`.        |
+|                              |                    | Never silently converts failure into `allow`.       |
+| SessionStart (Init)          | Degrade-Gracefully | Initializes degraded session without blocking user. |
+| PostToolUse (Audit)          | Fail-Open          | Skips audit write; returns `{}`; does not loop.     |
+| PreInvocation (Context)      | Fail-Open          | Proceeds to model call without injecting reminders. |
+| PostInvocation (Diagnostics) | Fail-Open          | Proceeds without diagnostics; does not abort loop.  |
+| Stop (Finalization)          | Fail-Open          | Flushes what is possible and permits normal exit.   |
++------------------------------+--------------------+-----------------------------------------------------+
+```
+
+### Safety Gate Invariant
+
+Under no circumstances may a runtime exception, JSON parse error, process crash, or execution timeout in `PreToolUse` result in an `allow` decision. If payload parsing fails or an unhandled exception occurs, the runtime defaults to `deny` with an explanatory error emitted to stderr and a valid protocol deny payload to stdout.
+
+## 4. Threat Matrix and Mitigations
+
+### 4.1 Destructive Filesystem Operations
+
+- **Threat**: Agent runs recursive directory deletion (`rmdir /s /q`, `rm -rf /`, `Remove-Item -Recurse -Force`) targeting project root, `.git`, system roots, or core files.
+- **Mitigation**: Lexical command classifier inspects command syntax and path arguments. Prohibited commands are denied immediately. High-risk git cleanup (`git clean -fdx`, `git reset --hard`) returns `ask` requiring explicit developer consent.
+
+### 4.2 Secret Exposure and Exfiltration
+
+- **Threat**: Agent prints `.env`, SSH private keys (`id_rsa`, `id_ed25519`), AWS credentials, or sends secret keys via `curl`/`wget`.
+- **Mitigation**: Pre-tool checks intercept reading sensitive credential filenames and deny shell commands that attempt to output or exfiltrate private tokens. Post-tool audit redacts all credential patterns using bounded regular expressions.
+
+### 4.3 Database Mutation Safeguards
+
+- **Threat**: Agent attempts destructive SQL queries (`DROP TABLE`, `TRUNCATE`, `DROP DATABASE`, `ALTER TABLE ... DROP`).
+- **Mitigation**: Database operations are governed primarily by the PostgreSQL read-only user role verified in Phase 5. In addition, `PreToolUse` inspects SQL statements passed to database tools and immediately denies DDL/destructive mutations.
+
+### 4.4 Audit Log Storage Bounds & Denial-of-Service
+
+- **Threat**: Excessive tool calls fill developer disk storage or crash logging systems.
+- **Mitigation**: Audit logging enforces a maximum file size (5 MB), rotates up to 3 archive files, and truncates overly long records. All file writes catch exceptions and fail open without causing infinite retry loops.
+
+## 5. Security Testing Requirements
+
+Every release must verify:
+
+1. Malformed JSON handling without process crash.
+2. Missing or null payload fields.
+3. Unexpected or unknown tool names (defaults to `allow` with warning).
+4. Payloads exceeding standard size limits (bounded read buffer up to 10 MB).
+5. Unicode and non-ASCII character handling.
+6. Path traversal attempts (`../../etc/passwd`, `C:\Windows\System32`).
+7. Secret redaction effectiveness across standard credential formats.
+8. Timeout behavior (handlers complete within strictly bounded milliseconds).
+9. Windows path parsing (backslashes, drive letters, spaces, UNC).

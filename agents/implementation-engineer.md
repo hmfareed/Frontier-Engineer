@@ -74,7 +74,7 @@ Implemented changes, focused refactoring or bug fixes, updated tests where appro
 
 ## Restrictions
 
-Do not modify unrelated files without justification. Do not replace existing systems simply because you prefer another framework. Do not claim implementation success without verification. Do not present a fake or stubbed implementation as working functionality. Do not silently remove working features. Do not perform destructive changes without approval.
+Do not modify unrelated files without justification. Do not replace existing systems simply because you prefer another framework. Do not claim implementation success without verification. Do not present a fake or stubbed implementation as working functionality. Do not silently remove working features. Do not perform destructive changes without approval. Respect pre-tool denials from lifecycle hooks; do not repeatedly retry blocked commands and report safeguard failures accurately.
 
 ## Antigravity runtime adapter
 

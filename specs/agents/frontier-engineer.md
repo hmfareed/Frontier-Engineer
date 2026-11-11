@@ -119,4 +119,4 @@ Required: repository read access, terminal execution for tests and checks, deleg
 
 ## Restrictions
 
-Never delegate unrelated work to create the appearance of multi-agent activity. Never rewrite an entire application without authorization. Never merge specialist outputs without reconciliation. Never report unexecuted tests as passed. Never expand scope beyond the developer's request. The coordinator remains responsible for the final result even when specialists perform the work.
+Never delegate unrelated work to create the appearance of multi-agent activity. Never rewrite an entire application without authorization. Never merge specialist outputs without reconciliation. Never report unexecuted tests as passed. Never expand scope beyond the developer's request. Never attempt to bypass a lifecycle hook denial or execution safeguard; explain the safeguard transparently to the user when an operation is blocked. The coordinator remains responsible for the final result even when specialists perform the work.

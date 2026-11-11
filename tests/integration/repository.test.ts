@@ -17,6 +17,11 @@ import {
   checkGeneratedRules,
   loadCanonicalRules,
 } from "../../scripts/lib/canonical-rules.ts";
+import {
+  checkGeneratedHooks,
+  loadCanonicalHookSpecs,
+  validateCanonicalHooks,
+} from "../../scripts/lib/canonical-hooks.ts";
 import { checkContracts } from "../../scripts/lib/contracts.ts";
 import { checkPluginManifest } from "../../scripts/lib/json-config.ts";
 import { checkMarkdownLinks } from "../../scripts/lib/markdown-links.ts";
@@ -95,12 +100,20 @@ describe("repository foundation", () => {
     expect(manifest.name).toBe("frontier-engineer");
     expect(manifest.name).toBe(pkg.name);
     expect(manifest.version).toBe(pkg.version);
-    expect(manifest.version).toBe("0.5.3");
+    expect(manifest.version).toBe("0.6.0");
   });
 
-  it("ships verified mcp_config.json and avoids unverified hooks.json", () => {
+  it("ships verified mcp_config.json and verified hooks.json", () => {
     expect(fs.existsSync(path.join(root, "mcp_config.json"))).toBe(true);
-    expect(fs.existsSync(path.join(root, "hooks.json"))).toBe(false);
+    expect(fs.existsSync(path.join(root, "hooks.json"))).toBe(true);
+  });
+
+  it("ships six canonical hooks and matching generated hooks.json", () => {
+    const { specs, findings } = loadCanonicalHookSpecs(root);
+    expect(findings).toEqual([]);
+    expect(specs).toHaveLength(6);
+    expect(checkGeneratedHooks(root)).toEqual([]);
+    expect(validateCanonicalHooks(root)).toEqual([]);
   });
 
   it("ships six canonical specs and six matching generated adapters", () => {
@@ -143,7 +156,7 @@ describe("repository foundation", () => {
     }
   });
 
-  it("indexes every Phase 1, Phase 2, Phase 3, Phase 4, and Phase 5 document", () => {
+  it("indexes every Phase 1, Phase 2, Phase 3, Phase 4, Phase 5, and Phase 6 document", () => {
     const index = fs.readFileSync(path.join(root, "docs", "README.md"), "utf8");
     for (const name of [
       "01-PROJECT-OVERVIEW.md",
@@ -173,11 +186,18 @@ describe("repository foundation", () => {
       "25-MCP-PORTABILITY.md",
       "26-MCP-OPERATIONS.md",
       "27-OFFICIAL-FORMAT-VERIFICATION.md",
+      "28-HOOKS-ARCHITECTURE.md",
+      "29-HOOKS-SPECIFICATIONS.md",
+      "30-HOOKS-SECURITY.md",
+      "31-HOOKS-RUNTIME.md",
+      "32-HOOKS-TESTING.md",
+      "33-HOOKS-PORTABILITY.md",
       "adr/ADR-001-foundation.md",
       "adr/ADR-002-agent-system.md",
       "adr/ADR-003-skills-system.md",
       "adr/ADR-004-rules-system.md",
       "adr/ADR-005-mcp-integration-architecture.md",
+      "adr/ADR-006-lifecycle-hooks-architecture.md",
     ]) {
       expect(index, name).toContain(name);
     }

@@ -71,7 +71,7 @@ Test strategy, test cases, executed test results, defect reports with reproducti
 
 ## Restrictions
 
-Never fabricate test results. Never change tests merely to make broken code pass. Never treat successful compilation as proof of functional correctness. Never report unexecuted tests as passed. Do not edit source files owned by other agents. Do not silently skip failing tests; report them as Failed or Blocked with a reason.
+Never fabricate test results. Never change tests merely to make broken code pass. Never treat successful compilation as proof of functional correctness. Never report unexecuted tests as passed. Do not edit source files owned by other agents. Do not silently skip failing tests; report them as Failed or Blocked with a reason. Verify hook behavior across all lifecycle events and strictly distinguish live runtime acceptance evidence from simulated unit test results.
 
 ## Antigravity runtime adapter
 

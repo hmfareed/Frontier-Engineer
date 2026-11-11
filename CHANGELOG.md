@@ -2,6 +2,52 @@
 
 All notable changes to Frontier Engineer are documented here. This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] - 2026-11-11
+
+Lifecycle Hooks System & Execution-Time Safeguards (Phase 6).
+
+### Added
+
+- **Canonical Lifecycle Hooks Architecture**:
+  - Authored canonical hook specifications under `specs/hooks/` for six official Antigravity lifecycle events: `frontier-session-init` (`SessionStart`), `frontier-pre-tool-safety` (`PreToolUse`), `frontier-post-tool-audit` (`PostToolUse`), `frontier-engineering-context` (`PreInvocation`), `frontier-invocation-audit` (`PostInvocation`), and `frontier-session-stop` (`Stop`).
+  - Authored central `specs/hooks/hook-registry.md` mapping hook identifiers, lifecycle events, matchers, timeouts, and cross-platform compatibility.
+  - Authored comprehensive `specs/hooks/hook-security-model.md` defining operation permissions, fail-closed vs fail-open policies, threat matrix, and audit data bounds.
+- **Hook Validation Schemas**:
+  - Created `schemas/canonical-hook.schema.json` validating canonical hook frontmatter and required structure.
+  - Created `schemas/hook-registry.schema.json` validating the canonical hook registry.
+  - Created `schemas/hook-evaluation-scenarios.schema.json` validating the adversarial evaluation dataset.
+- **Code Generation & Drift Checking**:
+  - Created `scripts/generate-antigravity-hooks.ts` and `scripts/lib/canonical-hooks.ts` compiling canonical hook policies into official loader-visible `<plugin-root>/hooks.json`.
+  - Added `npm run generate:hooks` and integrated hook drift detection directly into `scripts/validate.ts`.
+- **Modular TypeScript Hook Runtime**:
+  - Built minimal, high-performance runtime under `scripts/hooks/`:
+    - `runtime/dispatcher.ts`: Central CLI router handling stdin, validation, routing, stderr diagnostics, and protocol emission.
+    - `runtime/input.ts`: Bounded stdin reader (10 MB cap) with timeout and safe JSON parsing.
+    - `runtime/output.ts`: Protocol emitter guaranteeing strict stdout JSON serialization and stderr-only logging.
+    - `runtime/logger.ts`: Sanitized JSONL audit logger with bounded file rotation (5 MB cap, 3 backups).
+    - `runtime/validation.ts`: Runtime schema validation per lifecycle event.
+    - `runtime/security.ts`: Deterministic safe fallback resolver implementing fail-closed (`PreToolUse`) and fail-open policies.
+    - `lib/command-classifier.ts`: Multi-category tool call and shell command classifier (destructive filesystem, secret printing/exfiltration, dangerous permissions, database DDL).
+    - `lib/secret-redactor.ts`: Recursive secret redaction engine for PEM keys, GitHub tokens, AWS keys, Sentry tokens, Bearer tokens, and connection strings.
+    - `lib/workspace-validator.ts`: Workspace directory boundary checker and project structure inspector.
+    - `lib/event-context.ts`: Event payload extraction and correlation normalizer.
+    - Handlers for all six lifecycle events under `scripts/hooks/handlers/`.
+- **Comprehensive Test Suite & Evaluation Scenarios**:
+  - 15 adversarial evaluation scenarios in `specs/evaluation/hook-scenarios.json` covering normal commands, destructive filesystem commands, git clean, secret reads, exfiltration, database mutations, malformed payloads, timeouts, crashes, disk failures, repeated turns, and unicode Windows paths.
+  - Unit tests: `tests/unit/canonical-hooks.test.ts`, `canonical-hooks-schema.test.ts`, `hook-generator.test.ts`, `hook-security.test.ts`, `hook-input.test.ts`, `hook-output.test.ts`, `hook-redaction.test.ts`, `hook-evaluation.test.ts`.
+  - Integration tests: `tests/integration/hook-runtime.test.ts`, `hook-events.test.ts`, `hook-windows-compatibility.test.ts`.
+  - Live Antigravity acceptance suite: `scripts/run-live-acceptance.ts` verifying all 10 acceptance criteria (HOOK-01 through HOOK-10) in a disposable workspace.
+- **Documentation & Architectural Decision Records**:
+  - Authored documentation Parts 28–33: `docs/28-HOOKS-ARCHITECTURE.md`, `docs/29-HOOKS-SPECIFICATIONS.md`, `docs/30-HOOKS-SECURITY.md`, `docs/31-HOOKS-RUNTIME.md`, `docs/32-HOOKS-TESTING.md`, `docs/33-HOOKS-PORTABILITY.md`.
+  - Authored `docs/adr/ADR-006-lifecycle-hooks-architecture.md`.
+  - Updated `docs/README.md`, `README.md`, `docs/01-PROJECT-OVERVIEW.md`, and `docs/20-REPOSITORY-STRUCTURE.md`.
+
+### Changed
+
+- Updated all six canonical agent specifications (`specs/agents/*.md`) and regenerated adapters (`agents/*.md`) incorporating hook execution safeguard awareness, pre-tool denial respect, and prohibition of bypass workarounds.
+- Updated `tests/integration/repository.test.ts` to assert presence and validity of `hooks.json` and index all Phase 6 documents.
+- Bumped version to `0.6.0` across `package.json`, `package-lock.json`, `plugin.json`, `specs/hooks/hook-registry.md`, and repository tests.
+
 ## [0.5.3] - 2026-11-11
 
 PostgreSQL MCP Tool Allowlisting & Three-Tier Boundary Security Acceptance (Phase 5.1.2).
