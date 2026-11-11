@@ -2,6 +2,31 @@
 
 All notable changes to Frontier Engineer are documented here. This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.6.3] - 2026-11-11
+
+Final Host Verification Closure & Security Acceptance (Phase 6.1.2).
+
+### Added
+
+- **Explicit MCP Tool Capability Registration (`TRUSTED_MCP_TOOLS`)**:
+  - Bound trusted MCP tools to their authoritative MCP server identifiers (`database` for `postgres_mcp_query`, `science_biomolecular_structure_viewer_mcp` for `get_state`).
+  - Added unexpected server detection: known tools registered under unverified or rogue servers are rejected from trusted classification and escalated to `force_ask` with `semanticClass: "unknown"`.
+- **Adversarial Tool Name & Mutation Protections**:
+  - Expanded `DESTRUCTIVE_TOOL_NAME_PATTERN` to flag execution tokens (`execute`, `eval`, `exec`), guaranteeing tools like `read_and_execute` and `list_and_remove` escalate to `force_ask` as `destructive`.
+  - Expanded `PROHIBITED_DATABASE_MUTATIONS` to intercept `DELETE FROM` statements alongside `DROP` and `TRUNCATE`.
+- **Dispatcher Failure Matrix (HOOK-36 through HOOK-45)**:
+  - Enforced fail-closed behavior across a comprehensive 10-condition failure matrix: empty stdin, invalid JSON, missing tool name, invalid arguments, classifier exceptions, circular output serialization, logging failures, runtime timeouts, stdout emission limitations, and malformed MCP payloads.
+  - Hardened runtime payload validator (`validateEventPayload`) in `scripts/hooks/runtime/validation.ts` to strictly validate `toolCall.name`, argument shapes, and encapsulated MCP properties (`ToolName`, `Arguments`, `ServerName`).
+- **Extended Acceptance Suite (HOOK-01 through HOOK-45)**:
+  - Expanded `scripts/run-live-acceptance.ts` from 30 to 45 structured acceptance tests covering Acceptances A, B, C, and D.
+  - Verified host-visible tool identity formats using empirical evidence from live Antigravity host invocations (`call_mcp_tool` with capitalized `ServerName`, `ToolName`, `Arguments`).
+  - Documented live host `force_ask` verification (HOOK-31) honestly as `BLOCKED` due to headless external browser Google OAuth constraints in `agy.exe -p`.
+
+### Changed
+
+- **Version Bump & Synchronization**:
+  - Synchronized version `0.6.3` across `package.json`, `package-lock.json`, `plugin.json`, `specs/hooks/hook-registry.md`, `README.md`, `docs/01-PROJECT-OVERVIEW.md`, `docs/adr/ADR-006-lifecycle-hooks-architecture.md`, and integration test assertions.
+
 ## [0.6.2] - 2026-11-11
 
 Final Host-Level Security Acceptance & Conceptual Semantic Classification (Phase 6.1.1).

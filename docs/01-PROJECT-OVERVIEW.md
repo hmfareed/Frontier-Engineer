@@ -2,14 +2,14 @@
 
 ## Identity
 
-| Property              | Value                                                  |
-| --------------------- | ------------------------------------------------------ |
-| Product               | Frontier Engineer                                      |
-| Category              | AI software-engineering agent system                   |
-| Distribution          | Google Antigravity plugin                              |
-| Execution environment | Antigravity App, CLI, or IDE                           |
-| Current version       | 0.6.0 (Phase 6 Lifecycle hooks & execution safeguards) |
-| Target release        | 1.0.0 (Phase 10)                                       |
+| Property              | Value                                                                     |
+| --------------------- | ------------------------------------------------------------------------- |
+| Product               | Frontier Engineer                                                         |
+| Category              | AI software-engineering agent system                                      |
+| Distribution          | Google Antigravity plugin                                                 |
+| Execution environment | Antigravity App, CLI, or IDE                                              |
+| Current version       | 0.6.3 (Phase 6.1.2 Final Host Verification Closure & Security Acceptance) |
+| Target release        | 1.0.0 (Phase 10)                                                          |
 
 ## Vision
 

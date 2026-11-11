@@ -142,3 +142,30 @@ Further scrutiny of Phase 6.1 execution safeguards revealed two operational risk
    - Broadened live acceptance tests from 20 to 30 scenarios in `scripts/run-live-acceptance.ts`.
    - Differentiated evidence classifications: `Unit`, `Integration`, `Direct handler`, and `Live Antigravity`.
    - Evaluated host constraints: documented headless OAuth CLI limitations as `BLOCKED` with full empirical evidence.
+
+## Addendum: Phase 6.1.2 Corrective Architecture — Final Host Verification Closure & Security Acceptance
+
+- **Date:** 2026-11-11
+- **Status:** Accepted
+
+### Problem Statement
+
+Phase 6.1.1 verification closure required resolving three host-level verification questions:
+
+1. **MCP Tool Binding to Servers:** MCP tools cannot be deemed safe by tool name alone without binding to their expected server/provider (`ServerName`), risking malicious tools posing as known safe tools under unexpected servers.
+2. **Deceptive and Hostile Tool Names:** Commands including `read_and_execute`, `list_and_remove`, `search_then_upload`, or database deletions (`DELETE FROM`) required rigorous capability classification and denial/escalation gating.
+3. **Dispatcher Failure Matrix (HOOK-36 to HOOK-45):** A comprehensive 10-condition failure matrix was needed to verify that empty stdin, malformed JSON, missing tool names, invalid arguments, classifier exceptions, circular serialization, logging failures, and malformed MCP payloads fail closed with protocol denials and exit code 0.
+
+### Architectural Decisions
+
+1. **Explicit MCP Tool Capability Registration (`TRUSTED_MCP_TOOLS`):**
+   - Established `TRUSTED_MCP_TOOLS` binding server and tool identifiers (e.g. `database` + `postgres_mcp_query`, `science_biomolecular_structure_viewer_mcp` + `get_state`).
+   - If a known tool name is presented under an unexpected server (e.g. `ServerName: "rogue_server"`), trust is denied and the operation escalates to `force_ask` with `semanticClass: "unknown"`.
+2. **Adversarial Tool Name & Mutation Hardening:**
+   - Expanded `DESTRUCTIVE_TOOL_NAME_PATTERN` to include execution patterns (`execute`, `eval`, `exec`), guaranteeing `read_and_execute` is classified as `destructive` and escalates to `force_ask`.
+   - Expanded `PROHIBITED_DATABASE_MUTATIONS` to intercept `DELETE FROM` statements in addition to `DROP` and `TRUNCATE`.
+3. **Payload Structure Validation & Dispatcher Failure Matrix (HOOK-36 to HOOK-45):**
+   - Enhanced `validateEventPayload` for `PreToolUse` to strictly reject non-string tool names, invalid argument shapes, and malformed MCP payloads (missing `ToolName`, non-object `Arguments`, non-string `ServerName`).
+   - Expanded the live acceptance suite in `scripts/run-live-acceptance.ts` to 45 structured tests (HOOK-01 to HOOK-45).
+   - Documented the unavoidable host IPC limitation: if stdout is closed/broken (HOOK-44), the hook cannot emit protocol JSON.
+   - Verified that all fail-closed conditions emit valid protocol denials with exit code 0.

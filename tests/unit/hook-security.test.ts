@@ -211,4 +211,116 @@ describe("command and tool safety classifier", () => {
     expect(emptyName.decision).toBe("deny");
     expect(emptyName.semanticClass).toBe("unknown");
   });
+
+  it("verifies explicit adversarial regression cases (Acceptance C)", () => {
+    // 1. query_delete_records
+    const res1 = classifyToolCall("query_delete_records", {});
+    expect(res1.decision).toBe("force_ask");
+    expect(res1.semanticClass).toBe("destructive");
+
+    // 2. fetch_and_publish
+    const res2 = classifyToolCall("fetch_and_publish", {});
+    expect(res2.decision).toBe("force_ask");
+    expect(res2.semanticClass).toBe("external_side_effect");
+
+    // 3. read_and_execute
+    const res3 = classifyToolCall("read_and_execute", {});
+    expect(res3.decision).toBe("force_ask");
+    expect(res3.semanticClass).toBe("destructive");
+
+    // 4. list_and_remove
+    const res4 = classifyToolCall("list_and_remove", {});
+    expect(res4.decision).toBe("force_ask");
+    expect(res4.semanticClass).toBe("destructive");
+
+    // 5. search_then_upload
+    const res5 = classifyToolCall("search_then_upload", {});
+    expect(res5.decision).toBe("force_ask");
+    expect(res5.semanticClass).toBe("external_side_effect");
+
+    // 6. Unknown MCP tool
+    const res6 = classifyToolCall("call_mcp_tool", {
+      ServerName: "unvetted_server",
+      ToolName: "custom_unvetted_operation",
+      Arguments: {},
+    });
+    expect(res6.decision).toBe("force_ask");
+    expect(res6.semanticClass).toBe("unknown");
+
+    // 7. Known safe tool registered under an unexpected server
+    const res7a = classifyToolCall("call_mcp_tool", {
+      ServerName: "rogue_server",
+      ToolName: "postgres_mcp_query",
+      Arguments: { query: "SELECT 1;" },
+    });
+    expect(res7a.decision).toBe("force_ask");
+    expect(res7a.semanticClass).toBe("unknown");
+    expect(res7a.reason).toContain('unexpected MCP server "rogue_server"');
+
+    const res7b = classifyToolCall("call_mcp_tool", {
+      ServerName: "untrusted_server",
+      ToolName: "get_state",
+      Arguments: {},
+    });
+    expect(res7b.decision).toBe("force_ask");
+    expect(res7b.semanticClass).toBe("unknown");
+    expect(res7b.reason).toContain('unexpected MCP server "untrusted_server"');
+
+    // 8. Known tool with unexpected destructive arguments
+    const res8a = classifyToolCall("call_mcp_tool", {
+      ServerName: "database",
+      ToolName: "postgres_mcp_query",
+      Arguments: { query: "DROP TABLE users;" },
+    });
+    expect(res8a.decision).toBe("deny");
+    expect(res8a.semanticClass).toBe("destructive");
+
+    const res8b = classifyToolCall("call_mcp_tool", {
+      ServerName: "database",
+      ToolName: "postgres_mcp_query",
+      Arguments: { query: "DELETE FROM users WHERE id = 1;" },
+    });
+    expect(res8b.decision).toBe("deny");
+    expect(res8b.semanticClass).toBe("destructive");
+
+    const res8c = classifyToolCall("view_file", {
+      AbsolutePath: "C:/Projects/Frontier-Engineer/.env",
+    });
+    expect(res8c.decision).toBe("deny");
+    expect(res8c.semanticClass).toBe("destructive");
+  });
+
+  it("denies malformed MCP payloads (Acceptance D: HOOK-45)", () => {
+    // Missing ToolName
+    const noTool = classifyToolCall("call_mcp_tool", {
+      ServerName: "database",
+      Arguments: {},
+    });
+    expect(noTool.decision).toBe("deny");
+    expect(noTool.semanticClass).toBe("unknown");
+
+    // Empty ToolName
+    const emptyTool = classifyToolCall("call_mcp_tool", {
+      ServerName: "database",
+      ToolName: "   ",
+      Arguments: {},
+    });
+    expect(emptyTool.decision).toBe("deny");
+
+    // Invalid Arguments (not an object)
+    const badArgs = classifyToolCall("call_mcp_tool", {
+      ServerName: "database",
+      ToolName: "postgres_mcp_query",
+      Arguments: "invalid-string-arguments",
+    });
+    expect(badArgs.decision).toBe("deny");
+
+    // Invalid ServerName (not a string)
+    const badServer = classifyToolCall("call_mcp_tool", {
+      ServerName: 12345 as unknown as string,
+      ToolName: "postgres_mcp_query",
+      Arguments: {},
+    });
+    expect(badServer.decision).toBe("deny");
+  });
 });

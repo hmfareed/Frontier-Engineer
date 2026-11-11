@@ -37,7 +37,27 @@ export interface ClassificationResult {
     | "ambiguous";
 }
 
-/** Explicitly reviewed tools with verified read-only semantics. */
+export interface TrustedMcpToolRegistration {
+  serverName: string;
+  toolName: string;
+  expectedClass: ToolSemanticClass;
+}
+
+/** Authoritative registry binding trusted MCP tools to their expected MCP server. */
+export const TRUSTED_MCP_TOOLS: TrustedMcpToolRegistration[] = [
+  {
+    serverName: "database",
+    toolName: "postgres_mcp_query",
+    expectedClass: "trusted_read_only",
+  },
+  {
+    serverName: "science_biomolecular_structure_viewer_mcp",
+    toolName: "get_state",
+    expectedClass: "trusted_read_only",
+  },
+];
+
+/** Explicitly reviewed native host tools with verified read-only semantics. */
 export const TRUSTED_READ_ONLY_TOOLS = new Set<string>([
   "get_state",
   "list_resources",
@@ -113,8 +133,9 @@ const PROHIBITED_SECRET_PRINT_COMMANDS: Array<{ pattern: RegExp; reason: string 
 const PROHIBITED_DATABASE_MUTATIONS: Array<{ pattern: RegExp; reason: string }> = [
   {
     pattern:
-      /\b(?:DROP\s+DATABASE|DROP\s+SCHEMA|DROP\s+TABLE|TRUNCATE(?:\s+TABLE)?|ALTER\s+TABLE\s+.*\bDROP\s+COLUMN)\b/i,
-    reason: "Destructive database mutations (DROP, TRUNCATE) violate read-only database policy.",
+      /\b(?:DROP\s+DATABASE|DROP\s+SCHEMA|DROP\s+TABLE|TRUNCATE(?:\s+TABLE)?|DELETE\s+FROM|ALTER\s+TABLE\s+.*\bDROP\s+COLUMN)\b/i,
+    reason:
+      "Destructive database mutations (DROP, TRUNCATE, DELETE) violate read-only database policy.",
   },
 ];
 
@@ -143,7 +164,7 @@ const HIGH_RISK_COMMANDS: Array<{ pattern: RegExp; reason: string }> = [
 
 /** Patterns in tool names or operations indicating destructive operations regardless of prefix. */
 const DESTRUCTIVE_TOOL_NAME_PATTERN =
-  /(?:^|[_-])(?:delete|drop|truncate|format|rmdir|remove|purge|wipe|destroy|kill)(?:[_-]|$)/i;
+  /(?:^|[_-])(?:delete|drop|truncate|format|rmdir|remove|purge|wipe|destroy|kill|execute|eval|exec)(?:[_-]|$)/i;
 
 /** Patterns in tool names indicating external side effects (network, messaging, payment). */
 const EXTERNAL_SIDE_EFFECT_PATTERN =
@@ -305,10 +326,59 @@ export function classifyToolCall(
 
   // 5. Encapsulated MCP calls via call_mcp_tool
   if (toolName === "call_mcp_tool") {
-    const tool = norm.mcpToolName ?? "";
+    // 5a. Payload structural validation (HOOK-45)
+    if (
+      !norm.mcpToolName ||
+      typeof norm.mcpToolName !== "string" ||
+      norm.mcpToolName.trim() === ""
+    ) {
+      return {
+        decision: "deny",
+        semanticClass: "unknown",
+        reason: "Blocked: Malformed MCP toolCall payload: missing or empty ToolName.",
+        category: "ambiguous",
+      };
+    }
+
+    if (
+      args.Arguments !== undefined &&
+      (typeof args.Arguments !== "object" ||
+        args.Arguments === null ||
+        Array.isArray(args.Arguments))
+    ) {
+      return {
+        decision: "deny",
+        semanticClass: "unknown",
+        reason: "Blocked: Malformed MCP toolCall payload: Arguments must be an object if provided.",
+        category: "ambiguous",
+      };
+    }
+
+    if (args.ServerName !== undefined && typeof args.ServerName !== "string") {
+      return {
+        decision: "deny",
+        semanticClass: "unknown",
+        reason: "Blocked: Malformed MCP toolCall payload: ServerName must be a string if provided.",
+        category: "ambiguous",
+      };
+    }
+
+    const tool = norm.mcpToolName.trim();
+    const server = norm.mcpServerName?.trim();
     const toolArgs = norm.mcpArguments ?? {};
 
+    // 5b. Database inspection tool: strictly bind to 'database' server and inspect SQL arguments
     if (tool === "postgres_mcp_query" || tool === "query") {
+      // If server is explicitly provided, verify it binds to the expected 'database' provider
+      if (server !== undefined && server !== "database") {
+        return {
+          decision: "force_ask",
+          semanticClass: "unknown",
+          reason: `Confirmation required: Tool "${tool}" registered under unexpected MCP server "${server}" requires developer confirmation.`,
+          category: "ambiguous",
+        };
+      }
+
       const sql = typeof toolArgs.query === "string" ? toolArgs.query : "";
       for (const { pattern, reason } of PROHIBITED_DATABASE_MUTATIONS) {
         if (pattern.test(sql)) {
@@ -323,6 +393,7 @@ export function classifyToolCall(
       return { decision: "allow", semanticClass: "trusted_read_only", category: "safe" };
     }
 
+    // 5c. Prohibited mutating database tools
     if (tool === "postgres_mcp_modify" || tool === "postgres_mcp_bulk_load_csv") {
       return {
         decision: "deny",
@@ -332,7 +403,7 @@ export function classifyToolCall(
       };
     }
 
-    // Check if MCP tool has destructive tokens (e.g. query_delete_records)
+    // 5d. Check if tool has destructive tokens (e.g. query_delete_records, read_and_execute, list_and_remove)
     if (DESTRUCTIVE_TOOL_NAME_PATTERN.test(tool)) {
       return {
         decision: "force_ask",
@@ -342,7 +413,7 @@ export function classifyToolCall(
       };
     }
 
-    // Check if MCP tool has external side effects (e.g. fetch_and_publish)
+    // 5e. Check if tool has external side effects (e.g. fetch_and_publish, search_then_upload)
     if (EXTERNAL_SIDE_EFFECT_PATTERN.test(tool)) {
       return {
         decision: "force_ask",
@@ -352,12 +423,20 @@ export function classifyToolCall(
       };
     }
 
-    // Check explicitly trusted read-only tools
-    if (TRUSTED_READ_ONLY_TOOLS.has(tool)) {
+    // 5f. Explicitly trusted MCP tools bound to expected server
+    if (tool === "get_state") {
+      if (server !== undefined && server !== "science_biomolecular_structure_viewer_mcp") {
+        return {
+          decision: "force_ask",
+          semanticClass: "unknown",
+          reason: `Confirmation required: Tool "${tool}" registered under unexpected MCP server "${server}" requires developer confirmation.`,
+          category: "ambiguous",
+        };
+      }
       return { decision: "allow", semanticClass: "trusted_read_only", category: "safe" };
     }
 
-    // Unvetted MCP tool
+    // 5g. Unvetted or unknown MCP tool
     return {
       decision: "force_ask",
       semanticClass: "unknown",

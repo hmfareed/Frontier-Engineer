@@ -191,6 +191,85 @@ describe("hook dispatcher subprocess integration", () => {
     expect(res.stderr).toContain("FRONTIER_HOOK");
   });
 
+  it("fails closed with deny on empty stdin (HOOK-36)", async () => {
+    const res = await runDispatcher(
+      ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
+      "",
+    );
+    expect(res.code).toBe(0);
+    const parsed = JSON.parse(res.stdout);
+    expect(parsed.decision).toBe("deny");
+    expect(parsed.reason).toContain("Safety check encountered an error");
+    expect(res.stderr).toContain("FRONTIER_HOOK");
+  });
+
+  it("fails closed with deny on missing tool name (HOOK-38)", async () => {
+    const payload = JSON.stringify({
+      toolCall: { args: { CommandLine: "npm test" } },
+      stepIdx: 1,
+      conversationId: "test-missing-name",
+    });
+    const res = await runDispatcher(
+      ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
+      payload,
+    );
+    expect(res.code).toBe(0);
+    const parsed = JSON.parse(res.stdout);
+    expect(parsed.decision).toBe("deny");
+    expect(parsed.reason).toContain("missing 'name'");
+  });
+
+  it("fails closed with deny on invalid arguments (HOOK-39)", async () => {
+    const payload = JSON.stringify({
+      toolCall: { name: "run_command", args: "not-an-object" },
+      stepIdx: 1,
+      conversationId: "test-invalid-args",
+    });
+    const res = await runDispatcher(
+      ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
+      payload,
+    );
+    expect(res.code).toBe(0);
+    const parsed = JSON.parse(res.stdout);
+    expect(parsed.decision).toBe("deny");
+    expect(parsed.reason).toContain("must be a non-array object");
+  });
+
+  it("fails closed with deny on malformed MCP payload (HOOK-45)", async () => {
+    // Missing ToolName inside call_mcp_tool args
+    const payloadNoTool = JSON.stringify({
+      toolCall: { name: "call_mcp_tool", args: { ServerName: "database" } },
+      stepIdx: 1,
+      conversationId: "test-malformed-mcp-1",
+    });
+    const res1 = await runDispatcher(
+      ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
+      payloadNoTool,
+    );
+    expect(res1.code).toBe(0);
+    const parsed1 = JSON.parse(res1.stdout);
+    expect(parsed1.decision).toBe("deny");
+    expect(parsed1.reason).toContain("missing or empty ToolName");
+
+    // Arguments is not an object
+    const payloadBadArgs = JSON.stringify({
+      toolCall: {
+        name: "call_mcp_tool",
+        args: { ServerName: "database", ToolName: "postgres_mcp_query", Arguments: 12345 },
+      },
+      stepIdx: 2,
+      conversationId: "test-malformed-mcp-2",
+    });
+    const res2 = await runDispatcher(
+      ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
+      payloadBadArgs,
+    );
+    expect(res2.code).toBe(0);
+    const parsed2 = JSON.parse(res2.stdout);
+    expect(parsed2.decision).toBe("deny");
+    expect(parsed2.reason).toContain("Arguments must be a non-array object");
+  });
+
   it("executes SessionStart and emits clean injectSteps", async () => {
     const payload = JSON.stringify({
       conversationId: "test-sess-start",
