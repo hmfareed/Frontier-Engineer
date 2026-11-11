@@ -81,3 +81,39 @@ Universal, unrestricted tool access across all agents is prohibited.
 ### 6. Document numbering reorganization
 
 To accommodate the six MCP architecture documents (Parts 21–26), the existing `docs/24-OFFICIAL-FORMAT-VERIFICATION.md` was moved to `docs/27-OFFICIAL-FORMAT-VERIFICATION.md`. All incoming links were updated across the repository.
+
+---
+
+### Addendum: Phase 5.1 Provider Verification, Correction & Hardening (v0.5.1)
+
+#### 1. Retirement of Deprecated Reference Packages
+
+Technical audit revealed that several `@modelcontextprotocol/server-*` packages were reference implementations or deprecated prototypes. In v0.5.1, all five providers were upgraded to officially maintained, production-grade servers:
+
+- **GitHub:** Upgraded to official `github/github-mcp-server` (Go binary / Docker `ghcr.io/github/github-mcp-server`). Enforces `--read-only=true` server-side to reject mutating tool registration.
+- **Context7:** Pinned to Upstash `@upstash/context7-mcp` with exact verified tool names `resolve-library-id` and `query-docs`.
+- **Playwright:** Upgraded to official `@playwright/mcp@latest` with `--headless` and `--isolated` flags, ensuring in-memory sessions that never touch personal browser profiles or cookies.
+- **Sentry:** Upgraded to official `@sentry/mcp-server` with `SENTRY_ACCESS_TOKEN` auth and fine-grained read-only project scopes.
+- **Database (PostgreSQL):** Selected `@microsoft/postgres-mcp` as primary enterprise provider with `POSTGRES_MCP_CONNECTION_STRING`, evaluated against `antonorlov/mcp-postgres-server` (`PG_ALLOW_WRITE=false`).
+
+#### 2. Defense-in-Depth Database Invariants
+
+Direct database connectivity enforces 10 strict invariants across engine, network, server, and client boundaries:
+
+1. Dedicated read-only role (`frontier_readonly`).
+2. No schema ownership.
+3. No superuser or administrative privileges.
+4. All DDL privileges revoked (`CREATE`, `ALTER`, `DROP`).
+5. All DML mutation privileges revoked (`INSERT`, `UPDATE`, `DELETE`, `TRUNCATE`).
+6. Server-side read-only flags passed at process startup.
+7. Read-only transaction enforcement (`SET TRANSACTION READ ONLY`).
+8. Hard statement timeout (5,000ms max).
+9. Strict connection limit (maximum 2 concurrent connections).
+10. Target allowlisting restricted to non-production dev, replica, or staging instances.
+
+#### 3. Empirical Runtime Acceptance Testing
+
+A dedicated runtime test harness (`scripts/test-mcp-runtime.ts`) executes controlled stdio JSON-RPC handshakes:
+
+- **Playwright & Context7:** Classified as `PASSED` after successful process execution, protocol handshake, and tool discovery.
+- **GitHub, Sentry, & PostgreSQL:** Classified as `BLOCKED` with empirical evidence documenting missing tokens, inactive Docker daemon, or unauthenticated database endpoints. Strict verification discipline prohibits conflating `BLOCKED` with `PASSED` or `FAILED`.

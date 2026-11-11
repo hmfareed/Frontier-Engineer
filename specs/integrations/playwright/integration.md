@@ -4,7 +4,7 @@ name: "Playwright Browser Testing"
 description: "Enables browser automation, interactive DOM inspection, accessibility tree validation, and screenshot capture for UI verification using official @playwright/mcp."
 category: "browser_testing"
 version: "1.1.0"
-lifecycle: "provider_verified"
+lifecycle: "runtime_tested"
 provider:
   name: "Playwright (Official / Microsoft)"
   documentationUrl: "https://playwright.dev/mcp/installation"
@@ -32,46 +32,46 @@ runtime:
       secret: false
 capabilities:
   tools:
-    - name: "navigate"
+    - name: "browser_navigate"
       description: "Navigates the browser to a target local or staging URL."
       permissionClass: "read_only"
       agentAffinity:
         - "frontier-engineer"
         - "qa-engineer"
         - "design-engineer"
-    - name: "screenshot"
+    - name: "browser_take_screenshot"
       description: "Captures a full-page or element screenshot for visual regression inspection."
       permissionClass: "read_only"
       agentAffinity:
         - "frontier-engineer"
         - "qa-engineer"
         - "design-engineer"
-    - name: "accessibility_snapshot"
+    - name: "browser_snapshot"
       description: "Extracts the rendered accessibility snapshot conforming to WCAG standards."
       permissionClass: "read_only"
       agentAffinity:
         - "frontier-engineer"
         - "qa-engineer"
         - "design-engineer"
-    - name: "click"
+    - name: "browser_click"
       description: "Clicks on an interactive element to trigger client-side UI transitions."
       permissionClass: "reversible_write"
       agentAffinity:
         - "frontier-engineer"
         - "qa-engineer"
-    - name: "fill"
+    - name: "browser_fill_form"
       description: "Inputs synthetic text into form inputs within local or staging environments."
       permissionClass: "reversible_write"
       agentAffinity:
         - "frontier-engineer"
         - "qa-engineer"
-    - name: "hover"
+    - name: "browser_hover"
       description: "Hovers over an interactive element to trigger hover states."
       permissionClass: "reversible_write"
       agentAffinity:
         - "frontier-engineer"
         - "design-engineer"
-    - name: "select"
+    - name: "browser_select_option"
       description: "Selects an option in a dropdown menu."
       permissionClass: "reversible_write"
       agentAffinity:
@@ -119,6 +119,7 @@ The Playwright MCP integration connects Frontier Engineer to headless browser au
 ## Capabilities and tool definitions
 
 The integration exposes tools grouped by permission class:
+
 1. **Read-only tools:** `navigate`, `screenshot`, `accessibility_snapshot`.
 2. **Reversible write tools:** `click`, `fill`, `hover`, `select` (confined to test environments).
 

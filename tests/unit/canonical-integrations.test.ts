@@ -50,4 +50,33 @@ describe("canonical integration specifications", () => {
     const driftFindings = checkGeneratedIntegrations(root);
     expect(driftFindings).toEqual([]);
   });
+
+  it("strictly prohibits deprecated legacy MCP server packages in runtime arguments and commands", () => {
+    const { integrations } = loadCanonicalIntegrations(root);
+    const deprecatedPackages = [
+      "@modelcontextprotocol/server-github",
+      "@modelcontextprotocol/server-playwright",
+      "@modelcontextprotocol/server-postgres",
+      "@modelcontextprotocol/server-sentry",
+    ];
+
+    for (const integration of integrations) {
+      const runtimeString = JSON.stringify(integration.runtime);
+      for (const deprecated of deprecatedPackages) {
+        expect(
+          runtimeString.includes(deprecated),
+          `Integration ${integration.id} runtime commands must not use deprecated package ${deprecated}`,
+        ).toBe(false);
+      }
+    }
+  });
+
+  it("verifies all integrations use officially verified provider references and licenses", () => {
+    const { integrations } = loadCanonicalIntegrations(root);
+    for (const integration of integrations) {
+      expect(["provider_verified", "runtime_tested"]).toContain(integration.lifecycle);
+      expect(integration.provider.documentationUrl).toMatch(/^https?:\/\//);
+      expect(integration.provider.maintainer.length).toBeGreaterThan(0);
+    }
+  });
 });

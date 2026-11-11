@@ -114,6 +114,7 @@ The Sentry MCP integration connects Frontier Engineer to live error tracking and
 ## Capabilities and tool definitions
 
 The integration exposes read-only diagnostic tools:
+
 - `get_issue`: Retrieves issue summary, culprit, frequency, and tags.
 - `list_issues`: Lists issues filtered by environment, level, or status.
 - `get_event`: Retrieves detailed symbolicated stack frames and user breadcrumbs.

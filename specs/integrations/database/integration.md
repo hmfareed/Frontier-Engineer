@@ -114,6 +114,7 @@ The PostgreSQL database MCP integration enables Frontier Engineer specialist age
 ## Capabilities and tool definitions
 
 The integration exposes tools categorized across two permission classes:
+
 1. **Read-only tools:** `describe_table`, `list_tables`, `show_indexes`, `explain_query`, `execute_read_only_query`.
 2. **Sensitive data access tools:** `query_sensitive_table` (requires explicit human approval and data masking).
 

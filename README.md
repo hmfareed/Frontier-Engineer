@@ -2,7 +2,7 @@
 
 An AI software-engineering **agent system** distributed as a Google Antigravity plugin. It packages a coordinating agent, five specialist subagents, ten reusable engineering skills, persistent rules, and verification tooling into one versioned, installable unit.
 
-> **Status: Phase 5 — Secure MCP integration architecture (v0.5.0).** Five canonical integrations (GitHub, Context7, Playwright, Sentry, PostgreSQL) and their generated Antigravity adapters (`mcp_config.json`, disabled by default) are in place alongside fourteen rules, ten skills, six agents, twenty references, and comprehensive validation tooling. Hooks (Phase 6) are intentionally not implemented yet.
+> **Status: Phase 5.1 — MCP Provider Verification, Correction & Runtime Hardening (v0.5.1).** Five verified integrations (GitHub, Context7, Playwright, Sentry, PostgreSQL) and their generated Antigravity adapters (`mcp_config.json`, disabled by default) are in place alongside fourteen rules, ten skills, six agents, twenty references, and comprehensive validation tooling. Hooks (Phase 6) are intentionally not implemented yet.
 
 ## What this is
 

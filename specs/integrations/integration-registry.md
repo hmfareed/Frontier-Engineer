@@ -28,7 +28,7 @@ integrations:
   - id: "context7"
     name: "Context7 Documentation"
     category: "documentation"
-    lifecycle: "provider_verified"
+    lifecycle: "runtime_tested"
     optional: true
     provider:
       name: "Upstash Context7"
@@ -52,7 +52,7 @@ integrations:
   - id: "playwright"
     name: "Playwright Browser Testing"
     category: "browser_testing"
-    lifecycle: "provider_verified"
+    lifecycle: "runtime_tested"
     optional: true
     provider:
       name: "Playwright (Official / Microsoft)"
@@ -128,13 +128,13 @@ The Central MCP Integration Registry defines all external integrations supported
 
 ## Registry Summary
 
-| Integration  | Category          | Lifecycle           | Optional | Provider                         | Transport | Default Status    |
-| :----------- | :---------------- | :------------------ | :------- | :------------------------------- | :-------- | :---------------- |
-| `github`     | `repository`      | `provider_verified` | Yes      | GitHub (Official)                | `stdio`   | Disabled (Opt-in) |
-| `context7`   | `documentation`   | `provider_verified` | Yes      | Upstash Context7                 | `stdio`   | Disabled (Opt-in) |
-| `playwright` | `browser_testing` | `provider_verified` | Yes      | Playwright (Official / Microsoft)| `stdio`   | Disabled (Opt-in) |
-| `sentry`     | `observability`   | `provider_verified` | Yes      | Sentry (Official / getsentry)    | `stdio`   | Disabled (Opt-in) |
-| `database`   | `database`        | `provider_verified` | Yes      | Microsoft (Official / microsoft) | `stdio`   | Disabled (Opt-in) |
+| Integration  | Category          | Lifecycle           | Optional | Provider                          | Transport | Default Status    |
+| :----------- | :---------------- | :------------------ | :------- | :-------------------------------- | :-------- | :---------------- |
+| `github`     | `repository`      | `provider_verified` | Yes      | GitHub (Official)                 | `stdio`   | Disabled (Opt-in) |
+| `context7`   | `documentation`   | `provider_verified` | Yes      | Upstash Context7                  | `stdio`   | Disabled (Opt-in) |
+| `playwright` | `browser_testing` | `provider_verified` | Yes      | Playwright (Official / Microsoft) | `stdio`   | Disabled (Opt-in) |
+| `sentry`     | `observability`   | `provider_verified` | Yes      | Sentry (Official / getsentry)     | `stdio`   | Disabled (Opt-in) |
+| `database`   | `database`        | `provider_verified` | Yes      | Microsoft (Official / microsoft)  | `stdio`   | Disabled (Opt-in) |
 
 ## Operational Principles
 

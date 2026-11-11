@@ -31,9 +31,9 @@ Spawns a local executable or command-line process and communicates over standard
 ```json
 {
   "mcpServers": {
-    "github": {
+    "playwright": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated"],
       "disabled": false
     }
   }
@@ -81,8 +81,17 @@ Frontier Engineer ships with an authoritative `mcp_config.json` registering the 
 {
   "mcpServers": {
     "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "ghcr.io/github/github-mcp-server:latest",
+        "--read-only=true",
+        "--toolsets=context,issues,pull_requests,repos"
+      ],
       "disabled": true
     },
     "context7": {
@@ -92,17 +101,17 @@ Frontier Engineer ships with an authoritative `mcp_config.json` registering the 
     },
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@executeautomation/playwright-mcp-server"],
+      "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated"],
       "disabled": true
     },
     "sentry": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sentry"],
+      "args": ["-y", "@sentry/mcp-server"],
       "disabled": true
     },
     "database": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "args": ["-y", "@microsoft/postgres-mcp"],
       "disabled": true
     }
   }
@@ -118,7 +127,7 @@ To enable any integration for your project or machine:
 ### Option A: Enable via Antigravity UI
 
 1. Open Antigravity and navigate to **Additional Options (...) > MCP Servers**.
-2. Locate the Frontier Engineer server you wish to activate (e.g. `frontier-engineer:github`).
+2. Locate the Frontier Engineer server you wish to activate (e.g. `frontier-engineer:context7` or `frontier-engineer:playwright`).
 3. Toggle the server to **Enabled**.
 4. If prompted, supply the required token or ensure the corresponding environment variable is exported in your shell.
 
@@ -129,17 +138,16 @@ Create or edit `.agents/mcp_config.json` in your project root:
 ```json
 {
   "mcpServers": {
-    "github": {
+    "playwright": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"]
+      "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated"]
     },
     "database": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-postgres",
-        "postgresql://readonly_user:password@localhost:5432/mydb"
-      ]
+      "args": ["-y", "@microsoft/postgres-mcp"],
+      "env": {
+        "POSTGRES_MCP_CONNECTION_STRING": "postgresql://frontier_readonly:password@localhost:5432/app_dev"
+      }
     }
   }
 }
@@ -147,10 +155,10 @@ Create or edit `.agents/mcp_config.json` in your project root:
 
 ### Environment variables checklist
 
-| Server       | Environment Variable           | Recommended Scope                                               |
-| :----------- | :----------------------------- | :-------------------------------------------------------------- |
-| `github`     | `GITHUB_PERSONAL_ACCESS_TOKEN` | Fine-grained PAT: repo content read, issues read, PR read       |
-| `context7`   | `CONTEXT7_API_KEY`             | Optional; default public rate tier available                    |
-| `playwright` | _None_                         | Local node/chromium binary (`npx playwright install chromium`)  |
-| `sentry`     | `SENTRY_AUTH_TOKEN`            | Read-only auth token (`org:read`, `project:read`, `event:read`) |
-| `database`   | `DATABASE_URL`                 | Dedicated read-only development connection string               |
+| Server       | Environment Variable             | Recommended Scope                                                 |
+| :----------- | :------------------------------- | :---------------------------------------------------------------- |
+| `github`     | `GITHUB_PERSONAL_ACCESS_TOKEN`   | Fine-grained PAT: repo content read, issues read, PR read         |
+| `context7`   | `CONTEXT7_API_KEY`               | Optional; default public rate tier available                      |
+| `playwright` | _None_                           | Browser binaries managed in-memory with `--isolated` profile      |
+| `sentry`     | `SENTRY_ACCESS_TOKEN`            | Read-only auth token (`org:read`, `project:read`, `event:read`)   |
+| `database`   | `POSTGRES_MCP_CONNECTION_STRING` | Dedicated read-only development connection string (10 invariants) |

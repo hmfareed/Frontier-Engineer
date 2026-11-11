@@ -23,10 +23,7 @@
     },
     "context7": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@upstash/context7-mcp"
-      ],
+      "args": ["-y", "@upstash/context7-mcp"],
       "disabled": false,
       "description": "Enables fast, authoritative technical documentation lookup, library version resolution, and code snippet retrieval from Context7.",
       "requiredEnvironmentVariables": {
@@ -35,12 +32,7 @@
     },
     "playwright": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@playwright/mcp@latest",
-        "--headless",
-        "--isolated"
-      ],
+      "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated"],
       "disabled": false,
       "description": "Enables browser automation, interactive DOM inspection, accessibility tree validation, and screenshot capture for UI verification using official @playwright/mcp.",
       "requiredEnvironmentVariables": {
@@ -50,10 +42,7 @@
     },
     "sentry": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@sentry/mcp-server@latest"
-      ],
+      "args": ["-y", "@sentry/mcp-server@latest"],
       "disabled": false,
       "description": "Provides access to Sentry error monitoring, stack trace inspection, crash reports, and issue triage using official @sentry/mcp-server.",
       "requiredEnvironmentVariables": {
@@ -64,11 +53,7 @@
     },
     "database": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@microsoft/postgres-mcp",
-        "run"
-      ],
+      "args": ["-y", "@microsoft/postgres-mcp", "run"],
       "disabled": false,
       "description": "Enables schema inspection, index analysis, execution plan generation, and safe read-only queries for PostgreSQL using @microsoft/postgres-mcp.",
       "requiredEnvironmentVariables": {

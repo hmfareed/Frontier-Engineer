@@ -34,7 +34,7 @@ From this single source of truth, platform adapters are compiled without alterin
 
 ### 1. Google Antigravity (Implemented & Verified)
 
-- **Status:** **Implemented & Verified** (v0.5.0).
+- **Status:** **Implemented & Verified** (v0.5.1).
 - **Format:** `mcp_config.json` with `mcpServers` object.
 - **Transports:** `command` (stdio) and `url` (streamable HTTP).
 - **Environment Handling:** Processes inherit host environment variables automatically. Unconfigured servers ship with `"disabled": true`.
@@ -48,8 +48,17 @@ From this single source of truth, platform adapters are compiled without alterin
   {
     "mcpServers": {
       "github": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-github"],
+        "command": "docker",
+        "args": [
+          "run",
+          "-i",
+          "--rm",
+          "-e",
+          "GITHUB_PERSONAL_ACCESS_TOKEN",
+          "ghcr.io/github/github-mcp-server:latest",
+          "--read-only=true",
+          "--toolsets=context,issues,pull_requests,repos"
+        ],
         "env": {
           "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_PERSONAL_ACCESS_TOKEN}"
         }

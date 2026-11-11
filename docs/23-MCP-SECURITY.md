@@ -42,19 +42,66 @@ To prevent tool sprawl, accidental destruction, and unauthorized access, Frontie
 ```
 
 > [!IMPORTANT]
-> These capability classes represent Frontier Engineer's **internal policy and behavioral governance model**. They are enforced by agent instructions, capability mapping, and validator checks. Where the host agent platform does not enforce capability permissions at the protocol level, Frontier Engineer relies on explicit human confirmation prompts and agent discipline.
+> These capability classes represent Frontier Engineer's **internal policy and behavioral governance model**. They are enforced by agent instructions, capability mapping, and validator checks. Where the host agent platform does not enforce capability permissions at the protocol level, Frontier Engineer relies on server-side flags, explicit human confirmation prompts, and agent discipline.
+
+---
+
+## 5-Tier Defense-in-Depth Enforcement Architecture
+
+Frontier Engineer rejects reliance on prompt instructions alone to protect repository and database state. Defense is strictly enforced across five concentric layers:
+
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│ Layer E: Human-in-the-Loop Approval                             │
+│ External writes, PR creations, or destructive actions require   │
+│ explicit human confirmation detailing action, reason, and risk. │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer D: Behavioral Rules (Frontier Engineer Rules System)      │
+│ AGENTS.md, general-engineering.md, secrets-management.md        │
+│ enforce prompt boundaries, verification before completion.       │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer C: Provider / Token Scopes & Database Role Permissions    │
+│ Fine-grained PATs restricted to specific repos with read scopes;│
+│ Dedicated database roles with REVOKE ALL; GRANT SELECT only.    │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer B: Host / Antigravity Configuration Filtering             │
+│ mcp_config.json dormant defaults ("disabled": true);            │
+│ Process isolation, environment variable separation.             │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer A: MCP Server-Side Enforcement                            │
+│ Server startup flags (--read-only=true, --headless, --isolated) │
+│ reject registering mutating tools at the protocol endpoint.     │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Capability classification by integration
 
-| Integration      | Read-Only Tools                                                                     | External Side Effect Tools                                     | Destructive / Irreversible Tools                          | Sensitive Data Tools                                      |
-| :--------------- | :---------------------------------------------------------------------------------- | :------------------------------------------------------------- | :-------------------------------------------------------- | :-------------------------------------------------------- |
-| **`github`**     | `get_file_contents`, `list_issues`, `get_pull_request`, `search_code`               | `create_issue`, `create_pull_request`, `create_issue_comment`  | `delete_branch`, `close_pull_request`                     | Access to private repo contents                           |
-| **`context7`**   | `resolve_library_id`, `get_library_docs`, `query_documentation`                     | _None_                                                         | _None_                                                    | _None_ (Public documentation)                             |
-| **`playwright`** | `navigate`, `screenshot`, `get_dom`, `get_accessibility_tree`, `get_console_logs`   | `click`, `fill`, `hover` (Form submission on external domains) | Submitting checkout/payment forms, account deletion flows | Cookies, session storage, authentication inputs           |
-| **`sentry`**     | `list_projects`, `list_issues`, `get_issue_details`, `list_events`                  | `update_issue_status` (`resolve`, `ignore`)                    | `delete_issue`, `bulk_resolve`                            | Stack traces containing request payloads or user emails   |
-| **`database`**   | `list_tables`, `describe_table`, `list_indexes`, `explain_query`, read-only `query` | `INSERT`, `UPDATE` (if write enabled)                          | `DROP TABLE`, `TRUNCATE`, `ALTER TABLE ... DROP COLUMN`   | Tables containing customer passwords, payment tokens, PII |
+| Integration      | Read-Only Tools                                                                                                  | Reversible Write Tools                                                         | External Side Effect Tools                                    | Destructive / Irreversible Tools                          | Sensitive Data Tools                                      |
+| :--------------- | :--------------------------------------------------------------------------------------------------------------- | :----------------------------------------------------------------------------- | :------------------------------------------------------------ | :-------------------------------------------------------- | :-------------------------------------------------------- |
+| **`github`**     | `search_repositories`, `get_file_contents`, `list_issues`, `get_issue`, `list_pull_requests`, `get_pull_request` | _None_                                                                         | `create_issue`, `create_pull_request`, `create_issue_comment` | `delete_branch`, `close_pull_request`                     | Access to private repo contents                           |
+| **`context7`**   | `resolve-library-id`, `query-docs`                                                                               | _None_                                                                         | _None_                                                        | _None_                                                    | _None_ (Public documentation)                             |
+| **`playwright`** | `browser_navigate`, `browser_take_screenshot`, `browser_snapshot`, `browser_console_messages`                    | `browser_click`, `browser_fill_form`, `browser_hover`, `browser_select_option` | Form submission on external domains                           | Submitting checkout/payment forms, account deletion flows | In-memory session cookies, auth tokens                    |
+| **`sentry`**     | `list_projects`, `list_issues`, `get_issue_details`                                                              | _None_                                                                         | `update_issue_status` (`resolve`, `ignore`)                   | `delete_issue`, `bulk_resolve`                            | Stack traces containing request payloads or user emails   |
+| **`database`**   | `describe_table`, `list_tables`, `read_query` (with mandatory `LIMIT 100`)                                       | _None_ (DDL/DML strictly prohibited)                                           | _None_                                                        | `DROP TABLE`, `TRUNCATE`, `ALTER TABLE` (Hard blocked)    | Tables containing customer passwords, payment tokens, PII |
+
+---
+
+## Database Security: The 10 Invariants
+
+Direct database connections enforce 10 mandatory invariants across engine, network, server, and client boundaries:
+
+1. **Dedicated Read-Only User:** The agent connects exclusively as a dedicated read-only role (`frontier_readonly`).
+2. **No Schema Ownership:** The role must not own any database schemas, tables, sequences, or functions.
+3. **No Superuser Privileges:** Superuser, `CREATEROLE`, `CREATEDB`, `REPLICATION`, and `BYPASSRLS` privileges are strictly prohibited.
+4. **No DDL Permissions:** All `CREATE`, `ALTER`, and `DROP` privileges are revoked on all schemas.
+5. **No DML Mutation Permissions:** `INSERT`, `UPDATE`, `DELETE`, and `TRUNCATE` privileges are revoked across all current and future tables.
+6. **Server-Side Enforcement:** Where supported by the server implementation, read-only mode is passed as a startup flag (`PG_ALLOW_WRITE=false`).
+7. **Transaction Safeguards:** Queries execute inside read-only transactions (`SET TRANSACTION READ ONLY;`).
+8. **Hard Query Timeouts:** A statement timeout (max 5,000ms) is enforced at the database user level to terminate long-running queries automatically.
+9. **Strict Connection Limits:** The role is restricted to a maximum of 2 concurrent connections (`ALTER ROLE frontier_readonly CONNECTION LIMIT 2;`).
+10. **Explicit Database Allowlisting:** The connection string must target an explicitly designated development, replica, or staging database. Production primary databases are blocked.
 
 ---
 
@@ -80,9 +127,9 @@ To prevent tool sprawl, accidental destruction, and unauthorized access, Frontie
 
 - **Threat:** An agent executing a database query or GitHub mutation triggers an irreversible state loss.
 - **Defenses:**
-  - Database connections default to read-only roles (`SET default_transaction_read_only = on`).
-  - Destructive DDL commands (`DROP TABLE`, `DROP COLUMN`) require explicit, staged human confirmation.
-  - GitHub PR merges and deletions are barred from autonomous agent execution.
+  - Database connections strictly enforce read-only roles and transaction limits.
+  - Server-side read-only flags (`--read-only=true`) block mutation tools at registration.
+  - GitHub PR merges, deletions, and issue closures are barred from autonomous agent execution.
 
 ### 4. Overly broad permissions
 

@@ -33,13 +33,17 @@ Frontier Engineer rejects reliance on prompt instructions alone to protect repos
 ```
 
 ### Layer A: Server-Side Read-Only Flag
-The official `github-mcp-server` supports `--read-only=true` (and `GITHUB_READ_ONLY=true`). When active, the server binary rejects all registration of mutating tools (`create_issue`, `merge_pull_request`, `delete_branch`, etc.). Even if an agent constructs a mutation payload, the tool does not exist on the MCP endpoint.
+
+The official `github-mcp-server` supports `--read-only=true` (and `GITHUB_READ_ONLY=true`). When active, the server binary rejects all registration of mutating tools (`create_issue`, `close_issue`, `merge_pull_request`, `delete_branch`, etc.). Even if an agent constructs a mutation payload, the tool does not exist on the MCP endpoint.
 
 ### Layer B: Host Configuration
+
 In Antigravity's `mcp_config.json`, servers are kept dormant (`"disabled": true`) until explicitly enabled by the developer.
 
 ### Layer C: Provider-Level Token Scoping
+
 Developers must provision fine-grained Personal Access Tokens with the narrowest scope:
+
 - Repository access: Specific target repositories only (never "All repositories").
 - Permissions:
   - `Contents`: Read-only
@@ -48,14 +52,17 @@ Developers must provision fine-grained Personal Access Tokens with the narrowest
   - `Metadata`: Read-only
 
 ### Layer D: Behavioral Governance
+
 Frontier Engineer foundation rules strictly forbid bypassing local git version control to push unverified changes through remote APIs.
 
 ### Layer E: Human Approval Gates
+
 In the event that read-only mode is temporarily relaxed for specific administrative tasks, all write, merge, close, or delete operations require human-in-the-loop authorization with explicit confirmation.
 
 ## Audit Logging
 
 Every GitHub tool invocation is logged in the agent transcript with:
+
 - Timestamp (ISO 8601 UTC)
 - Operation name and target repository (`owner/repo`)
 - Operation classification (`read_only`)

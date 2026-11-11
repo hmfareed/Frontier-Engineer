@@ -75,12 +75,14 @@ ALTER ROLE frontier_readonly SET statement_timeout = '5000ms';
 ## Human Confirmation for Sensitive Tables
 
 Tables identified as holding sensitive records (such as `users`, `accounts`, `tokens`, `sessions`, `credentials`, `payments`) cannot be queried without explicit user confirmation:
+
 - The agent must state the table name, intended purpose, and list of columns to be masked.
 - Fields containing passwords, secrets, or financial data are masked with `[REDACTED]`.
 
 ## Audit Logging
 
 Every database query is logged with:
+
 - Timestamp (UTC)
 - Query text (with parameterized values redacted)
 - Table names accessed

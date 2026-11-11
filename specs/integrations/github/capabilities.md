@@ -6,20 +6,21 @@ This document specifies the tools, operations, and parameters supported by the o
 
 Under Frontier Engineer's hardened configuration (`--read-only=true`), all exposed tools are strictly **Read-only**:
 
-| Tool Name | Permission Class | Target Scope | Human Confirmation Required | Agent Affinity |
-| :--- | :--- | :--- | :--- | :--- |
-| `get_file_contents` | Read-only | Remote repository file | No | `frontier-engineer`, `implementation-engineer` |
-| `get_issue` | Read-only | Target issue details | No | `frontier-engineer`, `qa-engineer` |
-| `list_issues` | Read-only | Repository issues catalog | No | `frontier-engineer`, `qa-engineer` |
-| `get_pull_request` | Read-only | Pull request metadata & diff | No | `frontier-engineer`, `qa-engineer`, `implementation-engineer` |
-| `list_pull_requests` | Read-only | Pull request catalog | No | `frontier-engineer`, `qa-engineer` |
-| `list_commits` | Read-only | Commit history | No | `frontier-engineer`, `implementation-engineer` |
-| `search_code` | Read-only | Remote code search | No | `frontier-engineer`, `architect`, `implementation-engineer` |
-| `search_issues` | Read-only | Remote issue/PR search | No | `frontier-engineer`, `qa-engineer` |
+| Tool Name            | Permission Class | Target Scope                 | Human Confirmation Required | Agent Affinity                                                |
+| :------------------- | :--------------- | :--------------------------- | :-------------------------- | :------------------------------------------------------------ |
+| `get_file_contents`  | Read-only        | Remote repository file       | No                          | `frontier-engineer`, `implementation-engineer`                |
+| `get_issue`          | Read-only        | Target issue details         | No                          | `frontier-engineer`, `qa-engineer`                            |
+| `list_issues`        | Read-only        | Repository issues catalog    | No                          | `frontier-engineer`, `qa-engineer`                            |
+| `get_pull_request`   | Read-only        | Pull request metadata & diff | No                          | `frontier-engineer`, `qa-engineer`, `implementation-engineer` |
+| `list_pull_requests` | Read-only        | Pull request catalog         | No                          | `frontier-engineer`, `qa-engineer`                            |
+| `list_commits`       | Read-only        | Commit history               | No                          | `frontier-engineer`, `implementation-engineer`                |
+| `search_code`        | Read-only        | Remote code search           | No                          | `frontier-engineer`, `architect`, `implementation-engineer`   |
+| `search_issues`      | Read-only        | Remote issue/PR search       | No                          | `frontier-engineer`, `qa-engineer`                            |
 
 ## Disabled Operations (Server-Enforced)
 
 The official `github-mcp-server` `--read-only=true` flag actively disables the following tools at the binary boundary:
+
 - `create_issue` / `update_issue`: Disabled (writes must be managed via web or CLI).
 - `create_pull_request` / `update_pull_request`: Disabled (PR creation belongs to developer review).
 - `merge_pull_request`: Disabled (merging remote branches via LLM is blocked).
@@ -29,6 +30,7 @@ The official `github-mcp-server` `--read-only=true` flag actively disables the f
 ## Tool Specifications
 
 ### `get_file_contents`
+
 - **Description:** Reads file contents from a specific commit, branch, or tag in the remote repository.
 - **Parameters:**
   - `owner` (string, required): Repository owner or organization.
@@ -38,6 +40,7 @@ The official `github-mcp-server` `--read-only=true` flag actively disables the f
 - **Output:** Decoded text content or structured directory listing.
 
 ### `get_issue`
+
 - **Description:** Retrieves details, status, labels, and discussion thread for a GitHub issue.
 - **Parameters:**
   - `owner` (string, required): Repository owner.
@@ -46,6 +49,7 @@ The official `github-mcp-server` `--read-only=true` flag actively disables the f
 - **Output:** Structured issue object including state, author, labels, and body.
 
 ### `list_issues`
+
 - **Description:** Lists issues in a repository filtered by state or milestone.
 - **Parameters:**
   - `owner` (string, required): Repository owner.
@@ -55,6 +59,7 @@ The official `github-mcp-server` `--read-only=true` flag actively disables the f
 - **Output:** Array of issue summaries.
 
 ### `get_pull_request`
+
 - **Description:** Fetches pull request review state, metadata, and diff.
 - **Parameters:**
   - `owner` (string, required): Repository owner.
@@ -63,6 +68,7 @@ The official `github-mcp-server` `--read-only=true` flag actively disables the f
 - **Output:** Structured pull request metadata and patch status.
 
 ### `list_pull_requests`
+
 - **Description:** Lists pull requests in a repository with state filtering.
 - **Parameters:**
   - `owner` (string, required): Repository owner.
@@ -71,6 +77,7 @@ The official `github-mcp-server` `--read-only=true` flag actively disables the f
 - **Output:** Array of pull request summaries.
 
 ### `list_commits`
+
 - **Description:** Retrieves commit log for a branch, tag, or file path.
 - **Parameters:**
   - `owner` (string, required): Repository owner.
@@ -79,6 +86,7 @@ The official `github-mcp-server` `--read-only=true` flag actively disables the f
 - **Output:** Array of commit objects with commit messages and authors.
 
 ### `search_code`
+
 - **Description:** Searches code across accessible repositories using GitHub code search syntax.
 - **Parameters:**
   - `query` (string, required): Search query string.
@@ -86,6 +94,7 @@ The official `github-mcp-server` `--read-only=true` flag actively disables the f
 - **Output:** List of matching file paths, snippets, and repository links.
 
 ### `search_issues`
+
 - **Description:** Searches issues and pull requests by keyword or qualifier.
 - **Parameters:**
   - `query` (string, required): Search query.

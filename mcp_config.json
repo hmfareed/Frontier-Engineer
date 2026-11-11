@@ -16,37 +16,22 @@
     },
     "context7": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@upstash/context7-mcp"
-      ],
+      "args": ["-y", "@upstash/context7-mcp"],
       "disabled": true
     },
     "playwright": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@playwright/mcp@latest",
-        "--headless",
-        "--isolated"
-      ],
+      "args": ["-y", "@playwright/mcp@latest", "--headless", "--isolated"],
       "disabled": true
     },
     "sentry": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@sentry/mcp-server@latest"
-      ],
+      "args": ["-y", "@sentry/mcp-server@latest"],
       "disabled": true
     },
     "database": {
       "command": "npx",
-      "args": [
-        "-y",
-        "@microsoft/postgres-mcp",
-        "run"
-      ],
+      "args": ["-y", "@microsoft/postgres-mcp", "run"],
       "disabled": true
     }
   }

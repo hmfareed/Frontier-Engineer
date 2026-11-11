@@ -4,14 +4,15 @@ This document specifies the exact tools, parameters, and invocation contracts fo
 
 ## Permission Class Summary
 
-| Tool Name | Permission Class | Target Scope | Human Confirmation Required | Agent Affinity |
-| :--- | :--- | :--- | :--- | :--- |
-| `resolve-library-id` | Read-only | Public documentation catalog | No | `frontier-engineer`, `architect`, `implementation-engineer`, `security-auditor` |
-| `query-docs` | Read-only | Library documentation index | No | `frontier-engineer`, `architect`, `implementation-engineer`, `security-auditor` |
+| Tool Name            | Permission Class | Target Scope                 | Human Confirmation Required | Agent Affinity                                                                  |
+| :------------------- | :--------------- | :--------------------------- | :-------------------------- | :------------------------------------------------------------------------------ |
+| `resolve-library-id` | Read-only        | Public documentation catalog | No                          | `frontier-engineer`, `architect`, `implementation-engineer`, `security-auditor` |
+| `query-docs`         | Read-only        | Library documentation index  | No                          | `frontier-engineer`, `architect`, `implementation-engineer`, `security-auditor` |
 
 ## Tool Specifications
 
 ### `resolve-library-id`
+
 - **Description:** Discovers authoritative Context7 library identifiers matching a package or framework name.
 - **Parameters:**
   - `query` (string, required): General library name, framework, or package (e.g., `next.js`, `tailwind`, `zod`, `fastapi`).
@@ -22,6 +23,7 @@ This document specifies the exact tools, parameters, and invocation contracts fo
   - Brief project description.
 
 ### `query-docs`
+
 - **Description:** Retrieves targeted, version-filtered documentation snippets and code examples for a resolved library.
 - **Parameters:**
   - `libraryId` (string, required): Resolved library ID (e.g., `/vercel/next.js`, `/colinhacks/zod`).

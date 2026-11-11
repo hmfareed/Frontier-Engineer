@@ -2,6 +2,32 @@
 
 All notable changes to Frontier Engineer are documented here. This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.5.1] - 2026-11-11
+
+MCP Provider Verification, Correction & Runtime Hardening (Phase 5.1).
+
+### Added
+
+- Controlled live runtime acceptance test harness (`scripts/test-mcp-runtime.ts`) exercising MCP server subprocesses via JSON-RPC 2.0 stdio handshakes and tool discovery.
+- Empirical test suite additions banning legacy deprecated packages (`@modelcontextprotocol/server-*`) from runtime arguments across all canonical integrations.
+- Ten mandatory defense-in-depth database invariants (`specs/integrations/database/security.md`) and a formal PostgreSQL provisioning script enforcing least-privilege boundaries (read-only user, no schema ownership, no DDL/DML, 5,000ms timeout, connection limit 2).
+- Formal 5-tier permission enforcement matrix (Server, Host, Provider/Database, Behavioral Rules, Human Approval) documented across all integration security specifications.
+- Phase 5.1 Provider Corrections Addendum in `docs/adr/ADR-005-mcp-integration-architecture.md` and verification record in `docs/27-OFFICIAL-FORMAT-VERIFICATION.md`.
+
+### Changed
+
+- Replaced deprecated `@modelcontextprotocol/server-github` with official `github/github-mcp-server` enforcing `--read-only=true` (server-side mutating tool rejection) and `--toolsets=context,issues,pull_requests,repos`.
+- Pinned Context7 integration to Upstash `@upstash/context7-mcp` with exact verified tool names `resolve-library-id` and `query-docs`; lifecycle updated to `runtime_tested` following successful live stdio JSON-RPC handshake.
+- Replaced community/deprecated Playwright packages with official `@playwright/mcp@latest` enforcing `--headless` and `--isolated` (in-memory profiles with zero access to personal developer browser state); lifecycle updated to `runtime_tested` following successful live stdio JSON-RPC handshake and 25-tool discovery.
+- Replaced `@modelcontextprotocol/server-sentry` with official `@sentry/mcp-server` (`https://github.com/getsentry/sentry-mcp`) requiring `SENTRY_ACCESS_TOKEN`.
+- Evaluated PostgreSQL MCP alternatives (`@microsoft/postgres-mcp` vs `antonorlov/mcp-postgres-server`), standardizing on `@microsoft/postgres-mcp` with `POSTGRES_MCP_CONNECTION_STRING` under 10 strict invariants.
+- Regenerated Antigravity MCP adapter `mcp_config.json` and `mcp_config.example.json` with zero drift.
+- `package.json` and `plugin.json` bumped to `0.5.1`.
+
+### Known limitations
+
+- Live runtime invocation of GitHub, Sentry, and PostgreSQL requires external user credentials (`GITHUB_PERSONAL_ACCESS_TOKEN`, `SENTRY_ACCESS_TOKEN`, `POSTGRES_MCP_CONNECTION_STRING`) or running Docker daemon; accurately classified as `BLOCKED` with empirical evidence in the runtime test harness.
+
 ## [0.5.0] - 2026-11-10
 
 Secure MCP integration architecture (Phase 5).

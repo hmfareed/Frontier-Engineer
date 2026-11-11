@@ -30,18 +30,23 @@ Sentry error logs and performance events capture runtime application state from 
 ```
 
 ### Layer A: Server-Side Tool Scoping
+
 The official `@sentry/mcp-server` exposes issue and telemetry inspection. Sensitive administrative endpoints (deleting projects, revoking team members, altering billing) are absent.
 
 ### Layer B: Host Configuration
+
 Server is registered as `"disabled": true` in `mcp_config.json`, requiring developer action before process execution.
 
 ### Layer C: Provider Token Scoping
+
 Tokens must be generated with the narrowest permission set:
+
 - Scopes: `event:read`, `issue:read`, `project:read`.
 - No admin, organization write, or release-deletion scopes.
 - Sentry access tokens must never be hardcoded; inject via `SENTRY_ACCESS_TOKEN`.
 
 ### Layer D: Data Scrubbing and PII Protection
+
 - Server-Side Scrubbing: Upstream Sentry organizations should have data scrubbing rules enabled for headers, cookies, and common PII patterns.
 - Client-Side Redaction: When receiving stack traces or event bodies:
   - Authorization headers, bearer tokens, session IDs, and database connection strings are masked.
@@ -51,6 +56,7 @@ Tokens must be generated with the narrowest permission set:
 ## Audit Logging
 
 Every Sentry tool request is logged with:
+
 - Project and issue ID queried.
 - Tool name and permission classification.
 - Sanitization results if sensitive fields were scrubbed.

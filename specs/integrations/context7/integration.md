@@ -4,7 +4,7 @@ name: "Context7 Documentation"
 description: "Enables fast, authoritative technical documentation lookup, library version resolution, and code snippet retrieval from Context7."
 category: "documentation"
 version: "1.1.0"
-lifecycle: "provider_verified"
+lifecycle: "runtime_tested"
 provider:
   name: "Upstash Context7"
   documentationUrl: "https://context7.com"
@@ -83,6 +83,7 @@ The Context7 MCP integration provides Frontier Engineer with live, authoritative
 ## Capabilities and tool definitions
 
 All tools provided by Context7 are strictly classified as **Read-only**:
+
 - `resolve-library-id`: Discovers matching library IDs (`/org/project`), available versions, and trust scores.
 - `query-docs`: Retrieves targeted documentation, version-specific API signatures, and code examples.
 

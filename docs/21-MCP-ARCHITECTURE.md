@@ -92,14 +92,15 @@ The central registry at `specs/integrations/integration-registry.md` serves as t
 
 ### Lifecycle states
 
-| State        | Definition                                         | Runtime Status                            |
-| :----------- | :------------------------------------------------- | :---------------------------------------- |
-| `proposed`   | Conceptual integration under architectural design  | Not executable; no adapter generated      |
-| `documented` | Canonical specification and tools documented       | Specification review only                 |
-| `verified`   | Package, executable, transport, and tools verified | Formats and schema checked                |
-| `available`  | Ready for operational activation when configured   | Shipped with adapter in `mcp_config.json` |
-| `deprecated` | Superseded by an alternative integration           | Maintained for backward compatibility     |
-| `disabled`   | Temporarily or permanently deactivated             | Present in registry but inactive          |
+| State               | Definition                                          | Runtime Status                            |
+| :------------------ | :-------------------------------------------------- | :---------------------------------------- |
+| `proposed`          | Conceptual integration under architectural design   | Not executable; no adapter generated      |
+| `documented`        | Canonical specification and tools documented        | Specification review only                 |
+| `provider_verified` | Provider package, repository, and security verified | Formats and schema checked                |
+| `runtime_tested`    | Verified via live JSON-RPC handshake and tools list | Verified in live runtime test harness     |
+| `available`         | Ready for operational activation when configured    | Shipped with adapter in `mcp_config.json` |
+| `deprecated`        | Superseded by an alternative integration            | Maintained for backward compatibility     |
+| `disabled`          | Temporarily or permanently deactivated              | Present in registry but inactive          |
 
 ## Integration lifecycle
 
