@@ -1,16 +1,16 @@
 ---
-version: "0.5.0"
-lastUpdated: "2026-11-10"
+version: "0.5.1"
+lastUpdated: "2026-11-11"
 integrations:
   - id: "github"
     name: "GitHub Integration"
     category: "repository"
-    lifecycle: "available"
+    lifecycle: "provider_verified"
     optional: true
     provider:
-      name: "Model Context Protocol Official"
-      documentationUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/github"
-      maintainer: "Anthropic / MCP Working Group"
+      name: "GitHub (Official)"
+      documentationUrl: "https://github.com/github/github-mcp-server"
+      maintainer: "GitHub"
     specPaths:
       integration: "specs/integrations/github/integration.md"
       capabilities: "specs/integrations/github/capabilities.md"
@@ -28,12 +28,12 @@ integrations:
   - id: "context7"
     name: "Context7 Documentation"
     category: "documentation"
-    lifecycle: "available"
+    lifecycle: "provider_verified"
     optional: true
     provider:
       name: "Upstash Context7"
-      documentationUrl: "https://github.com/upstash/context7"
-      maintainer: "Upstash Team"
+      documentationUrl: "https://context7.com"
+      maintainer: "Upstash"
     specPaths:
       integration: "specs/integrations/context7/integration.md"
       capabilities: "specs/integrations/context7/capabilities.md"
@@ -52,12 +52,12 @@ integrations:
   - id: "playwright"
     name: "Playwright Browser Testing"
     category: "browser_testing"
-    lifecycle: "available"
+    lifecycle: "provider_verified"
     optional: true
     provider:
-      name: "Model Context Protocol Official"
-      documentationUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/playwright"
-      maintainer: "Anthropic / MCP Working Group"
+      name: "Playwright (Official / Microsoft)"
+      documentationUrl: "https://playwright.dev/mcp/installation"
+      maintainer: "Microsoft / Playwright Team"
     specPaths:
       integration: "specs/integrations/playwright/integration.md"
       capabilities: "specs/integrations/playwright/capabilities.md"
@@ -75,12 +75,12 @@ integrations:
   - id: "sentry"
     name: "Sentry Observability"
     category: "observability"
-    lifecycle: "available"
+    lifecycle: "provider_verified"
     optional: true
     provider:
-      name: "Model Context Protocol Official"
-      documentationUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/sentry"
-      maintainer: "Sentry / MCP Working Group"
+      name: "Sentry (Official / getsentry)"
+      documentationUrl: "https://github.com/getsentry/sentry-mcp"
+      maintainer: "Sentry Team"
     specPaths:
       integration: "specs/integrations/sentry/integration.md"
       capabilities: "specs/integrations/sentry/capabilities.md"
@@ -99,12 +99,12 @@ integrations:
   - id: "database"
     name: "PostgreSQL Database Inspection"
     category: "database"
-    lifecycle: "available"
+    lifecycle: "provider_verified"
     optional: true
     provider:
-      name: "Model Context Protocol Official"
-      documentationUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/postgres"
-      maintainer: "Anthropic / MCP Working Group"
+      name: "Microsoft (Official / microsoft)"
+      documentationUrl: "https://github.com/microsoft/postgres-mcp"
+      maintainer: "Microsoft"
     specPaths:
       integration: "specs/integrations/database/integration.md"
       capabilities: "specs/integrations/database/capabilities.md"
@@ -124,17 +124,17 @@ integrations:
 
 # Central MCP Integration Registry
 
-The Central MCP Integration Registry defines all external integrations supported by Frontier Engineer. Each integration provides external capabilities through standard Model Context Protocol (MCP) servers.
+The Central MCP Integration Registry defines all external integrations supported by Frontier Engineer. Each integration provides external capabilities through verified Model Context Protocol (MCP) servers.
 
 ## Registry Summary
 
-| Integration  | Category          | Lifecycle   | Optional | Provider                        | Transport | Default Status    |
-| :----------- | :---------------- | :---------- | :------- | :------------------------------ | :-------- | :---------------- |
-| `github`     | `repository`      | `available` | Yes      | Model Context Protocol Official | `stdio`   | Disabled (Opt-in) |
-| `context7`   | `documentation`   | `available` | Yes      | Upstash Context7                | `stdio`   | Disabled (Opt-in) |
-| `playwright` | `browser_testing` | `available` | Yes      | Model Context Protocol Official | `stdio`   | Disabled (Opt-in) |
-| `sentry`     | `observability`   | `available` | Yes      | Model Context Protocol Official | `stdio`   | Disabled (Opt-in) |
-| `database`   | `database`        | `available` | Yes      | Model Context Protocol Official | `stdio`   | Disabled (Opt-in) |
+| Integration  | Category          | Lifecycle           | Optional | Provider                         | Transport | Default Status    |
+| :----------- | :---------------- | :------------------ | :------- | :------------------------------- | :-------- | :---------------- |
+| `github`     | `repository`      | `provider_verified` | Yes      | GitHub (Official)                | `stdio`   | Disabled (Opt-in) |
+| `context7`   | `documentation`   | `provider_verified` | Yes      | Upstash Context7                 | `stdio`   | Disabled (Opt-in) |
+| `playwright` | `browser_testing` | `provider_verified` | Yes      | Playwright (Official / Microsoft)| `stdio`   | Disabled (Opt-in) |
+| `sentry`     | `observability`   | `provider_verified` | Yes      | Sentry (Official / getsentry)    | `stdio`   | Disabled (Opt-in) |
+| `database`   | `database`        | `provider_verified` | Yes      | Microsoft (Official / microsoft) | `stdio`   | Disabled (Opt-in) |
 
 ## Operational Principles
 

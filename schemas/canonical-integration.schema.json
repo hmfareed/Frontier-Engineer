@@ -41,7 +41,15 @@
     },
     "lifecycle": {
       "type": "string",
-      "enum": ["proposed", "documented", "verified", "available", "deprecated", "disabled"]
+      "enum": [
+        "proposed",
+        "documented",
+        "provider_verified",
+        "runtime_tested",
+        "available",
+        "deprecated",
+        "disabled"
+      ]
     },
     "provider": {
       "type": "object",

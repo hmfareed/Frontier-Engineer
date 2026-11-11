@@ -1,47 +1,29 @@
 # Context7 Integration Capabilities
 
-This document specifies the tools, parameters, and invocation contracts for the Context7 documentation integration.
+This document specifies the exact tools, parameters, and invocation contracts for `@upstash/context7-mcp`.
 
 ## Permission Class Summary
 
-| Tool Name                | Permission Class | Target Scope                | Human Confirmation Required | Agent Affinity                                                                  |
-| :----------------------- | :--------------- | :-------------------------- | :-------------------------- | :------------------------------------------------------------------------------ |
-| `search_docs`            | Read-only        | Public documentation index  | No                          | `frontier-engineer`, `architect`, `implementation-engineer`, `security-auditor` |
-| `get_library_version`    | Read-only        | Package registry metadata   | No                          | `frontier-engineer`, `architect`, `implementation-engineer`                     |
-| `fetch_api_signature`    | Read-only        | Type and symbol index       | No                          | `frontier-engineer`, `implementation-engineer`                                  |
-| `retrieve_code_examples` | Read-only        | Documentation code snippets | No                          | `frontier-engineer`, `implementation-engineer`                                  |
+| Tool Name | Permission Class | Target Scope | Human Confirmation Required | Agent Affinity |
+| :--- | :--- | :--- | :--- | :--- |
+| `resolve-library-id` | Read-only | Public documentation catalog | No | `frontier-engineer`, `architect`, `implementation-engineer`, `security-auditor` |
+| `query-docs` | Read-only | Library documentation index | No | `frontier-engineer`, `architect`, `implementation-engineer`, `security-auditor` |
 
 ## Tool Specifications
 
-### `search_docs`
-
-- **Description:** Queries official documentation for a library, framework, or cloud SDK.
+### `resolve-library-id`
+- **Description:** Discovers authoritative Context7 library identifiers matching a package or framework name.
 - **Parameters:**
-  - `library` (string, required): Package or framework name (e.g., `react`, `fastapi`, `vitest`, `zod`).
-  - `query` (string, required): Conceptual topic, feature, or function name.
-  - `limit` (integer, optional): Maximum sections to return (default: 5, max: 20).
-- **Output:** Array of markdown sections containing documentation excerpts with source URLs.
+  - `query` (string, required): General library name, framework, or package (e.g., `next.js`, `tailwind`, `zod`, `fastapi`).
+- **Output:** Array of matching library records, including:
+  - Canonical library ID (formatted as `/org/project`, e.g., `/vercel/next.js`).
+  - Available versions and release tags.
+  - Community trust score and code snippet counts.
+  - Brief project description.
 
-### `get_library_version`
-
-- **Description:** Resolves latest stable releases, breaking changes between versions, and deprecations.
+### `query-docs`
+- **Description:** Retrieves targeted, version-filtered documentation snippets and code examples for a resolved library.
 - **Parameters:**
-  - `library` (string, required): Package name.
-  - `target_version` (string, optional): Specific version to inspect.
-- **Output:** Version metadata, release date, and migration summary.
-
-### `fetch_api_signature`
-
-- **Description:** Retrieves exact function signature, parameters, return types, and interface contracts.
-- **Parameters:**
-  - `library` (string, required): Library name.
-  - `symbol` (string, required): Class, function, method, or type identifier (e.g., `createSlice`, `z.object`).
-- **Output:** TypeScript/Python type signatures and docstrings.
-
-### `retrieve_code_examples`
-
-- **Description:** Fetches official examples and verified recipes illustrating idiomatic usage.
-- **Parameters:**
-  - `library` (string, required): Library name.
-  - `topic` (string, required): Feature or pattern (e.g., `optimistic-updates`, `custom-middleware`).
-- **Output:** Verified code snippets annotated with explanation and prerequisites.
+  - `libraryId` (string, required): Resolved library ID (e.g., `/vercel/next.js`, `/colinhacks/zod`).
+  - `query` (string, required): Specific technical question, method, or concept (e.g., `Server Actions error handling`, `z.discriminatedUnion`).
+- **Output:** Clean markdown excerpts containing verified API signatures, parameter documentation, and idiomatic code snippets.

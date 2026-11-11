@@ -1,28 +1,52 @@
 {
   "mcpServers": {
     "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "ghcr.io/github/github-mcp-server",
+        "--read-only=true",
+        "--toolsets=context,issues,pull_requests,repos"
+      ],
       "disabled": true
     },
     "context7": {
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"],
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ],
       "disabled": true
     },
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-playwright"],
+      "args": [
+        "-y",
+        "@playwright/mcp@latest",
+        "--headless",
+        "--isolated"
+      ],
       "disabled": true
     },
     "sentry": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sentry"],
+      "args": [
+        "-y",
+        "@sentry/mcp-server@latest"
+      ],
       "disabled": true
     },
     "database": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "args": [
+        "-y",
+        "@microsoft/postgres-mcp",
+        "run"
+      ],
       "disabled": true
     }
   }

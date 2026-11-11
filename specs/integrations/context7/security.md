@@ -8,29 +8,45 @@ Context7 is a read-only documentation retrieval service. Threat vectors are limi
 2. **Proprietary IP Leakage via Query Strings:** Accidental transmission of confidential project names, proprietary API keys, internal architecture names, or customer data within query strings.
 3. **Denial of Service via Unbounded Responses:** Excessively large documentation payloads consuming context window or causing latency degradation.
 
-## Credential Requirements
+## Defense-in-Depth Enforcement Boundaries
 
-- **Public Access Default:** The server operates against public documentation indices without requiring credentials.
-- **Optional API Key:** An optional `CONTEXT7_API_KEY` can be supplied via environment variable to lift rate limit thresholds.
-- **Credential Storage:** Stored strictly in local environment variables; never checked into repository files or committed to Git.
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│ Layer E: Human-in-the-Loop Approval                             │
+│ Read-only operations proceed autonomously                       │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer D: Behavioral Rules (Frontier Engineer Rules System)      │
+│ Prompt injection isolation; no internal project IP in queries   │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer C: Provider / Token Scopes                                │
+│ Anonymous public index; optional API key has read quota only    │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer B: Host / Antigravity Configuration Filtering             │
+│ Kept disabled by default in mcp_config.json                     │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer A: MCP Server-Side Enforcement                            │
+│ Server exposes strictly resolve-library-id and query-docs       │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-## Data Access Boundaries
+### Layer A: Inherent Read-Only Architecture
+The `@upstash/context7-mcp` server exposes strictly read-only retrieval tools (`resolve-library-id` and `query-docs`). It contains zero file-writing, remote mutation, or code execution endpoints.
 
-- **Query Minimization:** Agents only pass public package names (`zod`, `react`, `express`) and technical keywords (`safeParse`, `useId`, `router.use`). Internal project filenames, internal domains, and client identifiers must never be included in query payloads.
-- **No Workspace Transmission:** The integration has zero access to local filesystem files, project secrets, or environment variables other than its own optional API key.
+### Layer B: Host Configuration
+Server is registered as `"disabled": true` in `mcp_config.json`, requiring developer action before process execution.
 
-## Prompt Injection Defense
+### Layer C: Provider-Level Isolation
+Queries execute against public documentation indexes without requiring authentication. If an optional `CONTEXT7_API_KEY` is supplied, it is scoped to rate limit quotas only.
 
+### Layer D: Behavioral Sanitization & Injection Defense
 All documentation text returned from Context7 is processed through strict defensive filtering:
-
 - Data is isolated as external reference context within markdown quotes.
 - The agent explicitly ignores any instructions embedded within documentation that attempt to redirect agent goals, execute shell commands, alter security rules, or request credentials.
-- In case of suspicious payloads (e.g., hidden system prompts or base64 command injections), the agent logs a security anomaly and discards the snippet.
+- Query payloads are restricted to public library names and generic technical concepts.
 
 ## Audit Logging
 
 Queries made to Context7 are recorded in the conversation transcript with:
-
-- Library and query terms searched.
+- Library ID and search query terms.
 - Response size (bytes and token estimation).
 - Resolution status (success, not found, or rate limited).

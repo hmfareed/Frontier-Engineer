@@ -1,28 +1,33 @@
 ---
 id: "database"
 name: "PostgreSQL Database Inspection"
-description: "Enables schema inspection, index analysis, execution plan generation, and safe read-only queries for relational databases."
+description: "Enables schema inspection, index analysis, execution plan generation, and safe read-only queries for PostgreSQL using @microsoft/postgres-mcp."
 category: "database"
-version: "1.0.0"
-lifecycle: "available"
+version: "1.1.0"
+lifecycle: "provider_verified"
 provider:
-  name: "Model Context Protocol Official"
-  documentationUrl: "https://github.com/modelcontextprotocol/servers/tree/main/src/postgres"
-  repositoryUrl: "https://github.com/modelcontextprotocol/servers"
-  maintainer: "Anthropic / MCP Working Group"
+  name: "Microsoft (Official / microsoft)"
+  documentationUrl: "https://github.com/microsoft/postgres-mcp"
+  repositoryUrl: "https://github.com/microsoft/postgres-mcp"
+  maintainer: "Microsoft"
   license: "MIT"
-  verificationDate: "2026-11-10"
+  verificationDate: "2026-11-11"
 runtime:
   transport: "stdio"
   runtime: "node"
   executable: "npx"
   args:
     - "-y"
-    - "@modelcontextprotocol/server-postgres"
+    - "@microsoft/postgres-mcp"
+    - "run"
   envVars:
-    - name: "DATABASE_URL"
+    - name: "POSTGRES_MCP_CONNECTION_STRING"
       required: true
       description: "PostgreSQL connection string with read-only credentials (e.g., postgresql://readonly_user:pass@host:5432/dbname)."
+      secret: true
+    - name: "DATABASE_URL"
+      required: false
+      description: "Alternative PostgreSQL connection URI fallback."
       secret: true
 capabilities:
   tools:
@@ -76,6 +81,7 @@ security:
     - "sensitive_data_access"
   readOnlyAlternative: "Inspect local migration files, schema definitions, and local SQLite/PostgreSQL test fixtures."
   credentialEnvVars:
+    - "POSTGRES_MCP_CONNECTION_STRING"
     - "DATABASE_URL"
 platformConfig: {}
 ---
@@ -88,26 +94,26 @@ The PostgreSQL database MCP integration enables Frontier Engineer specialist age
 
 ## Provider and maintenance
 
-- **Provider:** Model Context Protocol Official Reference Servers
-- **Upstream Package:** `@modelcontextprotocol/server-postgres`
-- **Maintainer:** Anthropic / MCP Working Group
+- **Primary Provider:** Microsoft (`@microsoft/postgres-mcp`)
+- **Upstream Repository:** [https://github.com/microsoft/postgres-mcp](https://github.com/microsoft/postgres-mcp)
+- **Maintainer:** Microsoft
 - **License:** MIT
-- **Documentation:** [https://github.com/modelcontextprotocol/servers/tree/main/src/postgres](https://github.com/modelcontextprotocol/servers/tree/main/src/postgres)
-- **Verification Date:** 2026-11-10
+- **Verification Date:** 2026-11-11
+- **Status Note:** Replaces the archived reference server `@modelcontextprotocol/server-postgres`. Evaluated against community alternative `antonorlov/mcp-postgres-server` (`PG_ALLOW_WRITE=false`).
 
 ## Runtime requirements and transport
 
 - **Transport:** Standard input/output (`stdio`)
-- **Runtime:** Node.js (v18.0.0 or higher)
+- **Runtime:** Node.js (v22.0.0 or higher) executing pre-compiled Rust wrapper
 - **Executable:** `npx`
-- **Execution Command:** `npx -y @modelcontextprotocol/server-postgres`
+- **Execution Command:** `npx -y @microsoft/postgres-mcp run`
 - **Environment Variables:**
-  - `DATABASE_URL`: Standard PostgreSQL connection URI. Must connect as a read-only role.
+  - `POSTGRES_MCP_CONNECTION_STRING`: Standard PostgreSQL connection URI connecting as a strictly read-only role.
+  - `DATABASE_URL`: Fallback connection string variable.
 
 ## Capabilities and tool definitions
 
 The integration exposes tools categorized across two permission classes:
-
 1. **Read-only tools:** `describe_table`, `list_tables`, `show_indexes`, `explain_query`, `execute_read_only_query`.
 2. **Sensitive data access tools:** `query_sensitive_table` (requires explicit human approval and data masking).
 
@@ -120,15 +126,19 @@ See [`capabilities.md`](capabilities.md) for full tool schemas.
 
 ## Security and permission boundaries
 
-- **Read-Only Credentials:** The database user configured in `DATABASE_URL` must have `SELECT` privileges only (`REVOKE ALL ON ALL TABLES IN SCHEMA public FROM readonly_user; GRANT SELECT ON ALL TABLES IN SCHEMA public TO readonly_user;`).
-- **Query Limits:** Every `execute_read_only_query` call enforces a hard `LIMIT 100` and a statement timeout of 5,000ms.
-- **Sensitive Table Protection:** Tables containing user credentials, tokens, or PII require masking and explicit human authorization before query execution.
+Database security does not rely on natural language instructions alone. Defense is enforced across five layers:
 
-See [`security.md`](security.md) for database security controls.
+1. **Database Role Privileges (Layer C):** Dedicated database user with read-only privileges (`GRANT SELECT` only; all `INSERT`, `UPDATE`, `DELETE`, `DROP`, `ALTER`, `TRUNCATE` revoked). No superuser or schema ownership privileges.
+2. **Server-Level Enforcement (Layer A):** Server parses queries and rejects mutation statements.
+3. **Host-Level Configuration (Layer B):** Registered dormant (`"disabled": true`) in `mcp_config.json`.
+4. **Behavioral Governance (Layer D):** Hard statement timeout (5,000ms), row limit caps (max 100 rows), and SELECT-only validation.
+5. **Human Approval (Layer E):** Querying sensitive tables requires explicit developer confirmation.
+
+See [`security.md`](security.md) for full defense-in-depth specifications.
 
 ## Operational behavior and failure handling
 
-- **Offline Default:** If `DATABASE_URL` is unset or database connection fails, the integration is disabled. Agents fall back to local migration files (`migrations/*.sql`) and ORM models.
+- **Offline Default:** If `POSTGRES_MCP_CONNECTION_STRING` is unset or database connection fails, the integration is disabled. Agents fall back to local migration files (`migrations/*.sql`) and ORM models.
 - **Connection Pooling:** Connects with minimal pool sizes (max 2 connections) to prevent resource starvation on target database servers.
 - **Read-Only Enforcers:** If a query contains non-SELECT statements, the query is rejected locally before transmission.
 

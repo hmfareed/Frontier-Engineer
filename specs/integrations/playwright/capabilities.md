@@ -1,80 +1,63 @@
 # Playwright Integration Capabilities
 
-This document provides detailed specifications for tools provided by the Playwright browser testing integration.
+This document provides detailed specifications for tools provided by the official `@playwright/mcp` browser testing integration.
 
 ## Permission Class Summary
 
-| Tool Name                | Permission Class     | Target Scope                | Human Confirmation Required | Agent Affinity                                        |
-| :----------------------- | :------------------- | :-------------------------- | :-------------------------- | :---------------------------------------------------- |
-| `navigate`               | Read-only            | Local / Staging URL         | No                          | `frontier-engineer`, `qa-engineer`, `design-engineer` |
-| `take_screenshot`        | Read-only            | Browser viewport / DOM node | No                          | `frontier-engineer`, `qa-engineer`, `design-engineer` |
-| `get_accessibility_tree` | Read-only            | Accessibility tree          | No                          | `frontier-engineer`, `qa-engineer`, `design-engineer` |
-| `get_console_logs`       | Read-only            | Browser console buffer      | No                          | `frontier-engineer`, `qa-engineer`                    |
-| `query_dom_elements`     | Read-only            | DOM element selector        | No                          | `frontier-engineer`, `qa-engineer`, `design-engineer` |
-| `fill_form`              | Reversible write     | Form input elements         | No (in test environments)   | `frontier-engineer`, `qa-engineer`                    |
-| `click_element`          | Reversible write     | Clickable elements          | No (in test environments)   | `frontier-engineer`, `qa-engineer`                    |
-| `submit_form`            | External side effect | Form submission             | Yes (if external/staging)   | `frontier-engineer`, `qa-engineer`                    |
+| Tool Name | Permission Class | Target Scope | Human Confirmation Required | Agent Affinity |
+| :--- | :--- | :--- | :--- | :--- |
+| `navigate` | Read-only | Local / Staging URL | No | `frontier-engineer`, `qa-engineer`, `design-engineer` |
+| `screenshot` | Read-only | Viewport or element snapshot | No | `frontier-engineer`, `qa-engineer`, `design-engineer` |
+| `accessibility_snapshot` | Read-only | Accessibility tree | No | `frontier-engineer`, `qa-engineer`, `design-engineer` |
+| `click` | Reversible write | Clickable elements | No (in test environments) | `frontier-engineer`, `qa-engineer` |
+| `fill` | Reversible write | Form input elements | No (in test environments) | `frontier-engineer`, `qa-engineer` |
+| `hover` | Reversible write | Interactive element | No | `frontier-engineer`, `design-engineer` |
+| `select` | Reversible write | Dropdown selection | No | `frontier-engineer`, `qa-engineer` |
 
 ## Tool Specifications
 
 ### `navigate`
-
-- **Description:** Navigates to a target URL in the active browser context.
+- **Description:** Navigates the browser context to a target URL.
 - **Parameters:**
-  - `url` (string, required): Destination URL (must match localhost, 127.0.0.1, or approved test domains).
-  - `waitUntil` (string, optional): `load`, `domcontentloaded`, or `networkidle`. Defaults to `load`.
-- **Output:** HTTP status code, page title, and final URL.
+  - `url` (string, required): Destination URL (must match localhost, 127.0.0.1, or approved test origins).
+- **Output:** Navigation outcome with page title and HTTP status code.
 
-### `take_screenshot`
-
-- **Description:** Captures a PNG screenshot of the current page or a specific element.
+### `screenshot`
+- **Description:** Captures a PNG screenshot of the current page or specific DOM element.
 - **Parameters:**
-  - `name` (string, required): Artifact name for the screenshot.
-  - `selector` (string, optional): CSS selector to isolate a specific element.
-  - `fullPage` (boolean, optional): Capture full scrollable page. Defaults to false.
-- **Output:** Path to saved image artifact or base64 encoded image string.
+  - `name` (string, required): Artifact identifier.
+  - `selector` (string, optional): CSS selector to isolate an element.
+  - `fullPage` (boolean, optional): Capture full scrollable page.
+- **Output:** Path to saved image artifact or base64 representation.
 
-### `get_accessibility_tree`
-
-- **Description:** Computes the full accessibility tree snapshot for WCAG auditing.
+### `accessibility_snapshot`
+- **Description:** Generates an accessible snapshot tree of the current page conforming to WCAG principles.
 - **Parameters:**
-  - `rootSelector` (string, optional): Subtree root selector. Defaults to page root.
-- **Output:** Nested tree structure showing roles, accessible names, values, and states.
+  - `rootSelector` (string, optional): Subtree selector. Defaults to document root.
+- **Output:** Structured tree showing accessible names, roles, states, and values.
 
-### `get_console_logs`
-
-- **Description:** Returns captured browser console messages and uncaught exceptions.
+### `click`
+- **Description:** Dispatches a click interaction to trigger client-side state changes.
 - **Parameters:**
-  - `level` (string, optional): Filter level (`error`, `warn`, `info`, `all`). Defaults to `all`.
-- **Output:** Array of log objects with level, text, source, and stack trace.
+  - `selector` (string, required): Target element selector.
+- **Output:** Click event confirmation.
 
-### `query_dom_elements`
-
-- **Description:** Evaluates a CSS selector or XPath query and returns element attributes and text.
-- **Parameters:**
-  - `selector` (string, required): Selector string.
-  - `limit` (integer, optional): Maximum matching elements to return (default: 10).
-- **Output:** Array of element summaries containing tag, classes, attributes, and text.
-
-### `fill_form`
-
-- **Description:** Types synthetic test data into an input, textarea, or select element.
+### `fill`
+- **Description:** Types synthetic test data into an input, textarea, or contenteditable field.
 - **Parameters:**
   - `selector` (string, required): Input element selector.
-  - `value` (string, required): Synthetic text value to enter.
-- **Output:** Operation confirmation and resulting input value.
+  - `value` (string, required): Synthetic text value.
+- **Output:** Confirmation of resulting value.
 
-### `click_element`
-
-- **Description:** Dispatches a click event to trigger client-side interactions.
+### `hover`
+- **Description:** Hovers pointer over an element to reveal tooltips or hover states.
 - **Parameters:**
-  - `selector` (string, required): Element selector.
-  - `button` (string, optional): `left`, `right`, or `middle`. Defaults to `left`.
-- **Output:** Click confirmation.
+  - `selector` (string, required): Target element selector.
+- **Output:** Hover event confirmation.
 
-### `submit_form`
-
-- **Description:** Submits a form element, potentially triggering server-side requests.
+### `select`
+- **Description:** Selects an option within a native HTML `<select>` element.
 - **Parameters:**
-  - `selector` (string, required): Form element selector.
-- **Output:** Submission outcome and resulting navigation or response status.
+  - `selector` (string, required): Select element selector.
+  - `value` (string, required): Option value to choose.
+- **Output:** Confirmation of selected option.

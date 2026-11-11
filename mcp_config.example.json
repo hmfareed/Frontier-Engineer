@@ -2,49 +2,78 @@
   "$comment": "Example Antigravity MCP configuration for Frontier Engineer. To enable an integration, set disabled to false and export the required environment variables in your operating system environment before launching Antigravity.",
   "mcpServers": {
     "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "command": "docker",
+      "args": [
+        "run",
+        "-i",
+        "--rm",
+        "-e",
+        "GITHUB_PERSONAL_ACCESS_TOKEN",
+        "ghcr.io/github/github-mcp-server",
+        "--read-only=true",
+        "--toolsets=context,issues,pull_requests,repos"
+      ],
       "disabled": false,
-      "description": "Provides secure access to GitHub remote repository operations, issue tracking, pull request inspection, and CI workflow status.",
+      "description": "Provides secure, read-only-by-default access to GitHub remote repository operations, issue tracking, and pull request inspection using GitHub's official MCP server.",
       "requiredEnvironmentVariables": {
-        "GITHUB_PERSONAL_ACCESS_TOKEN": "GitHub personal access token with scoped repository read/write permissions."
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "GitHub personal access token with scoped repository read permissions.",
+        "GITHUB_READ_ONLY": "Enforces server-side read-only mode, disabling all write actions (default: true).",
+        "GITHUB_TOOLSETS": "Configures active toolsets (e.g., context,issues,pull_requests,repos)."
       }
     },
     "context7": {
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"],
+      "args": [
+        "-y",
+        "@upstash/context7-mcp"
+      ],
       "disabled": false,
-      "description": "Enables fast, authoritative technical documentation lookup, library version resolution, and API reference querying.",
+      "description": "Enables fast, authoritative technical documentation lookup, library version resolution, and code snippet retrieval from Context7.",
       "requiredEnvironmentVariables": {
         "CONTEXT7_API_KEY": "Optional API key providing elevated rate limits for Context7 documentation queries."
       }
     },
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-playwright"],
+      "args": [
+        "-y",
+        "@playwright/mcp@latest",
+        "--headless",
+        "--isolated"
+      ],
       "disabled": false,
-      "description": "Enables browser automation, interactive DOM inspection, accessibility tree validation, and screenshot capture for UI verification.",
+      "description": "Enables browser automation, interactive DOM inspection, accessibility tree validation, and screenshot capture for UI verification using official @playwright/mcp.",
       "requiredEnvironmentVariables": {
-        "PLAYWRIGHT_HEADLESS": "Controls headless execution mode. Defaults to true for automated and CI environments."
+        "PLAYWRIGHT_HEADLESS": "Controls headless execution mode (default: true via CLI flag).",
+        "PLAYWRIGHT_ISOLATED": "Enforces in-memory isolated profile without persistent cookies or local storage (default: true via CLI flag)."
       }
     },
     "sentry": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-sentry"],
+      "args": [
+        "-y",
+        "@sentry/mcp-server@latest"
+      ],
       "disabled": false,
-      "description": "Provides access to Sentry error monitoring, stack trace inspection, crash reports, and release performance metrics.",
+      "description": "Provides access to Sentry error monitoring, stack trace inspection, crash reports, and issue triage using official @sentry/mcp-server.",
       "requiredEnvironmentVariables": {
-        "SENTRY_AUTH_TOKEN": "Sentry authentication token with read/write access to issues and events.",
+        "SENTRY_ACCESS_TOKEN": "Sentry Personal Access Token or User Auth Token with issue read permissions.",
+        "SENTRY_AUTH_TOKEN": "Alternative Sentry authentication token recognized by Sentry CLI.",
         "SENTRY_ORG": "Default Sentry organization slug."
       }
     },
     "database": {
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-postgres"],
+      "args": [
+        "-y",
+        "@microsoft/postgres-mcp",
+        "run"
+      ],
       "disabled": false,
-      "description": "Enables schema inspection, index analysis, execution plan generation, and safe read-only queries for relational databases.",
+      "description": "Enables schema inspection, index analysis, execution plan generation, and safe read-only queries for PostgreSQL using @microsoft/postgres-mcp.",
       "requiredEnvironmentVariables": {
-        "DATABASE_URL": "PostgreSQL connection string with read-only credentials (e.g., postgresql://readonly_user:pass@host:5432/dbname)."
+        "POSTGRES_MCP_CONNECTION_STRING": "PostgreSQL connection string with read-only credentials (e.g., postgresql://readonly_user:pass@host:5432/dbname).",
+        "DATABASE_URL": "Alternative PostgreSQL connection URI fallback."
       }
     }
   }

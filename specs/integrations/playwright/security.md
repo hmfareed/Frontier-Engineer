@@ -4,37 +4,51 @@
 
 Browser automation tools control a dynamic rendering engine capable of executing JavaScript, making network requests, and storing cookies. Key risks:
 
-1. **Server-Side Request Forgery (SSRF) / Cloud Metadata Access:** Navigating the browser to internal cloud metadata IP addresses (`169.254.169.254`) or unintended internal subnets.
-2. **Accidental Production Mutations:** Executing form submissions, checkouts, or data deletions against live production systems rather than local development environments.
-3. **Credential and PII Exposure:** Injecting real user credentials, tokens, or personal data into browser form inputs or capturing sensitive session cookies in screenshots.
-4. **Malicious DOM Injection:** Target web applications rendering untrusted user content designed to trigger prompt injection when read back through `query_dom_elements`.
+1. **Host Profile Pollution & Credential Hijacking:** Reading or corrupting the developer's personal browser profiles, cookies, saved passwords, or browsing sessions.
+2. **Server-Side Request Forgery (SSRF) / Cloud Metadata Access:** Navigating the browser to internal cloud metadata IP addresses (`169.254.169.254`) or unintended internal subnets.
+3. **Accidental Production Mutations:** Executing form submissions, checkouts, or data deletions against live production systems rather than local development environments.
+4. **Credential and PII Exposure:** Injecting real user credentials, tokens, or personal data into browser form inputs.
 
-## Sandbox Isolation and Domain Restrictions
+## Defense-in-Depth Enforcement Boundaries
 
-- **Permitted URL Patterns:**
-  - `http://localhost:*`
-  - `http://127.0.0.1:*`
-  - `http://[::1]:*`
-  - Configured test staging domains explicitly matching `*.local`, `*.test`, or project staging hostnames.
-- **Strictly Prohibited Destinations:**
-  - Cloud metadata addresses (`http://169.254.169.254/*`).
-  - Production applications or third-party web services unless explicitly authorized.
-  - Public web domains not under developer test ownership.
+```text
+┌─────────────────────────────────────────────────────────────────┐
+│ Layer E: Human-in-the-Loop Approval                             │
+│ External or staging form submissions require developer consent  │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer D: Behavioral Rules (Frontier Engineer Rules System)      │
+│ Prohibit real credentials; use only synthetic test fixtures     │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer C: Network / Origin Restrictions                          │
+│ Constrained to localhost, 127.0.0.1; cloud metadata blocked     │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer B: Host / Antigravity Configuration Filtering             │
+│ Registered dormant ("disabled": true) in mcp_config.json        │
+├─────────────────────────────────────────────────────────────────┤
+│ Layer A: Server-Level Isolation (--isolated & --headless)       │
+│ Strict in-memory profiles; zero access to developer cookies     │
+└─────────────────────────────────────────────────────────────────┘
+```
 
-## Credential and Data Sanitization
+### Layer A: In-Memory Profile Isolation
+By passing `--isolated`, `@playwright/mcp` guarantees that the browser instance starts with a completely pristine, in-memory profile. It never reads from or writes to the developer's default browser profile directory (e.g., Chrome default profile or Edge user data), preventing any session leakage or persistent cookie exposure.
 
-- **No Real Credentials:** The agent is strictly prohibited from entering real passwords, API tokens, or production credentials into form inputs. All test flows must use synthetic test fixtures (e.g., `test-user@example.com`, `dummy-password-1234`).
-- **Screenshot Redaction:** Any screenshot captured containing accidentally surfaced API tokens or environment variables must be immediately deleted and replaced with a sanitized view.
+### Layer B: Host Configuration
+Server is kept dormant (`"disabled": true`) in `mcp_config.json` until explicitly enabled by the developer.
 
-## Headless Execution Policy
+### Layer C: Destination Restrictions
+- Permitted: `http://localhost:*`, `http://127.0.0.1:*`, `http://[::1]:*`, and explicitly designated test staging origins.
+- Prohibited: Cloud metadata endpoints (`169.254.169.254`), non-test public domains, internal network management interfaces.
 
-- **Headless Mode Enforced:** In automated or background execution contexts, the browser runs headlessly to prevent desktop display disruption and reduce resource footprint.
-- **Resource Limits:** Browser processes enforce hard timeouts (15s max per operation) and memory caps to prevent browser-based Denial of Service.
+### Layer D: Synthetic Fixture Policy
+The agent is strictly prohibited from entering real passwords, API tokens, or personal identity numbers. All test interactions must use synthetic test fixtures (e.g., `test-user@example.com`, `synthetic-pass-123`).
+
+### Layer E: Human Approval Gates
+Interactions that cause remote state alterations outside local development servers require explicit developer confirmation.
 
 ## Audit Logging
 
 Every navigation, interaction, and screenshot command is logged with:
-
 - Target URL and origin verification
 - Action type (`navigate`, `fill`, `click`, `screenshot`)
 - Time elapsed and exit status
