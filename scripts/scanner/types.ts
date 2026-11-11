@@ -33,6 +33,10 @@ export type ScanStatus =
   "COMPLETE" | "LIMIT_REACHED" | "CANCELLED" | "PARTIAL_WITH_ERRORS" | "FATAL_ERROR";
 
 export interface ScannedFileRecord {
+  /**
+   * Repository-relative POSIX path normalized with forward slashes (e.g. "src/index.ts").
+   * Serves as the unique identity for file inventory collation.
+   */
   canonicalPath: string;
   fileExtension: string;
   classification: FileClassification;
@@ -74,6 +78,10 @@ export interface FileInventoryResult {
   scannedAt: string;
   scanStatus: ScanStatus;
   statusReason?: string;
+  /**
+   * Discovered file records, ordered deterministically by canonicalPath
+   * according to Frontier's canonical UTF-16 code-unit lexicographical ordering.
+   */
   files: ScannedFileRecord[];
   summary: InventorySummary;
   /** Backward-compatible count property */

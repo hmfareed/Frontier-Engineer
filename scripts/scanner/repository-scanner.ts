@@ -24,8 +24,30 @@ const DEFAULT_LIMITS: Required<ScanLimits> = {
 };
 
 /**
- * Locale-independent binary code-point comparison for canonical paths.
- * Guarantees identical collation across all operating systems and locales.
+ * Frontier Canonical Path Comparator.
+ *
+ * Collation Policy: Deterministic UTF-16 code-unit lexicographical ordering.
+ *
+ * Exact Semantics:
+ * 1. Strings are compared element-by-element using standard JavaScript relational operators (`<`, `>`).
+ * 2. Each element comparison operates on sequential 16-bit UTF-16 code units (0x0000..0xFFFF).
+ * 3. For Basic Multilingual Plane (BMP) characters (U+0000..U+FFFF), UTF-16 code-unit numerical
+ *    order directly matches Unicode code-point numerical order.
+ * 4. For supplementary Unicode characters (U+10000..U+10FFFF), characters are encoded as UTF-16
+ *    surrogate pairs: a high surrogate (0xD800..0xDBFF) followed by a low surrogate (0xDC00..0xDFFF).
+ *    Under UTF-16 code-unit collation, surrogate code units (0xD800..0xDFFF) sort before BMP
+ *    characters in the range U+E000..U+FFFF (such as Private Use Area and CJK Compatibility ideographs).
+ * 5. Equality: Returns 0 if and only if string `a` is identical in length and code units to string `b`.
+ * 6. Mathematical guarantees: Establishes a strict weak ordering satisfying irreflexivity (a < a is false),
+ *    antisymmetry (sign(cmp(a, b)) === -sign(cmp(b, a))), and transitivity (a < b && b < c => a < c).
+ * 7. Platform independence: The comparator is pure, deterministic, and locale-independent across
+ *    Windows, Linux, and macOS runtimes, avoiding the locale-dependent instability of `localeCompare()`.
+ *
+ * Contract Boundary:
+ * Frontier Engineer defines its own canonical inventory path ordering contract.
+ * This collation is NOT equivalent to Git tree ordering (which appends an implicit trailing '/' to directory
+ * entries during tree comparison) or SQLite's default binary collation across supplementary Unicode characters.
+ * No Git runtime dependency or external collator is required.
  */
 export function compareCanonicalPaths(a: string, b: string): number {
   if (a === b) return 0;
