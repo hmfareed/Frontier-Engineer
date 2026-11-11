@@ -112,3 +112,33 @@ Independent review of Phase 6 identified two execution safeguard compatibility g
 
 5. **Bidirectional Credential Protection:**
    - Prohibits reading, writing, and editing sensitive credential files (`.env`, private keys, certificates, password stores).
+
+## Addendum: Phase 6.1.1 Corrective Architecture — Host-Level Security Acceptance & Conceptual Semantic Classification
+
+- **Date:** 2026-11-11
+- **Status:** Accepted
+
+### Problem Statement
+
+Further scrutiny of Phase 6.1 execution safeguards revealed two operational risks:
+
+1. **Prefix-Based Heuristic Fragility:** Blanket approval for tools with read-like prefixes (`read_*`, `get_*`, `list_*`, `fetch_*`, `search_*`, `view_*`, `query_*`) exposed an adversarial bypass where mutating tools with deceptive names (e.g. `query_delete_records`, `fetch_and_publish`) could be approved without review.
+2. **Antigravity Non-Zero Exit Failure Semantics:** When a lifecycle hook exits with a non-zero exit code (e.g., uncaught exception or crash), the Antigravity host runtime treats the hook as a failed diagnostic step and continues tool execution, effectively failing open.
+
+### Architectural Decisions
+
+1. **Conceptual Semantic Capability Classification:**
+   - Replaced heuristic prefix matching with six conceptual semantic classes: `trusted_read_only`, `workspace_read`, `workspace_write`, `external_side_effect`, `destructive`, and `unknown`.
+   - Established an explicit `TRUSTED_READ_ONLY_TOOLS` whitelist for known host tools (`view_file`, `read_file`, `search_marketplace`, `list_plugin_accounts`, `read_resource`, `list_resources`, `grep`, `glob`).
+   - Added overriding lexical inspections (`DESTRUCTIVE_TOOL_NAME_PATTERN`, `EXTERNAL_SIDE_EFFECT_PATTERN`) that flag destructive tokens (`delete`, `remove`, `drop`, `truncate`, `kill`, `destroy`, `purge`, `erase`, `modify`, `update`) and external side-effect tokens (`publish`, `send`, `post`, `broadcast`, `notify`, `deploy`, `upload`, `push`) regardless of prefix, escalating them to `force_ask`.
+   - Any tool not recognized in trusted lists defaults to `semanticClass: "unknown"` and requires `force_ask`.
+
+2. **Fail-Closed Dispatcher with Status Code 0:**
+   - Hardened `scripts/hooks/runtime/dispatcher.ts` and `scripts/hooks/runtime/output.ts` to intercept all uncaught errors, circular JSON serialization exceptions, and schema failures.
+   - On error, `PreToolUse` writes a valid protocol denial payload (`{"decision": "deny", "reason": "..."}`) to stdout and exits with status code 0.
+   - This ensures Antigravity processes the denial decision rather than ignoring a crashed hook.
+
+3. **Extended Acceptance Suite (HOOK-01 to HOOK-30):**
+   - Broadened live acceptance tests from 20 to 30 scenarios in `scripts/run-live-acceptance.ts`.
+   - Differentiated evidence classifications: `Unit`, `Integration`, `Direct handler`, and `Live Antigravity`.
+   - Evaluated host constraints: documented headless OAuth CLI limitations as `BLOCKED` with full empirical evidence.

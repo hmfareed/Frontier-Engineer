@@ -91,7 +91,7 @@ describe("canonical hooks schema validation", () => {
 
   it("validates hook registry schema against valid and invalid registries", () => {
     const validRegistry = {
-      version: "0.6.1",
+      version: "0.6.2",
       lastUpdated: "2026-11-11",
       hooks: [
         {

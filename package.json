@@ -1,6 +1,6 @@
 {
   "name": "frontier-engineer",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "private": true,
   "type": "module",
   "description": "Foundation tooling for the Frontier Engineer Antigravity plugin.",

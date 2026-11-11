@@ -56,26 +56,39 @@ Fifteen structured scenarios (`specs/evaluation/hook-scenarios.json`) validate s
 21. **HOOK-SCEN-21**: Native `replace_file_content` credential edit attempt -> `deny`.
 22. **HOOK-SCEN-22**: Native `multi_replace_file_content` private key edit attempt -> `deny`.
 23. **HOOK-SCEN-23**: Unrecognized or unvetted tool call -> `force_ask`.
+24. **HOOK-SCEN-24**: Misleading tool name with destructive keyword (`query_delete_records`) -> `force_ask`.
+25. **HOOK-SCEN-25**: Misleading tool name with external side effect (`fetch_and_publish`) -> `force_ask`.
+26. **HOOK-SCEN-26**: Explicitly trusted read-only tool (`search_marketplace`) -> `allow`.
 
-## Live acceptance tests (HOOK-01 – HOOK-20)
+## Live acceptance tests (HOOK-01 – HOOK-30)
 
-- **HOOK-01 (SessionStart)**: Session initializes once with correlation ID and clean workspace status.
-- **HOOK-02 (PreToolUse allow)**: Safe development commands execute without interruption.
-- **HOOK-03 (PreToolUse deny)**: Prohibited destructive commands are hard blocked before execution.
-- **HOOK-04 (PreToolUse force_ask)**: High-risk git clean requires explicit developer confirmation bypassing cached permissions.
-- **HOOK-05 (PostToolUse)**: Post-execution diagnostics are recorded with credentials redacted.
-- **HOOK-06 (PreInvocation)**: High-priority engineering reminder injected concisely.
-- **HOOK-07 (PostInvocation)**: Invocation turn count and metrics recorded without leaking model reasoning.
-- **HOOK-08 (Stop)**: Finalization executes cleanly and flushes logs.
-- **HOOK-09 (Failure handling)**: Malformed JSON fails closed on safety gates.
-- **HOOK-10 (Disabled hook)**: Disabling a hook via `"enabled": false` is verified.
-- **HOOK-11 (view_file safe)**: Native `view_file` reading workspace files allowed.
-- **HOOK-12 (view_file .env)**: Native `view_file` reading `.env` blocked with `deny`.
-- **HOOK-13 (view_file id_rsa)**: Native `view_file` reading private SSH key blocked with `deny`.
-- **HOOK-14 (write_to_file safe)**: Native `write_to_file` creating source files allowed.
-- **HOOK-15 (write_to_file .env)**: Native `write_to_file` overwriting `.env` blocked with `deny`.
-- **HOOK-16 (replace_file_content .env)**: Native `replace_file_content` targeting `.env` blocked with `deny`.
-- **HOOK-17 (multi_replace_file_content key)**: Native `multi_replace_file_content` targeting private key blocked with `deny`.
-- **HOOK-18 (git reset --hard)**: Hard git reset discards work and requires fresh `force_ask` confirmation.
-- **HOOK-19 (chmod 777)**: Broadening file permissions escalates to `force_ask`.
-- **HOOK-20 (Unrecognized tool)**: Unvetted custom tool escalates to `force_ask` rather than auto-approving.
+- **HOOK-01 (SessionStart)**: Session initializes once with correlation ID and clean workspace status. (Integration)
+- **HOOK-02 (PreToolUse allow)**: Safe development commands execute without interruption. (Integration)
+- **HOOK-03 (PreToolUse deny)**: Prohibited destructive commands are hard blocked before execution. (Integration)
+- **HOOK-04 (PreToolUse force_ask)**: High-risk git clean requires explicit developer confirmation bypassing cached permissions. (Integration)
+- **HOOK-05 (PostToolUse)**: Post-execution diagnostics are recorded with credentials redacted. (Integration)
+- **HOOK-06 (PreInvocation)**: High-priority engineering reminder injected concisely. (Integration)
+- **HOOK-07 (PostInvocation)**: Invocation turn count and metrics recorded without leaking model reasoning. (Integration)
+- **HOOK-08 (Stop)**: Finalization executes cleanly and flushes logs. (Integration)
+- **HOOK-09 (Failure handling)**: Malformed JSON fails closed on safety gates. (Integration)
+- **HOOK-10 (Disabled hook)**: Disabling a hook via `"enabled": false` is verified. (Integration)
+- **HOOK-11 (view_file safe)**: Native `view_file` reading workspace files allowed. (Integration)
+- **HOOK-12 (view_file .env)**: Native `view_file` reading `.env` blocked with `deny`. (Integration)
+- **HOOK-13 (view_file id_rsa)**: Native `view_file` reading private SSH key blocked with `deny`. (Integration)
+- **HOOK-14 (write_to_file safe)**: Native `write_to_file` creating source files allowed. (Integration)
+- **HOOK-15 (write_to_file .env)**: Native `write_to_file` overwriting `.env` blocked with `deny`. (Integration)
+- **HOOK-16 (replace_file_content .env)**: Native `replace_file_content` targeting `.env` blocked with `deny`. (Integration)
+- **HOOK-17 (multi_replace_file_content key)**: Native `multi_replace_file_content` targeting private key blocked with `deny`. (Integration)
+- **HOOK-18 (git reset --hard)**: Hard git reset discards work and requires fresh `force_ask` confirmation. (Integration)
+- **HOOK-19 (chmod 777)**: Broadening file permissions escalates to `force_ask`. (Integration)
+- **HOOK-20 (Unrecognized tool)**: Unvetted custom tool escalates to `force_ask` rather than auto-approving. (Integration)
+- **HOOK-21 (Acceptance Test A: force_ask confirmation bypass)**: Evaluated in real Antigravity runtime; documented as `BLOCKED` due to headless OAuth browser authentication requirements in `agy.exe -p`. (Live Antigravity)
+- **HOOK-22 (Acceptance Test B: call_mcp_tool safe)**: Global `PreToolUse` intercepts encapsulated read-only MCP queries. (Direct handler)
+- **HOOK-23 (Acceptance Test B: call_mcp_tool mutation)**: Encapsulated destructive MCP queries blocked with `deny`. (Direct handler)
+- **HOOK-24 (Acceptance Test B: direct postgres_mcp_query safe)**: Direct MCP tool invocation with safe query allowed. (Direct handler)
+- **HOOK-25 (Acceptance Test B: direct postgres_mcp_query mutation)**: Direct MCP tool invocation with destructive SQL blocked with `deny`. (Direct handler)
+- **HOOK-26 (Acceptance Test B: prefixed mcp_database_postgres_mcp_query)**: Prefixed direct MCP tool invocation intercepted and blocked on mutation. (Direct handler)
+- **HOOK-27 (Misleading tool name query_delete_records)**: Misleading read prefix with destructive keyword escalates to `force_ask`. (Direct handler)
+- **HOOK-28 (Misleading tool name fetch_and_publish)**: Misleading read prefix with external side effect escalates to `force_ask`. (Direct handler)
+- **HOOK-29 (Trusted read-only tool search_marketplace)**: Whitelisted safe tool allowed directly without friction. (Direct handler)
+- **HOOK-30 (Hook failure semantics: exit code 0 on crash)**: Uncaught error in `PreToolUse` yields protocol deny payload with exit code 0 to prevent fail-open execution. (Integration)

@@ -26,6 +26,12 @@ export function validateEventPayload(event: string, payload: unknown): Validatio
       if (!toolCall.name || typeof toolCall.name !== "string") {
         return { valid: false, error: "PreToolUse 'toolCall' missing 'name' string." };
       }
+      if (
+        toolCall.args !== undefined &&
+        (typeof toolCall.args !== "object" || toolCall.args === null)
+      ) {
+        return { valid: false, error: "PreToolUse 'toolCall.args' must be an object if provided." };
+      }
       return { valid: true };
     }
 

@@ -1,15 +1,30 @@
 /**
  * Command and tool call classification engine for PreToolUse safety gating.
  * Evaluates proposed tool executions against Frontier Engineer security boundaries.
- * Supports native Antigravity file operations, command execution, and MCP tools.
+ * Implements explicit conceptual semantic classes:
+ *  - trusted_read_only: Explicitly reviewed operation with known read-only semantics.
+ *  - workspace_read: Read-only operation restricted to permitted workspace paths.
+ *  - workspace_write: Reversible or ordinary project-file modification.
+ *  - external_side_effect: Network, deployment, messaging, payment, or external action.
+ *  - destructive: Irreversible or potentially destructive operation.
+ *  - unknown: Unrecognized or unverified operation.
  */
 
 import { normalizeToolCall } from "./event-context.ts";
 
 export type ToolDecision = "allow" | "deny" | "force_ask" | "ask";
 
+export type ToolSemanticClass =
+  | "trusted_read_only"
+  | "workspace_read"
+  | "workspace_write"
+  | "external_side_effect"
+  | "destructive"
+  | "unknown";
+
 export interface ClassificationResult {
   decision: ToolDecision;
+  semanticClass: ToolSemanticClass;
   reason?: string;
   category?:
     | "safe"
@@ -18,8 +33,19 @@ export interface ClassificationResult {
     | "dangerous_permissions"
     | "database_mutation"
     | "high_risk_git"
+    | "external_side_effect"
     | "ambiguous";
 }
+
+/** Explicitly reviewed tools with verified read-only semantics. */
+export const TRUSTED_READ_ONLY_TOOLS = new Set<string>([
+  "get_state",
+  "list_resources",
+  "read_resource",
+  "list_plugin_accounts",
+  "search_marketplace",
+  "search_web",
+]);
 
 /** Patterns that immediately deny tool execution due to destructive filesystem impact. */
 const PROHIBITED_DESTRUCTIVE_COMMANDS: Array<{ pattern: RegExp; reason: string }> = [
@@ -115,10 +141,18 @@ const HIGH_RISK_COMMANDS: Array<{ pattern: RegExp; reason: string }> = [
   },
 ];
 
+/** Patterns in tool names or operations indicating destructive operations regardless of prefix. */
+const DESTRUCTIVE_TOOL_NAME_PATTERN =
+  /(?:^|[_-])(?:delete|drop|truncate|format|rmdir|remove|purge|wipe|destroy|kill)(?:[_-]|$)/i;
+
+/** Patterns in tool names indicating external side effects (network, messaging, payment). */
+const EXTERNAL_SIDE_EFFECT_PATTERN =
+  /(?:^|[_-])(?:publish|deploy|broadcast|notify|upload|push|send|post|payment|charge|transfer)(?:[_-]|$)/i;
+
 /** Classifies a shell command string. */
 export function classifyCommandLine(commandLine: string): ClassificationResult {
   if (!commandLine || typeof commandLine !== "string") {
-    return { decision: "allow", category: "safe" };
+    return { decision: "allow", semanticClass: "workspace_read", category: "safe" };
   }
 
   const trimmed = commandLine.trim();
@@ -126,21 +160,36 @@ export function classifyCommandLine(commandLine: string): ClassificationResult {
   // 1. Check prohibited destructive filesystem operations
   for (const { pattern, reason } of PROHIBITED_DESTRUCTIVE_COMMANDS) {
     if (pattern.test(trimmed)) {
-      return { decision: "deny", reason: `Blocked: ${reason}`, category: "destructive_filesystem" };
+      return {
+        decision: "deny",
+        semanticClass: "destructive",
+        reason: `Blocked: ${reason}`,
+        category: "destructive_filesystem",
+      };
     }
   }
 
   // 2. Check secret exposure and exfiltration
   for (const { pattern, reason } of PROHIBITED_SECRET_PRINT_COMMANDS) {
     if (pattern.test(trimmed)) {
-      return { decision: "deny", reason: `Blocked: ${reason}`, category: "secret_exposure" };
+      return {
+        decision: "deny",
+        semanticClass: "destructive",
+        reason: `Blocked: ${reason}`,
+        category: "secret_exposure",
+      };
     }
   }
 
   // 3. Check destructive database mutations
   for (const { pattern, reason } of PROHIBITED_DATABASE_MUTATIONS) {
     if (pattern.test(trimmed)) {
-      return { decision: "deny", reason: `Blocked: ${reason}`, category: "database_mutation" };
+      return {
+        decision: "deny",
+        semanticClass: "destructive",
+        reason: `Blocked: ${reason}`,
+        category: "database_mutation",
+      };
     }
   }
 
@@ -149,13 +198,14 @@ export function classifyCommandLine(commandLine: string): ClassificationResult {
     if (pattern.test(trimmed)) {
       return {
         decision: "force_ask",
+        semanticClass: "destructive",
         reason: `Confirmation required: ${reason}`,
         category: /git/i.test(reason) ? "high_risk_git" : "dangerous_permissions",
       };
     }
   }
 
-  return { decision: "allow", category: "safe" };
+  return { decision: "allow", semanticClass: "workspace_read", category: "safe" };
 }
 
 /** Classifies a file access or modification path. */
@@ -164,7 +214,11 @@ export function classifyFilePath(
   operation: "read" | "write" | "edit",
 ): ClassificationResult {
   if (!targetPath || typeof targetPath !== "string") {
-    return { decision: "allow", category: "safe" };
+    return {
+      decision: "allow",
+      semanticClass: operation === "read" ? "workspace_read" : "workspace_write",
+      category: "safe",
+    };
   }
 
   // Normalize path separators
@@ -176,6 +230,7 @@ export function classifyFilePath(
       const actionWord = operation === "read" ? "Access to" : "Modification of";
       return {
         decision: "deny",
+        semanticClass: "destructive",
         reason: `Blocked: ${actionWord} sensitive credential file (${pathBasename(normalized)}) is prohibited.`,
         category: "secret_exposure",
       };
@@ -187,13 +242,18 @@ export function classifyFilePath(
     if (/(?:^|\/)\.git(?:\/|$)/i.test(normalized)) {
       return {
         decision: "deny",
+        semanticClass: "destructive",
         reason: "Blocked: Direct modification of internal .git structures is prohibited.",
         category: "destructive_filesystem",
       };
     }
   }
 
-  return { decision: "allow", category: "safe" };
+  return {
+    decision: "allow",
+    semanticClass: operation === "read" ? "workspace_read" : "workspace_write",
+    category: "safe",
+  };
 }
 
 function pathBasename(p: string): string {
@@ -201,13 +261,20 @@ function pathBasename(p: string): string {
   return parts[parts.length - 1] || p;
 }
 
-/** General classifier for any Antigravity tool call. */
+/**
+ * General classifier for any Antigravity tool call.
+ * Uses explicit semantic capability verification rather than blind prefix-based trust.
+ */
 export function classifyToolCall(
   toolName: string,
   args: Record<string, unknown>,
 ): ClassificationResult {
   if (!toolName || typeof toolName !== "string" || toolName.trim() === "") {
-    return { decision: "deny", reason: "Blocked: Missing tool name in toolCall payload." };
+    return {
+      decision: "deny",
+      semanticClass: "unknown",
+      reason: "Blocked: Missing tool name in toolCall payload.",
+    };
   }
 
   const norm = normalizeToolCall(toolName, args);
@@ -217,17 +284,17 @@ export function classifyToolCall(
     return classifyCommandLine(norm.commandLine ?? "");
   }
 
-  // 2. Native file inspection / reading
+  // 2. Native file inspection / reading (workspace_read)
   if (toolName === "view_file" || toolName === "read_file") {
     return classifyFilePath(norm.filePath ?? "", "read");
   }
 
-  // 3. Native file creation / writing
+  // 3. Native file creation / writing (workspace_write)
   if (toolName === "write_to_file" || toolName === "write_file") {
     return classifyFilePath(norm.filePath ?? "", "write");
   }
 
-  // 4. Native file modification / replacement
+  // 4. Native file modification / replacement (workspace_write)
   if (
     toolName === "replace_file_content" ||
     toolName === "multi_replace_file_content" ||
@@ -245,63 +312,118 @@ export function classifyToolCall(
       const sql = typeof toolArgs.query === "string" ? toolArgs.query : "";
       for (const { pattern, reason } of PROHIBITED_DATABASE_MUTATIONS) {
         if (pattern.test(sql)) {
-          return { decision: "deny", reason: `Blocked: ${reason}`, category: "database_mutation" };
+          return {
+            decision: "deny",
+            semanticClass: "destructive",
+            reason: `Blocked: ${reason}`,
+            category: "database_mutation",
+          };
         }
       }
-      return { decision: "allow", category: "safe" };
+      return { decision: "allow", semanticClass: "trusted_read_only", category: "safe" };
     }
 
     if (tool === "postgres_mcp_modify" || tool === "postgres_mcp_bulk_load_csv") {
       return {
         decision: "deny",
+        semanticClass: "destructive",
         reason: `Blocked: Prohibited mutating database tool "${tool}" is not allowed.`,
         category: "database_mutation",
       };
     }
 
-    // For other MCP tools, inspect arguments for command/file if present
-    if (typeof toolArgs.CommandLine === "string") {
-      return classifyCommandLine(toolArgs.CommandLine);
-    }
-    if (
-      typeof toolArgs.Path === "string" ||
-      typeof toolArgs.TargetFile === "string" ||
-      typeof toolArgs.AbsolutePath === "string"
-    ) {
-      const p = (toolArgs.TargetFile ?? toolArgs.AbsolutePath ?? toolArgs.Path) as string;
-      return classifyFilePath(p, "read");
+    // Check if MCP tool has destructive tokens (e.g. query_delete_records)
+    if (DESTRUCTIVE_TOOL_NAME_PATTERN.test(tool)) {
+      return {
+        decision: "force_ask",
+        semanticClass: "destructive",
+        reason: `Confirmation required: Destructive operation detected in MCP tool "${tool}".`,
+        category: "ambiguous",
+      };
     }
 
-    if (
-      /^(?:read_|get_|list_|fetch_|search_|view_|describe_|inspect_|show_|find_|check_|stat_|query_)/i.test(
-        tool,
-      )
-    ) {
-      return { decision: "allow", category: "safe" };
+    // Check if MCP tool has external side effects (e.g. fetch_and_publish)
+    if (EXTERNAL_SIDE_EFFECT_PATTERN.test(tool)) {
+      return {
+        decision: "force_ask",
+        semanticClass: "external_side_effect",
+        reason: `Confirmation required: External side effect (network/publishing/messaging) detected in MCP tool "${tool}".`,
+        category: "external_side_effect",
+      };
     }
 
-    return { decision: "allow", category: "safe" };
+    // Check explicitly trusted read-only tools
+    if (TRUSTED_READ_ONLY_TOOLS.has(tool)) {
+      return { decision: "allow", semanticClass: "trusted_read_only", category: "safe" };
+    }
+
+    // Unvetted MCP tool
+    return {
+      decision: "force_ask",
+      semanticClass: "unknown",
+      reason: `Confirmation required: Unrecognized or unvetted MCP tool "${tool}" requires developer confirmation.`,
+      category: "ambiguous",
+    };
   }
 
-  // 6. Direct MCP tools (when host exposes them directly to hook system)
-  if (toolName === "postgres_mcp_query") {
+  // 6. Direct MCP tools (e.g. postgres_mcp_query or mcp_database_postgres_mcp_query)
+  const resolvedToolName = toolName.startsWith("mcp_")
+    ? toolName.replace(/^mcp_[^_]+_/, "")
+    : toolName;
+
+  if (resolvedToolName === "postgres_mcp_query") {
     const sql = typeof args.query === "string" ? args.query : "";
     for (const { pattern, reason } of PROHIBITED_DATABASE_MUTATIONS) {
       if (pattern.test(sql)) {
-        return { decision: "deny", reason: `Blocked: ${reason}`, category: "database_mutation" };
+        return {
+          decision: "deny",
+          semanticClass: "destructive",
+          reason: `Blocked: ${reason}`,
+          category: "database_mutation",
+        };
       }
     }
-    return { decision: "allow", category: "safe" };
+    return { decision: "allow", semanticClass: "trusted_read_only", category: "safe" };
   }
-  if (toolName === "postgres_mcp_modify" || toolName === "postgres_mcp_bulk_load_csv") {
+
+  if (
+    resolvedToolName === "postgres_mcp_modify" ||
+    resolvedToolName === "postgres_mcp_bulk_load_csv"
+  ) {
     return {
       decision: "deny",
+      semanticClass: "destructive",
       reason: `Blocked: Prohibited mutating database tool "${toolName}" is not allowed.`,
       category: "database_mutation",
     };
   }
 
-  // 7. Unknown or unrecognized tools
+  // 7. Explicitly trusted read-only tools
+  if (TRUSTED_READ_ONLY_TOOLS.has(toolName)) {
+    return { decision: "allow", semanticClass: "trusted_read_only", category: "safe" };
+  }
+
+  // 8. Misleading tool names: check for destructive tokens regardless of prefix
+  if (DESTRUCTIVE_TOOL_NAME_PATTERN.test(toolName)) {
+    return {
+      decision: "force_ask",
+      semanticClass: "destructive",
+      reason: `Confirmation required: Destructive action detected in tool "${toolName}".`,
+      category: "ambiguous",
+    };
+  }
+
+  // 9. Misleading tool names: check for external side effects regardless of prefix
+  if (EXTERNAL_SIDE_EFFECT_PATTERN.test(toolName)) {
+    return {
+      decision: "force_ask",
+      semanticClass: "external_side_effect",
+      reason: `Confirmation required: External side effect (network/publishing/messaging) detected in tool "${toolName}".`,
+      category: "external_side_effect",
+    };
+  }
+
+  // 10. Inspect arguments if command or path present
   if (norm.commandLine) {
     const cmdResult = classifyCommandLine(norm.commandLine);
     if (cmdResult.decision !== "allow") return cmdResult;
@@ -311,18 +433,10 @@ export function classifyToolCall(
     if (pathResult.decision !== "allow") return pathResult;
   }
 
-  // Recognize benign read-only operations
-  if (
-    /^(?:read_|get_|list_|fetch_|search_|view_|describe_|inspect_|show_|find_|check_|stat_|query_)/i.test(
-      toolName,
-    )
-  ) {
-    return { decision: "allow", category: "safe" };
-  }
-
-  // Conservative default for unrecognized tools: force developer confirmation
+  // 11. Conservative default for unverified tools: never automatically approve
   return {
     decision: "force_ask",
+    semanticClass: "unknown",
     reason: `Confirmation required: Unrecognized or unvetted tool "${toolName}" requires developer confirmation.`,
     category: "ambiguous",
   };

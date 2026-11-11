@@ -2,6 +2,33 @@
 
 All notable changes to Frontier Engineer are documented here. This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.6.2] - 2026-11-11
+
+Final Host-Level Security Acceptance & Conceptual Semantic Classification (Phase 6.1.1).
+
+### Added
+
+- **Conceptual Semantic Capability Classification**:
+  - Replaced heuristic prefix-based automatic approval with explicit semantic categorization: `trusted_read_only`, `workspace_read`, `workspace_write`, `external_side_effect`, `destructive`, and `unknown`.
+  - Added an explicit `TRUSTED_READ_ONLY_TOOLS` whitelist for known read-only endpoints (`read_file`, `view_file`, `search_marketplace`, `list_plugin_accounts`, `read_resource`, `list_resources`, `grep`, `glob`).
+  - Added detection and override for misleading or disguised tool names: operations matching `DESTRUCTIVE_TOOL_NAME_PATTERN` (`query_delete_records`) or `EXTERNAL_SIDE_EFFECT_PATTERN` (`fetch_and_publish`) are escalated to `force_ask` even if they carry a read-like prefix.
+  - Conservative gating for unvetted tools: any tool outside known trusted sets defaults to `semanticClass: "unknown"` and requires interactive confirmation via `force_ask`.
+- **Fail-Closed Hook Dispatcher with Exit Code 0**:
+  - Hardened `scripts/hooks/runtime/dispatcher.ts` and `scripts/hooks/runtime/output.ts` to guarantee that unhandled exceptions, circular JSON errors, and schema failures emit a valid protocol denial response (`{"decision": "deny", "reason": "..."}`) to stdout and terminate with process exit code 0.
+  - Prevents Antigravity from treating non-zero handler crashes as tool-level failures that fail open into unmonitored execution.
+- **Extended Acceptance Suite (HOOK-01 through HOOK-30)**:
+  - Extended live acceptance harness in `scripts/run-live-acceptance.ts` to 30 structured tests, categorizing each test by evidence type (`Unit`, `Integration`, `Direct handler`, `Live Antigravity`).
+  - Added adversarial scenarios HOOK-SCEN-24 (`query_delete_records`), HOOK-SCEN-25 (`fetch_and_publish`), and HOOK-SCEN-26 (`search_marketplace`).
+  - Documented Acceptance Test A (`force_ask` confirmation bypass test) as `BLOCKED` with empirical evidence regarding headless external browser OAuth constraints in `agy.exe -p`.
+  - Verified Acceptance Test B (MCP interception across direct, prefixed, and encapsulated tool names).
+
+### Changed
+
+- **Version Bump & Synchronization**:
+  - Synchronized version `0.6.2` across `package.json`, `package-lock.json`, `plugin.json`, `specs/hooks/hook-registry.md`, and integration test assertions.
+- **SQL Mutation Regex Hardening**:
+  - Broadened `TRUNCATE` detection to match both `TRUNCATE TABLE` and shorthand `TRUNCATE <table_name>`.
+
 ## [0.6.1] - 2026-11-11
 
 Antigravity Tool Coverage Correction & Permission Enforcement (Phase 6.1).

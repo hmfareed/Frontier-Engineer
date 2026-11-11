@@ -4,15 +4,23 @@
  */
 
 /** Emits a JSON payload strictly to stdout and terminates the stream. */
-export function emitOutput(data: unknown): void {
+export function emitOutput(data: unknown, event?: string): void {
   try {
     const jsonStr = JSON.stringify(data ?? {});
     process.stdout.write(jsonStr + "\n");
   } catch (error) {
-    const fallback = JSON.stringify({
-      error: "Failed to serialize output JSON",
-      details: error instanceof Error ? error.message : String(error),
-    });
+    const errText = error instanceof Error ? error.message : String(error);
+    const isPreTool =
+      event === "PreToolUse" || (typeof data === "object" && data !== null && "decision" in data);
+    const fallback = isPreTool
+      ? JSON.stringify({
+          decision: "deny",
+          reason: `Execution blocked by safeguard: Failed to serialize output JSON (${errText}).`,
+        })
+      : JSON.stringify({
+          error: "Failed to serialize output JSON",
+          details: errText,
+        });
     process.stdout.write(fallback + "\n");
   }
 }

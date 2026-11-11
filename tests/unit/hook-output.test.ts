@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveSafeFallback } from "../../scripts/hooks/runtime/security.ts";
+import { emitOutput } from "../../scripts/hooks/runtime/output.ts";
+import { validateEventPayload } from "../../scripts/hooks/runtime/validation.ts";
 
 describe("hook output protocol and safe fallbacks", () => {
   it("enforces fail-closed deny for PreToolUse errors", () => {
@@ -56,5 +58,49 @@ describe("hook output protocol and safe fallbacks", () => {
       "Telemetry failure",
     );
     expect((postInv.output as { injectSteps: unknown[] }).injectSteps).toEqual([]);
+  });
+
+  it("validates PreToolUse payload structures and rejects invalid types", () => {
+    // Null payload
+    expect(validateEventPayload("PreToolUse", null).valid).toBe(false);
+
+    // Missing toolCall
+    expect(validateEventPayload("PreToolUse", {}).valid).toBe(false);
+
+    // Missing name
+    expect(validateEventPayload("PreToolUse", { toolCall: {} }).valid).toBe(false);
+
+    // Invalid args type (string instead of object)
+    expect(
+      validateEventPayload("PreToolUse", { toolCall: { name: "run_command", args: "invalid" } })
+        .valid,
+    ).toBe(false);
+
+    // Valid structure
+    expect(
+      validateEventPayload("PreToolUse", { toolCall: { name: "run_command", args: {} } }).valid,
+    ).toBe(true);
+  });
+
+  it("safely handles circular serialization errors in emitOutput by emitting a protocol denial for PreToolUse", () => {
+    let captured = "";
+    const origWrite = process.stdout.write;
+    try {
+      process.stdout.write = ((str: string) => {
+        captured += str;
+        return true;
+      }) as typeof process.stdout.write;
+
+      const circular: Record<string, unknown> = {};
+      circular.self = circular;
+
+      emitOutput(circular, "PreToolUse");
+
+      const parsed = JSON.parse(captured.trim());
+      expect(parsed.decision).toBe("deny");
+      expect(parsed.reason).toContain("Failed to serialize output JSON");
+    } finally {
+      process.stdout.write = origWrite;
+    }
   });
 });

@@ -80,7 +80,7 @@ Every release must verify:
 
 1. Malformed JSON handling without process crash.
 2. Missing or null payload fields.
-3. Unexpected or unknown tool names (defaults to `allow` with warning).
+3. Unexpected or unknown tool names (defaults to `force_ask` with `semanticClass: "unknown"` requiring confirmation; never automatically approves unknown operations).
 4. Payloads exceeding standard size limits (bounded read buffer up to 10 MB).
 5. Unicode and non-ASCII character handling.
 6. Path traversal attempts (`../../etc/passwd`, `C:\Windows\System32`).

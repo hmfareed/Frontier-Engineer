@@ -2,7 +2,7 @@
   "$schema": "https://antigravity.google/schemas/v1/plugin.json",
   "name": "frontier-engineer",
   "displayName": "Frontier Engineer",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "A disciplined multi-agent software engineering system for Google Antigravity: specialists, skills, rules, secure MCP integrations, and evidence-based verification.",
   "logo": "assets/logo.svg",
   "suggestedPrompts": [

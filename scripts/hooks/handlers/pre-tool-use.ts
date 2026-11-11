@@ -33,6 +33,7 @@ export function handlePreToolUse(payload: PreToolUsePayload): PreToolUseOutput {
             : "info",
       metadata: {
         decision: classification.decision,
+        semanticClass: classification.semanticClass,
         category: classification.category,
         reason: classification.reason,
       },

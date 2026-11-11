@@ -70,7 +70,7 @@ export async function dispatchHook(options: DispatcherOptions): Promise<void> {
         hookId,
         input.error ?? "Failed to parse stdin payload",
       );
-      emitOutput(fallback.output);
+      emitOutput(fallback.output, event);
       process.exitCode = fallback.exitCode;
       return;
     }
@@ -88,7 +88,7 @@ export async function dispatchHook(options: DispatcherOptions): Promise<void> {
         hookId,
         validation.error ?? "Payload validation error",
       );
-      emitOutput(fallback.output);
+      emitOutput(fallback.output, event);
       process.exitCode = fallback.exitCode;
       return;
     }
@@ -125,7 +125,7 @@ export async function dispatchHook(options: DispatcherOptions): Promise<void> {
         result = {};
     }
 
-    emitOutput(result);
+    emitOutput(result, event);
     process.exitCode = 0;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -133,7 +133,7 @@ export async function dispatchHook(options: DispatcherOptions): Promise<void> {
       error: reason,
     });
     const fallback = resolveSafeFallback(event, hookId, `Unhandled error: ${reason}`);
-    emitOutput(fallback.output);
+    emitOutput(fallback.output, event);
     process.exitCode = fallback.exitCode;
   }
 }

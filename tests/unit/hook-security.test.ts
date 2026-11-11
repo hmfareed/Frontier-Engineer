@@ -3,6 +3,7 @@ import {
   classifyCommandLine,
   classifyFilePath,
   classifyToolCall,
+  TRUSTED_READ_ONLY_TOOLS,
 } from "../../scripts/hooks/lib/command-classifier.ts";
 
 describe("command and tool safety classifier", () => {
@@ -38,6 +39,7 @@ describe("command and tool safety classifier", () => {
     expect(classifyCommandLine("psql -c 'DROP DATABASE production;'").decision).toBe("deny");
     expect(classifyCommandLine("psql -c 'DROP TABLE users CASCADE;'").decision).toBe("deny");
     expect(classifyCommandLine("psql -c 'TRUNCATE TABLE audit_logs;'").decision).toBe("deny");
+    expect(classifyCommandLine("psql -c 'TRUNCATE audit_logs;'").decision).toBe("deny");
   });
 
   it("escalates high-risk operations to force_ask", () => {
@@ -51,9 +53,14 @@ describe("command and tool safety classifier", () => {
   });
 
   it("classifies file paths accurately for read, write, and edit operations", () => {
-    expect(classifyFilePath("C:/Projects/Frontier-Engineer/src/index.ts", "read").decision).toBe(
-      "allow",
-    );
+    const safeRead = classifyFilePath("C:/Projects/Frontier-Engineer/src/index.ts", "read");
+    expect(safeRead.decision).toBe("allow");
+    expect(safeRead.semanticClass).toBe("workspace_read");
+
+    const safeWrite = classifyFilePath("src/index.ts", "write");
+    expect(safeWrite.decision).toBe("allow");
+    expect(safeWrite.semanticClass).toBe("workspace_write");
+
     expect(classifyFilePath(".env", "read").decision).toBe("deny");
     expect(classifyFilePath("config/.env.production", "read").decision).toBe("deny");
     expect(classifyFilePath("keys/id_rsa", "read").decision).toBe("deny");
@@ -70,32 +77,37 @@ describe("command and tool safety classifier", () => {
       Arguments: { query: "SELECT * FROM users LIMIT 10;" },
     });
     expect(safeQuery.decision).toBe("allow");
+    expect(safeQuery.semanticClass).toBe("trusted_read_only");
 
     const destructiveQuery = classifyToolCall("call_mcp_tool", {
       ToolName: "postgres_mcp_query",
       Arguments: { query: "DROP TABLE users;" },
     });
     expect(destructiveQuery.decision).toBe("deny");
+    expect(destructiveQuery.semanticClass).toBe("destructive");
 
     const prohibitedTool = classifyToolCall("call_mcp_tool", {
       ToolName: "postgres_mcp_modify",
       Arguments: {},
     });
     expect(prohibitedTool.decision).toBe("deny");
+    expect(prohibitedTool.semanticClass).toBe("destructive");
   });
 
   it("covers native Antigravity file-operation tools across argument shapes", () => {
     // 1. view_file reading ordinary file
-    expect(
-      classifyToolCall("view_file", { AbsolutePath: "C:/Projects/Frontier-Engineer/package.json" })
-        .decision,
-    ).toBe("allow");
+    const vfSafe = classifyToolCall("view_file", {
+      AbsolutePath: "C:/Projects/Frontier-Engineer/package.json",
+    });
+    expect(vfSafe.decision).toBe("allow");
+    expect(vfSafe.semanticClass).toBe("workspace_read");
 
     // 2. view_file reading .env
-    expect(
-      classifyToolCall("view_file", { AbsolutePath: "C:/Projects/Frontier-Engineer/.env" })
-        .decision,
-    ).toBe("deny");
+    const vfEnv = classifyToolCall("view_file", {
+      AbsolutePath: "C:/Projects/Frontier-Engineer/.env",
+    });
+    expect(vfEnv.decision).toBe("deny");
+    expect(vfEnv.semanticClass).toBe("destructive");
 
     // 3. view_file reading private key
     expect(
@@ -103,12 +115,12 @@ describe("command and tool safety classifier", () => {
     ).toBe("deny");
 
     // 4. write_to_file targeting normal workspace file
-    expect(
-      classifyToolCall("write_to_file", {
-        TargetFile: "src/utils.ts",
-        Content: "export const x = 1;",
-      }).decision,
-    ).toBe("allow");
+    const wfSafe = classifyToolCall("write_to_file", {
+      TargetFile: "src/utils.ts",
+      Content: "export const x = 1;",
+    });
+    expect(wfSafe.decision).toBe("allow");
+    expect(wfSafe.semanticClass).toBe("workspace_write");
 
     // 5. write_to_file targeting sensitive credential file
     expect(
@@ -135,20 +147,68 @@ describe("command and tool safety classifier", () => {
     ).toBe("deny");
 
     // 8. Direct MCP query
-    expect(classifyToolCall("postgres_mcp_query", { query: "SELECT 1;" }).decision).toBe("allow");
-    expect(classifyToolCall("postgres_mcp_query", { query: "TRUNCATE users;" }).decision).toBe(
-      "deny",
-    );
+    const mcpSelect = classifyToolCall("postgres_mcp_query", { query: "SELECT 1;" });
+    expect(mcpSelect.decision).toBe("allow");
+    expect(mcpSelect.semanticClass).toBe("trusted_read_only");
 
-    // 9. Unrecognized mutating or unknown tool
-    expect(classifyToolCall("unknown_system_mutator", { payload: "abc" }).decision).toBe(
-      "force_ask",
-    );
+    const mcpTrunc = classifyToolCall("postgres_mcp_query", { query: "TRUNCATE users;" });
+    expect(mcpTrunc.decision).toBe("deny");
+    expect(mcpTrunc.semanticClass).toBe("destructive");
 
-    // 10. Unrecognized read-only tool
-    expect(classifyToolCall("fetch_system_status", {}).decision).toBe("allow");
+    // 9. Direct MCP query with mcp_ prefix
+    const prefixedSelect = classifyToolCall("mcp_database_postgres_mcp_query", {
+      query: "SELECT 1;",
+    });
+    expect(prefixedSelect.decision).toBe("allow");
+    expect(prefixedSelect.semanticClass).toBe("trusted_read_only");
+  });
 
-    // 11. Empty tool name
-    expect(classifyToolCall("", {}).decision).toBe("deny");
+  it("applies strict capability classification to misleading or unknown tool names", () => {
+    // A tool named query_delete_records must NOT be approved just because it starts with query_
+    const misleadingDelete = classifyToolCall("query_delete_records", { table: "users" });
+    expect(misleadingDelete.decision).toBe("force_ask");
+    expect(misleadingDelete.semanticClass).toBe("destructive");
+
+    // A tool named fetch_and_publish must NOT be approved just because it starts with fetch_
+    const misleadingPublish = classifyToolCall("fetch_and_publish", { url: "https://api.com" });
+    expect(misleadingPublish.decision).toBe("force_ask");
+    expect(misleadingPublish.semanticClass).toBe("external_side_effect");
+
+    // A tool named read_and_destroy must NOT be approved just because it starts with read_
+    const misleadingDestroy = classifyToolCall("read_and_destroy", { target: "session" });
+    expect(misleadingDestroy.decision).toBe("force_ask");
+    expect(misleadingDestroy.semanticClass).toBe("destructive");
+
+    // Encapsulated MCP call with misleading name
+    const mcpMisleading = classifyToolCall("call_mcp_tool", {
+      ToolName: "query_delete_all",
+      Arguments: {},
+    });
+    expect(mcpMisleading.decision).toBe("force_ask");
+    expect(mcpMisleading.semanticClass).toBe("destructive");
+
+    const mcpPublish = classifyToolCall("call_mcp_tool", {
+      ToolName: "fetch_and_broadcast",
+      Arguments: {},
+    });
+    expect(mcpPublish.decision).toBe("force_ask");
+    expect(mcpPublish.semanticClass).toBe("external_side_effect");
+
+    // Explicitly trusted read-only tools
+    for (const tool of TRUSTED_READ_ONLY_TOOLS) {
+      const res = classifyToolCall(tool, {});
+      expect(res.decision).toBe("allow");
+      expect(res.semanticClass).toBe("trusted_read_only");
+    }
+
+    // Completely unknown/unverified tool
+    const unknownTool = classifyToolCall("unknown_custom_tool", { param: "val" });
+    expect(unknownTool.decision).toBe("force_ask");
+    expect(unknownTool.semanticClass).toBe("unknown");
+
+    // Missing tool name
+    const emptyName = classifyToolCall("", {});
+    expect(emptyName.decision).toBe("deny");
+    expect(emptyName.semanticClass).toBe("unknown");
   });
 });

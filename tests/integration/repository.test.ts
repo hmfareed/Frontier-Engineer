@@ -100,7 +100,7 @@ describe("repository foundation", () => {
     expect(manifest.name).toBe("frontier-engineer");
     expect(manifest.name).toBe(pkg.name);
     expect(manifest.version).toBe(pkg.version);
-    expect(manifest.version).toBe("0.6.1");
+    expect(manifest.version).toBe("0.6.2");
   });
 
   it("ships verified mcp_config.json and verified hooks.json", () => {

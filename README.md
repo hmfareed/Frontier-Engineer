@@ -2,7 +2,7 @@
 
 An AI software-engineering **agent system** distributed as a Google Antigravity plugin. It packages a coordinating agent, five specialist subagents, ten reusable engineering skills, persistent rules, and verification tooling into one versioned, installable unit.
 
-> **Status: Phase 6.1 — Tool Coverage Correction & Permission Enforcement (v0.6.1).** Six verified lifecycle hooks (`SessionStart`, `PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`) and their generated Antigravity configuration (`hooks.json`) operate with a global matcher (`*`) covering all native file operations (`view_file`, `write_to_file`, `replace_file_content`, `multi_replace_file_content`), command execution (`run_command`), and MCP tools. High-risk operations enforce `force_ask` to bypass cached permissions, and sensitive credential modifications are strictly blocked.
+> **Status: Phase 6.1.1 — Final Host-Level Security Acceptance (v0.6.2).** Six verified lifecycle hooks (`SessionStart`, `PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`) and their generated Antigravity configuration (`hooks.json`) operate with a global matcher (`*`) covering all native file operations (`view_file`, `write_to_file`, `replace_file_content`, `multi_replace_file_content`), command execution (`run_command`), and MCP tools. Conceptual semantic capability classification (`trusted_read_only`, `workspace_read`, `workspace_write`, `external_side_effect`, `destructive`, `unknown`) replaces blind prefix matching, misleading tool names require fresh user confirmation, unhandled dispatcher errors fail closed via exit code 0 protocol denials, and 30 acceptance tests verify host-level security compliance.
 
 ## What this is
 

@@ -281,5 +281,44 @@
     "securityObjective": "Require developer confirmation for unrecognized or unvetted tools",
     "expectedFailureBehavior": "fail_closed",
     "evaluationStatus": "verified"
+  },
+  {
+    "id": "HOOK-SCEN-24",
+    "name": "Misleading tool name with destructive operation",
+    "event": "PreToolUse",
+    "toolName": "query_delete_records",
+    "args": {
+      "table": "users"
+    },
+    "expectedDecision": "force_ask",
+    "securityObjective": "Prevent prefix-based auto-approval on destructive operations",
+    "expectedFailureBehavior": "fail_closed",
+    "evaluationStatus": "verified"
+  },
+  {
+    "id": "HOOK-SCEN-25",
+    "name": "Misleading tool name with external side effect",
+    "event": "PreToolUse",
+    "toolName": "fetch_and_publish",
+    "args": {
+      "endpoint": "https://api.external.com/feed"
+    },
+    "expectedDecision": "force_ask",
+    "securityObjective": "Prevent prefix-based auto-approval on external publishing actions",
+    "expectedFailureBehavior": "fail_closed",
+    "evaluationStatus": "verified"
+  },
+  {
+    "id": "HOOK-SCEN-26",
+    "name": "Explicitly trusted read-only tool execution",
+    "event": "PreToolUse",
+    "toolName": "search_marketplace",
+    "args": {
+      "queries": ["linter"]
+    },
+    "expectedDecision": "allow",
+    "securityObjective": "Permit verified read-only discovery tools without developer friction",
+    "expectedFailureBehavior": "fail_closed",
+    "evaluationStatus": "verified"
   }
 ]
