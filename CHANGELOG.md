@@ -4,10 +4,15 @@ All notable changes to Frontier Engineer are documented here. This project follo
 
 ## [0.6.3] - 2026-11-11
 
-Final Host Verification Closure & Security Acceptance (Phase 6.1.2).
+Final Host Verification Closure & Security Acceptance (Phase 6.1.2) and Final Evidence Reconciliation & Release Acceptance (Phase 6.1.3).
 
 ### Added
 
+- **Final Evidence Reconciliation (Phase 6.1.3)**:
+  - Formally differentiated five tiers of verification evidence: automated schema/unit tests, direct handler tests, subprocess integration tests, live Antigravity host tests, and blocked tests.
+  - Reconciled PostgreSQL MCP interception evidence: explicitly classified host-level interception as **NOT VERIFIED**, preventing the conflation of subprocess integration tests (HOOK-30, HOOK-34, HOOK-35) with live host execution.
+  - Documented the three levels of `force_ask` confirmation: classifier emission (Level 1: Verified), simulated decline (Level 2: Verified), and interactive host UI prompt bypassing cached Always Allow (Level 3: Blocked, HOOK-21 & HOOK-31).
+  - Executed official strict CLI validation: `agy plugin validate --strict .` with Antigravity CLI v1.5.0, confirming zero findings across 10 skills, 6 agents, 14 rules, 6 hooks, and 5 MCP servers with exit code 0.
 - **Explicit MCP Tool Capability Registration (`TRUSTED_MCP_TOOLS`)**:
   - Bound trusted MCP tools to their authoritative MCP server identifiers (`database` for `postgres_mcp_query`, `science_biomolecular_structure_viewer_mcp` for `get_state`).
   - Added unexpected server detection: known tools registered under unverified or rogue servers are rejected from trusted classification and escalated to `force_ask` with `semanticClass: "unknown"`.

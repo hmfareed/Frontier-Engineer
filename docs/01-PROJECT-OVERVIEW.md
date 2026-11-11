@@ -2,14 +2,14 @@
 
 ## Identity
 
-| Property              | Value                                                                     |
-| --------------------- | ------------------------------------------------------------------------- |
-| Product               | Frontier Engineer                                                         |
-| Category              | AI software-engineering agent system                                      |
-| Distribution          | Google Antigravity plugin                                                 |
-| Execution environment | Antigravity App, CLI, or IDE                                              |
-| Current version       | 0.6.3 (Phase 6.1.2 Final Host Verification Closure & Security Acceptance) |
-| Target release        | 1.0.0 (Phase 10)                                                          |
+| Property              | Value                                                                  |
+| --------------------- | ---------------------------------------------------------------------- |
+| Product               | Frontier Engineer                                                      |
+| Category              | AI software-engineering agent system                                   |
+| Distribution          | Google Antigravity plugin                                              |
+| Execution environment | Antigravity App, CLI, or IDE                                           |
+| Current version       | 0.6.3 (Phase 6.1.3 Final Evidence Reconciliation & Release Acceptance) |
+| Target release        | 1.0.0 (Phase 10)                                                       |
 
 ## Vision
 
@@ -57,13 +57,16 @@ Phase 5 implemented the secure Model Context Protocol (MCP) integration architec
 
 Phase 5.1 conducted an empirical technical audit, verified provider packages, retired deprecated reference servers, enforced server-side read-only boundaries (`github-mcp-server --read-only=true`, `@playwright/mcp --headless --isolated`), defined 10 mandatory defense-in-depth database invariants, and implemented a live runtime acceptance test harness (`scripts/test-mcp-runtime.ts`).
 
-Still deliberately deferred: lifecycle hooks (Phase 6), project intelligence and memory (Phase 7), workflows (Phase 8), and release packaging (Phases 9–10).
+Phase 6 implemented the Antigravity lifecycle hooks architecture across six events (`SessionStart`, `PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`), generated `hooks.json`, unified file and command interception under a global matcher (`*`), hardened dispatcher fail-closed error boundaries, implemented semantic capability categorization, registered trusted MCP capabilities, and established an extensive 45-test acceptance suite. Phase 6.1.3 reconciled all verification evidence, strictly classifying host-level PostgreSQL MCP interception as NOT VERIFIED, maintaining interactive `force_ask` confirmation bypass as BLOCKED, and confirming strict CLI validation with CLI v1.5.0.
+
+Still deliberately deferred: project intelligence and engineering memory (Phase 7), workflows (Phase 8), and release packaging (Phases 9–10).
 
 ## Current limitations
 
 - Installation and runtime invocation of the plugin's agents and skills inside Antigravity have not been tested in live user sessions, although static discovery is verified by the CLI.
 - Real specialist delegation, handoff round trips, and skill activation have not been exercised in live chat.
-- `mcp_config.json` and `hooks.json` are intentionally absent. Their schemas are available for validation when the components are added.
+- While `mcp_config.json` and `hooks.json` are generated and strictly validated, live host-level interception of PostgreSQL MCP operations has not been verified within an authentic Antigravity session.
+- Live host UI evaluation of `force_ask` fresh prompts bypassing cached Always Allow permissions is BLOCKED due to headless OAuth constraints.
 - `tools` allowlists are not emitted; see [Part 04](04-AGENT-SPECIFICATIONS.md) for the reason.
 - No adapter other than Antigravity is implemented, and no evaluation score has been assigned.
 - The 85/100 quality target in the original specification is a target, not a measured score.

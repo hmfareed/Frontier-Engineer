@@ -87,3 +87,18 @@ Every release must verify:
 7. Secret redaction effectiveness across standard credential formats.
 8. Timeout behavior (handlers complete within strictly bounded milliseconds).
 9. Windows path parsing (backslashes, drive letters, spaces, UNC).
+
+## 6. Evidence Classification and Host Verification Boundaries
+
+To prevent unfounded claims, verification evidence is classified across five explicit tiers:
+
+1. **Automated Unit Tests**: Vitest in-memory tests verifying modular logic, schema adherence, and redaction patterns.
+2. **Direct Handler Tests**: Standalone in-memory execution of handler functions against mock inputs.
+3. **Integration Tests**: Standalone execution of the dispatcher CLI (`dispatcher.ts`) via Node.js subprocesses processing synthesized JSON payloads over stdin/stdout.
+4. **Live Antigravity Host Tests**: Actual tool interception and UI prompt display within a live Antigravity host session.
+5. **Blocked Tests**: Tests where host or environmental constraints (such as non-interactive OAuth) prevent automated execution.
+
+### Verification Status of Critical Boundaries
+
+- **PostgreSQL MCP Host Interception**: **NOT VERIFIED**. Subprocess integration tests (HOOK-30, HOOK-34, HOOK-35) confirm that the classifier and dispatcher parse and evaluate `call_mcp_tool` and `postgres_mcp_query` synthetic payloads. However, the end-to-end chain within an authentic Antigravity host runtime has not been observed.
+- **`force_ask` Confirmation & Cache Bypass**: **BLOCKED** (HOOK-21, HOOK-31). Emitting `force_ask` from the classifier and simulating declines in integration tests is verified. However, confirming that the Antigravity UI displays a fresh confirmation modal despite cached "Always Allow" permissions remains unverified at the host UI level due to headless OAuth constraints.

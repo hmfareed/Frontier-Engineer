@@ -169,3 +169,33 @@ Phase 6.1.1 verification closure required resolving three host-level verificatio
    - Expanded the live acceptance suite in `scripts/run-live-acceptance.ts` to 45 structured tests (HOOK-01 to HOOK-45).
    - Documented the unavoidable host IPC limitation: if stdout is closed/broken (HOOK-44), the hook cannot emit protocol JSON.
    - Verified that all fail-closed conditions emit valid protocol denials with exit code 0.
+
+## Addendum: Phase 6.1.3 Corrective Architecture — Final Evidence Reconciliation & Release Acceptance
+
+- **Date:** 2026-11-11
+- **Status:** Accepted
+
+### Problem Statement
+
+Prior release summaries reported 45 acceptance tests passing or blocked, but risked conflating subprocess integration test results with live Antigravity host-level execution:
+
+1. **PostgreSQL MCP Interception Boundaries:** While integration tests confirmed that `postgres_mcp_query` synthetic payloads are evaluated by the dispatcher and classifier, the complete chain involving actual Antigravity host runtime invocation, `PreToolUse` event firing, host argument capture, classifier decision enforcement, and PostgreSQL engine interaction was never exercised in a live host session.
+2. **`force_ask` Confirmation Semantics:** Unit and integration tests verify that the classifier emits `force_ask` and that test runners can simulate declines. However, live host UI verification—confirming that Antigravity displays a fresh interactive modal despite cached "Always Allow" permissions—remains unverified due to headless OAuth constraints.
+3. **Official CLI Validation:** Acceptance required strict execution of `agy plugin validate --strict .` using the official Antigravity CLI binary to verify component discovery across all six plugin hook definitions.
+
+### Architectural Decisions
+
+1. **Explicit Classification of PostgreSQL Host Interception as NOT VERIFIED:**
+   - Clearly delineate integration-level verification (HOOK-30, HOOK-34, HOOK-35) from host-level execution.
+   - Prohibit upgrading integration evidence to claim host-level enforcement.
+   - Record PostgreSQL host-level interception status as **NOT VERIFIED**.
+
+2. **Retention of HOOK-21 and HOOK-31 as BLOCKED:**
+   - Formally document the three operational levels of `force_ask`:
+     - Level 1: Classifier returning `force_ask` (Unit / Integration: Verified).
+     - Level 2: Integration runner simulating a decline (Integration: Verified).
+     - Level 3: Antigravity displaying an interactive approval prompt bypassing cached Always Allow (Live Antigravity: Blocked).
+   - Retain HOOK-21 and HOOK-31 as **BLOCKED** rather than falsely claiming full host verification.
+
+3. **Strict Antigravity CLI Verification:**
+   - Successfully executed `agy plugin validate --strict .` using Antigravity CLI v1.5.0 (`~/.gemini/bin/agy.exe`), yielding exit code 0 and discovering 10 skills, 6 agents, 14 rules, 6 hooks, and 5 MCP servers with zero findings.

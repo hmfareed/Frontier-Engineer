@@ -2,7 +2,7 @@
 
 An AI software-engineering **agent system** distributed as a Google Antigravity plugin. It packages a coordinating agent, five specialist subagents, ten reusable engineering skills, persistent rules, and verification tooling into one versioned, installable unit.
 
-> **Status: Phase 6.1.2 — Final Host Verification Closure & Security Acceptance (v0.6.3).** Six verified lifecycle hooks (`SessionStart`, `PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`) and their generated Antigravity configuration (`hooks.json`) operate with a global matcher (`*`) covering all native file operations (`view_file`, `write_to_file`, `replace_file_content`, `multi_replace_file_content`), command execution (`run_command`), and MCP tools. Explicit MCP tool capability classification (`TRUSTED_MCP_TOOLS`) binds tools to their expected MCP server, hostile commands (`read_and_execute`, `list_and_remove`, `query_delete_records`, `search_then_upload`) are escalated or blocked, unhandled dispatcher failures fail closed with valid protocol denials and exit code 0 across a 10-condition failure matrix, and 45 acceptance tests verify host-level security compliance.
+> **Status: Phase 6.1.3 — Final Evidence Reconciliation & Release Acceptance (v0.6.3).** Six verified lifecycle hooks (`SessionStart`, `PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`) and their generated Antigravity configuration (`hooks.json`) operate with a global matcher (`*`) covering all native file operations (`view_file`, `write_to_file`, `replace_file_content`, `multi_replace_file_content`), command execution (`run_command`), and MCP tools. Explicit MCP tool capability classification (`TRUSTED_MCP_TOOLS`) binds tools to their expected MCP server, hostile commands (`read_and_execute`, `list_and_remove`, `query_delete_records`, `search_then_upload`) are escalated or blocked, unhandled dispatcher failures fail closed with valid protocol denials and exit code 0 across a 10-condition failure matrix, and 45 acceptance tests rigorously categorize evidence across unit, direct handler, and integration tests. Interactive cached permission bypass (`force_ask`) remains BLOCKED, and PostgreSQL host-level interception is explicitly NOT VERIFIED.
 
 ## What this is
 
@@ -139,9 +139,9 @@ The CLI binary is `agy`. On Windows it is installed at `~/.gemini/bin/agy.exe`; 
 
 ## Verified vs proposed
 
-`agy plugin validate --strict .` recognises ten skills, six agents, fourteen rules, and five MCP servers with zero findings. Everything that claims Antigravity compatibility is recorded in [the verification record](docs/27-OFFICIAL-FORMAT-VERIFICATION.md) with sources and dates.
+`agy plugin validate --strict .` recognises ten skills, six agents, fourteen rules, six lifecycle hooks, and five MCP servers with zero findings. Everything that claims Antigravity compatibility is recorded in [the verification record](docs/27-OFFICIAL-FORMAT-VERIFICATION.md) with sources and dates.
 
-**Runtime invocation, actual specialist delegation, and skill activation in live user sessions have not been tested.** No non-Antigravity adapter is implemented, and no evaluation score has been assigned. Installation and runtime discovery remain deliberately deferred.
+**Runtime invocation, actual specialist delegation, skill activation, host-level PostgreSQL MCP interception, and interactive `force_ask` UI prompts in live host user sessions have not been tested.** No non-Antigravity adapter is implemented, and no evaluation score has been assigned. Installation and runtime discovery remain deliberately deferred.
 
 ## License
 
