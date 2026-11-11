@@ -52,7 +52,7 @@ npm run generate:agents -- --check
 
 Generated files are compared semantically against their canonical source, so formatting-only drift is tolerated but instruction drift fails validation. To add a new platform, add an adapter under `specs/adapters/` that consumes the same canonical specs; do not copy agent instructions. See [the portability guide](docs/07-AGENT-PORTABILITY.md).
 
-The exact verified field sets and their sources are in [docs/24-OFFICIAL-FORMAT-VERIFICATION.md](docs/24-OFFICIAL-FORMAT-VERIFICATION.md). The schemas in [schemas/](schemas/) are local draft-07 transcriptions used for offline validation; `agy plugin validate --strict` remains authoritative.
+The exact verified field sets and their sources are in [docs/27-OFFICIAL-FORMAT-VERIFICATION.md](docs/27-OFFICIAL-FORMAT-VERIFICATION.md). The schemas in [schemas/](schemas/) are local draft-07 transcriptions used for offline validation; `agy plugin validate --strict` remains authoritative.
 
 Antigravity scans these directories one level deep. Nested components require a discovery manifest (`skills.json`, `rules.json`, or `agents.json`).
 

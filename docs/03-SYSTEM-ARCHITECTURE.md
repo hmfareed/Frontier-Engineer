@@ -1,6 +1,6 @@
 # Part 03 — System architecture
 
-> **Label:** Mixed. The plugin packaging layer, the six agent definitions, and the formats in [the verification record](24-OFFICIAL-FORMAT-VERIFICATION.md) are statically verified. The six-layer runtime behaviour, delegation in practice, skills, and orchestration remain **proposed and untested**. See [Part 04](04-AGENT-SPECIFICATIONS.md) for the verified/unverified split.
+> **Label:** Mixed. The plugin packaging layer, the six agent definitions, and the formats in [the verification record](27-OFFICIAL-FORMAT-VERIFICATION.md) are statically verified. The six-layer runtime behaviour, delegation in practice, skills, and orchestration remain **proposed and untested**. See [Part 04](04-AGENT-SPECIFICATIONS.md) for the verified/unverified split.
 
 ## Six layers
 

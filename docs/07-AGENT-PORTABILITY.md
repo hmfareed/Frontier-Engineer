@@ -47,4 +47,4 @@ Where a platform has no native delegation primitive, the documented fallback is 
 2. Do not claim an adapter works before it is implemented and tested locally.
 3. Do not copy the six canonical specifications into a platform folder.
 4. Verify exact file names, frontmatter keys, and delegation APIs against official documentation first.
-5. Record the source URL, version, and date for every format claim in [Part 24](24-OFFICIAL-FORMAT-VERIFICATION.md).
+5. Record the source URL, version, and date for every format claim in [Part 27](27-OFFICIAL-FORMAT-VERIFICATION.md).

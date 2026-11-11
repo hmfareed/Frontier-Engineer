@@ -1,0 +1,210 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://frontier-engineer.local/schemas/canonical-integration.json",
+  "title": "Platform-independent canonical integration specification frontmatter",
+  "type": "object",
+  "required": [
+    "id",
+    "name",
+    "description",
+    "category",
+    "version",
+    "lifecycle",
+    "provider",
+    "runtime",
+    "capabilities",
+    "security",
+    "platformConfig"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 1024
+    },
+    "category": {
+      "type": "string",
+      "enum": ["repository", "documentation", "browser_testing", "observability", "database"]
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(-[a-zA-Z0-9.-]+)?$"
+    },
+    "lifecycle": {
+      "type": "string",
+      "enum": ["proposed", "documented", "verified", "available", "deprecated", "disabled"]
+    },
+    "provider": {
+      "type": "object",
+      "required": [
+        "name",
+        "documentationUrl",
+        "repositoryUrl",
+        "maintainer",
+        "license",
+        "verificationDate"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "documentationUrl": { "type": "string", "minLength": 1 },
+        "repositoryUrl": { "type": "string", "minLength": 1 },
+        "maintainer": { "type": "string", "minLength": 1 },
+        "license": { "type": "string", "minLength": 1 },
+        "verificationDate": { "type": "string", "minLength": 1 }
+      }
+    },
+    "runtime": {
+      "type": "object",
+      "required": ["transport", "runtime", "executable", "args", "envVars"],
+      "additionalProperties": false,
+      "properties": {
+        "transport": {
+          "type": "string",
+          "enum": ["stdio", "streamable_http"]
+        },
+        "runtime": {
+          "type": "string",
+          "enum": ["node", "python", "binary"]
+        },
+        "executable": { "type": "string", "minLength": 1 },
+        "args": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "envVars": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "required", "description", "secret"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "required": { "type": "boolean" },
+              "description": { "type": "string", "minLength": 1 },
+              "secret": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "required": ["tools", "resources", "prompts"],
+      "additionalProperties": false,
+      "properties": {
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "description", "permissionClass", "agentAffinity"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "description": { "type": "string", "minLength": 1 },
+              "permissionClass": {
+                "type": "string",
+                "enum": [
+                  "read_only",
+                  "reversible_write",
+                  "external_side_effect",
+                  "destructive",
+                  "sensitive_data_access"
+                ]
+              },
+              "agentAffinity": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "string",
+                  "enum": [
+                    "frontier-engineer",
+                    "architect",
+                    "implementation-engineer",
+                    "security-auditor",
+                    "qa-engineer",
+                    "design-engineer"
+                  ]
+                }
+              }
+            }
+          }
+        },
+        "resources": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["uri", "name", "description"],
+            "additionalProperties": false,
+            "properties": {
+              "uri": { "type": "string", "minLength": 1 },
+              "name": { "type": "string", "minLength": 1 },
+              "description": { "type": "string", "minLength": 1 }
+            }
+          }
+        },
+        "prompts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["name", "description"],
+            "additionalProperties": false,
+            "properties": {
+              "name": { "type": "string", "minLength": 1 },
+              "description": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "security": {
+      "type": "object",
+      "required": [
+        "authenticationType",
+        "permissionClasses",
+        "readOnlyAlternative",
+        "credentialEnvVars"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "authenticationType": {
+          "type": "string",
+          "enum": ["bearer_token", "api_key", "connection_string", "none"]
+        },
+        "permissionClasses": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "enum": [
+              "read_only",
+              "reversible_write",
+              "external_side_effect",
+              "destructive",
+              "sensitive_data_access"
+            ]
+          }
+        },
+        "readOnlyAlternative": { "type": "string", "minLength": 1 },
+        "credentialEnvVars": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "platformConfig": {
+      "type": "object",
+      "additionalProperties": false,
+      "maxProperties": 0
+    }
+  }
+}

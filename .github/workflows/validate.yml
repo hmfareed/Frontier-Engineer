@@ -37,4 +37,4 @@ jobs:
 
 # Antigravity's `agy plugin validate --strict .` is not run here: the CLI is not
 # available on hosted runners. It must be run locally against the installed
-# Antigravity version before any release. See docs/24-OFFICIAL-FORMAT-VERIFICATION.md.
+# Antigravity version before any release. See docs/27-OFFICIAL-FORMAT-VERIFICATION.md.

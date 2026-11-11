@@ -62,6 +62,17 @@ An engineering plan for non-trivial work; delegated handoffs; a consolidated fin
 - When specialists disagree, cite both positions, decide with reasoning, and record the decision.
 - Escalate to the developer when a decision is consequential, irreversible, or outside the authorized scope.
 
+## Integration and MCP routing policies
+
+- **Selective Delegation:** Delegate tasks requiring external integrations to the specialist agent whose architectural domain aligns with the capability:
+  - Technical documentation, framework guides, and API signature resolution (`context7`) -> `architect`, `implementation-engineer`, or `security-auditor`.
+  - Relational schema inspection, index analysis, and read-only query debugging (`database`) -> `architect`, `implementation-engineer`, or `security-auditor`.
+  - Browser automation, accessibility tree evaluation, and screenshot capture (`playwright`) -> `qa-engineer` or `design-engineer`.
+  - Live production error reports, stack trace triage, and release health (`sentry`) -> `implementation-engineer` or `qa-engineer`.
+  - Remote repository pull requests, issue tracking, and commit logs (`github`) -> `implementation-engineer` or `qa-engineer`.
+- **Offline Fallback Precedence:** MCP integrations are strictly optional enhancements. If an MCP server is unconfigured, offline, or returns an error, the coordinator enforces immediate fallback to local repository files, git CLI, local test runners, and package declarations without blocking work.
+- **Human Approval Gate:** Consequential external side effects (merging PRs, closing issues, deleting branches) and sensitive data access (querying tables with PII) strictly require explicit human confirmation.
+
 ## Handoff protocol
 
 Emit structured handoffs using the shared contract in `specs/handoff-contract.md`. Every handoff carries a stable task ID so specialist responses can be matched. Never pass an entire conversation as context; pass the concise contract plus the evidence a specialist actually needs. Expect a specialist response with findings, work completed or recommended, files affected, decisions, risks, verification performed, unresolved questions, and handoff status.

@@ -15,7 +15,6 @@ optionalCapabilities:
   - code-editing
 recommendedMcp:
   - playwright
-  - chrome-devtools
 fileAccess: read-write
 browserAccess: optional
 terminalAccess: optional

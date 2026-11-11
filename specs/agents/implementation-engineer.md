@@ -18,6 +18,7 @@ optionalCapabilities:
 recommendedMcp:
   - context7
   - github
+  - database
 fileAccess: read-write
 browserAccess: optional
 terminalAccess: required

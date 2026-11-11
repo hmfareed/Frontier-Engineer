@@ -18,6 +18,8 @@ Frontier Engineer is distributed as a plugin, so it uses the second layout. `.ag
 ```text
 frontier-engineer/
 ├── plugin.json                  # Required manifest
+├── mcp_config.json              # Antigravity MCP server adapter (disabled by default)
+├── mcp_config.example.json      # Example MCP environment variable setup guide
 ├── README.md                    # Pre-install documentation
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
@@ -48,6 +50,14 @@ frontier-engineer/
 │   │   ├── testing/             # Testing standards
 │   │   ├── performance/         # Performance standards
 │   │   └── AGENTS.md            # Global foundation rule specification
+│   ├── integrations/            # Five canonical MCP integration specifications
+│   │   ├── README.md
+│   │   ├── integration-registry.md
+│   │   ├── github/              # integration.md, capabilities.md, security.md
+│   │   ├── context7/            # integration.md, capabilities.md, security.md
+│   │   ├── playwright/          # integration.md, capabilities.md, security.md
+│   │   ├── sentry/              # integration.md, capabilities.md, security.md
+│   │   └── database/            # integration.md, capabilities.md, security.md
 │   ├── adapters/                # Adapter registry and per-platform requirements
 │   ├── evaluation/              # Agent and skill evaluation scenarios
 │   ├── handoff-contract.md
@@ -64,6 +74,8 @@ frontier-engineer/
 │   ├── canonical-agent.schema.json
 │   ├── canonical-skill.schema.json
 │   ├── canonical-rule.schema.json
+│   ├── canonical-integration.schema.json
+│   ├── integration-registry.schema.json
 │   ├── handoff.schema.json
 │   ├── evaluation-scenarios.schema.json
 │   └── skill-evaluation-scenarios.schema.json
@@ -72,12 +84,13 @@ frontier-engineer/
 │   ├── generate-antigravity-agents.ts
 │   ├── generate-antigravity-skills.ts
 │   ├── generate-antigravity-rules.ts
+│   ├── generate-antigravity-integrations.ts
 │   └── lib/                     # Pure, unit-testable check functions
 ├── tests/
 │   ├── unit/
 │   ├── integration/
 │   └── fixtures/                # Deliberately invalid inputs
-├── docs/                        # Project documentation (Parts 01-20, 24, ADRs)
+├── docs/                        # Project documentation (Parts 01-27, ADRs)
 │   └── adr/
 ├── .github/workflows/
 │   └── validate.yml
@@ -93,7 +106,7 @@ frontier-engineer/
 | Custom agents   | `agents/<name>.md` or `agents/<name>/agent.md`     | Six generated, statically discovered      |
 | Always-on rule  | `rules/AGENTS.md`                                  | Present                                   |
 | Named rules     | `rules/<name>.md` with `trigger` frontmatter       | Thirteen generated, statically discovered |
-| MCP servers     | `mcp_config.json`                                  | Phase 5; absent                           |
+| MCP servers     | `mcp_config.json`                                  | Present (5 servers, disabled by default)  |
 | Lifecycle hooks | `hooks.json`                                       | Phase 6; absent                           |
 | Helper scripts  | `scripts/`                                         | Present                                   |
 
@@ -101,7 +114,7 @@ Antigravity scans `skills/`, `rules/`, and `agents/` **one level deep**. Nested 
 
 ## Files intentionally absent
 
-`mcp_config.json`, `hooks.json`, `skills.json`, `rules.json`, `agents.json`, and `plugins.json` are not present. Adding an unused config file would introduce configuration that has not been verified in a real installation. Their schemas exist so they can be validated the moment they are added.
+`hooks.json`, `skills.json`, `rules.json`, `agents.json`, and `plugins.json` are not present. Adding an unused config file would introduce configuration that has not been verified in a real installation. Their schemas exist so they can be validated the moment they are added.
 
 Likewise, no `.claude-plugin/`, `.cursor-plugin/`, or `hooks/hooks.json` paths exist: those belong to other agent platforms or to staged extensions. The validator flags them.
 

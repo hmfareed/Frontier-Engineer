@@ -3,7 +3,7 @@
 - **Status:** Accepted
 - **Date:** 2026-11-10
 - **Deciders:** Phase 1 foundation work
-- **Related:** [Part 24 verification record](../24-OFFICIAL-FORMAT-VERIFICATION.md), [Part 20 repository structure](../20-REPOSITORY-STRUCTURE.md)
+- **Related:** [Part 27 verification record](../27-OFFICIAL-FORMAT-VERIFICATION.md), [Part 20 repository structure](../20-REPOSITORY-STRUCTURE.md)
 
 ## Context
 
@@ -63,7 +63,7 @@ The schemas in `schemas/` are draft-07 transcriptions of the verified constraint
 
 ## Verified in Phase 1
 
-Plugin manifest schema and validation, plugin root layout, agent/skill/rule formats and discovery paths, MCP config schema, hooks events and schema, `agy` CLI commands, delegation mechanism (documented), and Node.js native TypeScript execution. Sources and dates are in [Part 24](../24-OFFICIAL-FORMAT-VERIFICATION.md).
+Plugin manifest schema and validation, plugin root layout, agent/skill/rule formats and discovery paths, MCP config schema, hooks events and schema, `agy` CLI commands, delegation mechanism (documented), and Node.js native TypeScript execution. Sources and dates are in [Part 27](../27-OFFICIAL-FORMAT-VERIFICATION.md).
 
 ## Not verified in Phase 1
 

@@ -24,7 +24,7 @@ These fifteen principles are the foundation of Frontier Engineer. The concise al
 
 - Principles 1–5 and 9–12 are agent behavioral rules, carried in [rules/AGENTS.md](../rules/AGENTS.md) and applied across specialist instructions and skills.
 - Principles 6–8 and 13–15 are enforced by the verification and reporting workflow, and by [SECURITY.md](../SECURITY.md).
-- Principle 14 is enforced by [the verification record](24-OFFICIAL-FORMAT-VERIFICATION.md) and by the schemas in [schemas/](../schemas/).
+- Principle 14 is enforced by [the verification record](27-OFFICIAL-FORMAT-VERIFICATION.md) and by the schemas in [schemas/](../schemas/).
 - Automated checks cover what can be checked mechanically. They do not replace engineering judgment.
 
 ## Test-state discipline

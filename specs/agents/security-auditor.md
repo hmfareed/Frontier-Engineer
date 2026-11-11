@@ -14,8 +14,8 @@ requiredCapabilities:
 optionalCapabilities:
   - test-execution
 recommendedMcp:
-  - github
   - context7
+  - database
 fileAccess: read
 browserAccess: none
 terminalAccess: optional

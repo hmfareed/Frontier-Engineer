@@ -95,11 +95,11 @@ describe("repository foundation", () => {
     expect(manifest.name).toBe("frontier-engineer");
     expect(manifest.name).toBe(pkg.name);
     expect(manifest.version).toBe(pkg.version);
-    expect(manifest.version).toBe("0.4.0");
+    expect(manifest.version).toBe("0.5.0");
   });
 
-  it("does not ship unverified optional configs", () => {
-    expect(fs.existsSync(path.join(root, "mcp_config.json"))).toBe(false);
+  it("ships verified mcp_config.json and avoids unverified hooks.json", () => {
+    expect(fs.existsSync(path.join(root, "mcp_config.json"))).toBe(true);
     expect(fs.existsSync(path.join(root, "hooks.json"))).toBe(false);
   });
 
@@ -143,7 +143,7 @@ describe("repository foundation", () => {
     }
   });
 
-  it("indexes every Phase 1, Phase 2, Phase 3, and Phase 4 document", () => {
+  it("indexes every Phase 1, Phase 2, Phase 3, Phase 4, and Phase 5 document", () => {
     const index = fs.readFileSync(path.join(root, "docs", "README.md"), "utf8");
     for (const name of [
       "01-PROJECT-OVERVIEW.md",
@@ -166,14 +166,33 @@ describe("repository foundation", () => {
       "18-RULE-PRIORITY-AND-CONFLICTS.md",
       "19-RULE-PORTABILITY.md",
       "20-REPOSITORY-STRUCTURE.md",
-      "24-OFFICIAL-FORMAT-VERIFICATION.md",
+      "21-MCP-ARCHITECTURE.md",
+      "22-MCP-INTEGRATIONS.md",
+      "23-MCP-SECURITY.md",
+      "24-MCP-CONFIGURATION.md",
+      "25-MCP-PORTABILITY.md",
+      "26-MCP-OPERATIONS.md",
+      "27-OFFICIAL-FORMAT-VERIFICATION.md",
       "adr/ADR-001-foundation.md",
       "adr/ADR-002-agent-system.md",
       "adr/ADR-003-skills-system.md",
       "adr/ADR-004-rules-system.md",
+      "adr/ADR-005-mcp-integration-architecture.md",
     ]) {
       expect(index, name).toContain(name);
     }
+  });
+
+  it("verifies MCP integration configuration and generated adapters", () => {
+    const mcpConfig = JSON.parse(fs.readFileSync(path.join(root, "mcp_config.json"), "utf8"));
+    expect(Object.keys(mcpConfig.mcpServers)).toHaveLength(5);
+    expect(Object.keys(mcpConfig.mcpServers).sort()).toEqual([
+      "context7",
+      "database",
+      "github",
+      "playwright",
+      "sentry",
+    ]);
   });
 
   it("documents the verified component layout", () => {

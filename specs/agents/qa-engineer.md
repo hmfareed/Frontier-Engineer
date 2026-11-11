@@ -16,6 +16,7 @@ optionalCapabilities:
   - performance-analysis
 recommendedMcp:
   - playwright
+  - sentry
   - github
 fileAccess: read-write
 browserAccess: optional

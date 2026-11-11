@@ -8,7 +8,7 @@
 | Gemini models      | Underlying model, selected by Antigravity      |
 | `agy` CLI          | Plugin validation, installation, agent listing |
 
-Locally verified: `agy` 1.5.0 at `~/.gemini/bin/agy.exe` on Windows. See [the verification record](24-OFFICIAL-FORMAT-VERIFICATION.md).
+Locally verified: `agy` 1.5.0 at `~/.gemini/bin/agy.exe` on Windows. See [the verification record](27-OFFICIAL-FORMAT-VERIFICATION.md).
 
 ## Authoring formats
 

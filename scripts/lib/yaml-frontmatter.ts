@@ -163,7 +163,7 @@ export function checkMetadata(root: string): Finding[] {
           "error",
           "missing-frontmatter",
           rel,
-          "This component requires a valid YAML frontmatter block (see docs/24-OFFICIAL-FORMAT-VERIFICATION.md).",
+          "This component requires a valid YAML frontmatter block (see docs/27-OFFICIAL-FORMAT-VERIFICATION.md).",
         ),
       );
       continue;

@@ -70,7 +70,7 @@ Phase 1 created `docs/06-ENGINEERING-PRINCIPLES.md`. Phase 2 requires `docs/06-A
 
 ## Verified
 
-Plugin manifest and component discovery (`agents: 6`), agent frontmatter schema, `invoke_subagent` delegation semantics, clean subagent context, concurrent execution, message-based inter-agent communication, nesting limit, and `agy plugin validate --strict .` behaviour. Sources in [Part 24](../24-OFFICIAL-FORMAT-VERIFICATION.md).
+Plugin manifest and component discovery (`agents: 6`), agent frontmatter schema, `invoke_subagent` delegation semantics, clean subagent context, concurrent execution, message-based inter-agent communication, nesting limit, and `agy plugin validate --strict .` behaviour. Sources in [Part 27](../27-OFFICIAL-FORMAT-VERIFICATION.md).
 
 ## Not verified
 

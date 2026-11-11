@@ -1,6 +1,6 @@
 # Antigravity adapter — implemented
 
-**Status:** Implemented in Phase 2. Format verified against official documentation and the locally installed `agy` CLI 1.5.0 on 2026-11-10. See [the verification record](../../docs/24-OFFICIAL-FORMAT-VERIFICATION.md).
+**Status:** Implemented in Phase 2. Format verified against official documentation and the locally installed `agy` CLI 1.5.0 on 2026-11-10. See [the verification record](../../docs/27-OFFICIAL-FORMAT-VERIFICATION.md).
 
 ## Verified target format
 

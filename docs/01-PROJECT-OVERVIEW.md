@@ -8,7 +8,7 @@
 | Category              | AI software-engineering agent system |
 | Distribution          | Google Antigravity plugin            |
 | Execution environment | Antigravity App, CLI, or IDE         |
-| Current version       | 0.4.0 (Phase 4 rules system)         |
+| Current version       | 0.5.0 (Phase 5 MCP integrations)     |
 | Target release        | 1.0.0 (Phase 10)                     |
 
 ## Vision
@@ -53,7 +53,9 @@ Phase 3 implemented ten platform-independent canonical skill specifications unde
 
 Phase 4 implemented the modular engineering rules system: one global foundation rule and thirteen specialized modular rules across seven categories, canonical specifications under `specs/rules/`, an adapter compiler emitting flat files under `rules/`, strict drift detection, and full Antigravity CLI discovery verification (14 rules). See [Part 15](15-RULES-ARCHITECTURE.md) and [Part 16](16-RULE-SPECIFICATIONS.md).
 
-Still deliberately deferred: MCP integrations (Phase 5), lifecycle hooks (Phase 6), project intelligence and memory (Phase 7), and release packaging (Phases 9–10).
+Phase 5 implemented the secure Model Context Protocol (MCP) integration architecture: five canonical integration specifications under `specs/integrations/` (GitHub, Context7, Playwright, Sentry, PostgreSQL) with 3-tier modular documents (`integration.md`, `capabilities.md`, `security.md`), a central integration registry, 5-tier capability-based permission model, a generator producing Antigravity adapters (`mcp_config.json`, disabled by default), and full CLI verification (5 MCP servers). See [Part 21](21-MCP-ARCHITECTURE.md) and [Part 22](22-MCP-INTEGRATIONS.md).
+
+Still deliberately deferred: lifecycle hooks (Phase 6), project intelligence and memory (Phase 7), workflows (Phase 8), and release packaging (Phases 9–10).
 
 ## Current limitations
 
@@ -66,4 +68,4 @@ Still deliberately deferred: MCP integrations (Phase 5), lifecycle hooks (Phase 
 
 ## Specification archive
 
-The complete 26-part specification that this repository implements is preserved under [frontier-engineer-docs/](../frontier-engineer-docs/fe/README.md). Where this documentation and the archive disagree, [the verification record](24-OFFICIAL-FORMAT-VERIFICATION.md) and the official Antigravity documentation take precedence.
+The complete 26-part specification that this repository implements is preserved under [frontier-engineer-docs/](../frontier-engineer-docs/fe/README.md). Where this documentation and the archive disagree, [the verification record](27-OFFICIAL-FORMAT-VERIFICATION.md) and the official Antigravity documentation take precedence.

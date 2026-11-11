@@ -16,6 +16,7 @@ optionalCapabilities:
   - performance-analysis
 recommendedMcp:
   - context7
+  - database
 fileAccess: read
 browserAccess: none
 terminalAccess: optional

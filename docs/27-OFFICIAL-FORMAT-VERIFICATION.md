@@ -1,4 +1,4 @@
-# Part 24 — Official format verification
+# Part 27 — Official format verification
 
 Completed during Phase 1 on **2026-11-10**. Every row records a source, a version or date, a result, and a note. Results use the specification's vocabulary: **Confirmed** (documented and tested locally), **Documented only** (official docs, not yet exercised), **Not supported**, and **Unclear** (blocked).
 
@@ -84,6 +84,16 @@ The omission of `tools` is a deliberate, documented decision in [ADR-002](adr/AD
 | Always-on rule format (`rules/AGENTS.md`)               | local CLI validation & builtin `rules.md`                        | **Confirmed** | Rule without YAML frontmatter discovered as always-on rule                                         |
 | Named rule frontmatter (`trigger: glob/model_decision`) | local CLI validation & `rule-frontmatter.schema.json`            | **Confirmed** | Glob patterns string and model decision descriptions validated cleanly                             |
 | Canonical-first rules generation and drift check        | `scripts/generate-antigravity-rules.ts`, local test suite        | **Confirmed** | Compiles 13 modular specs + 1 global rule into 14 flat `rules/*.md` files; CI enforces zero drift  |
+
+## Phase 5 additions (checked 2026-11-10)
+
+| Item                                                  | Source                                                           | Result        | Note                                                                                                                            |
+| ----------------------------------------------------- | ---------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Five bundled MCP servers discovered                   | local `agy plugin validate --strict --json .`                    | **Confirmed** | `components.mcpServers: 5`, `findings: []`, exit 0                                                                              |
+| Bundled MCP configuration location and format         | `mcp_config.json` at plugin root, local CLI validation           | **Confirmed** | Formatted as `mcpServers` object with `command` (stdio) and `args` array                                                        |
+| Stdio environment variable inheritance                | local CLI strict mode validation                                 | **Confirmed** | Stdio servers inherit host process environment automatically; omitting undeclared variables from `env` prevents strict warnings |
+| Default disabled state (`"disabled": true`)           | local CLI validation & `mcp_config.json`                         | **Confirmed** | Validated as active servers by CLI while remaining safely dormant until developer opts in                                       |
+| Canonical-first integrations compiler and drift check | `scripts/generate-antigravity-integrations.ts`, local test suite | **Confirmed** | Compiles 5 canonical specs into `mcp_config.json` and `mcp_config.example.json`; CI enforces zero drift                         |
 
 ## Rules for future phases
 

@@ -2,6 +2,36 @@
 
 All notable changes to Frontier Engineer are documented here. This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] - 2026-11-10
+
+Secure MCP integration architecture (Phase 5).
+
+### Added
+
+- Secure Model Context Protocol (MCP) integration subsystem connecting Frontier Engineer to external tools across 5 categories: GitHub (`repository`), Context7 (`documentation`), Playwright (`browser_testing`), Sentry (`observability`), and PostgreSQL (`database`).
+- Five canonical integration specifications under `specs/integrations/` (`github`, `context7`, `playwright`, `sentry`, `database`), each with a 3-tier modular structure: `integration.md`, `capabilities.md`, and `security.md`.
+- Canonical schemas: `schemas/canonical-integration.schema.json` and `schemas/integration-registry.schema.json`.
+- Central machine-readable integration registry at `specs/integrations/integration-registry.md` declaring all integrations, agent mappings, optionality, and fallback behaviors.
+- Five-tier capability-based permission model (`read_only`, `reversible_write`, `external_side_effect`, `destructive`, `sensitive_data_access`) with human-in-the-loop gates for destructive actions and sensitive data access.
+- TypeScript generator (`scripts/generate-antigravity-integrations.ts`) compiling canonical specifications into Antigravity adapter `mcp_config.json` (disabled by default, inheriting host environment) and `mcp_config.example.json`.
+- Strict drift detection in `scripts/lib/canonical-integrations.ts` ensuring config files remain in sync with canonical specs.
+- Official format verification with `agy plugin validate --strict .` recognizing 10 skills, 6 agents, 14 rules, and 5 MCP servers with zero warnings or errors.
+- New architecture documentation: `docs/21-MCP-ARCHITECTURE.md`, `docs/22-MCP-INTEGRATIONS.md`, `docs/23-MCP-SECURITY.md`, `docs/24-MCP-CONFIGURATION.md`, `docs/25-MCP-PORTABILITY.md`, `docs/26-MCP-OPERATIONS.md`, and `docs/adr/ADR-005-mcp-integration-architecture.md`.
+- Comprehensive automated test suite: `tests/unit/canonical-integrations-schema.test.ts`, `tests/unit/canonical-integrations.test.ts`, `tests/unit/integration-registry.test.ts`, and `tests/unit/integration-security.test.ts`.
+
+### Changed
+
+- Renumbered `docs/24-OFFICIAL-FORMAT-VERIFICATION.md` to `docs/27-OFFICIAL-FORMAT-VERIFICATION.md` to accommodate MCP architecture documentation block (Parts 21–26); updated all references across repository.
+- `plugin.json` and `package.json` bumped to `0.5.0`.
+- Coordinator and specialist agents updated with selective MCP capability mappings.
+- Validation script and test runner updated to verify canonical integrations and drift.
+
+### Known limitations
+
+- External MCP servers require user installation of respective npm packages and optional API tokens.
+- Integrations are shipped disabled by default (`"disabled": true`); developers must enable them selectively in `mcp_config.json`.
+- Non-Antigravity adapters (Claude Code, Codex, Cursor) are specified in registry and documentation but not generated.
+
 ## [0.4.0] - 2026-11-10
 
 Modular engineering rules system (Phase 4).

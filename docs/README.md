@@ -11,7 +11,7 @@ Product documentation for Frontier Engineer. The original 26-part specification 
 | 03   | [System architecture](03-SYSTEM-ARCHITECTURE.md)                   | Layers, lifecycle, agents, delegation      |
 | 14   | [Engineering principles](14-ENGINEERING-PRINCIPLES.md)             | The fifteen foundational rules             |
 | 20   | [Repository structure](20-REPOSITORY-STRUCTURE.md)                 | Verified plugin layout and discovery paths |
-| 24   | [Official format verification](24-OFFICIAL-FORMAT-VERIFICATION.md) | Phase 1 evidence checklist                 |
+| 27   | [Official format verification](27-OFFICIAL-FORMAT-VERIFICATION.md) | Phase 1 evidence checklist                 |
 
 ## Agent system (Phase 2)
 
@@ -43,14 +43,26 @@ Product documentation for Frontier Engineer. The original 26-part specification 
 | 18   | [Rule priority and conflicts](18-RULE-PRIORITY-AND-CONFLICTS.md) | Priority scale 1-10, conflict resolution hierarchy       |
 | 19   | [Rule portability](19-RULE-PORTABILITY.md)                       | Canonical specs, Antigravity flat scan, platform mapping |
 
+## MCP integration subsystem (Phase 5)
+
+| Part | Document                                     | Coverage                                                   |
+| ---- | -------------------------------------------- | ---------------------------------------------------------- |
+| 21   | [MCP architecture](21-MCP-ARCHITECTURE.md)   | Five integrations, 3-tier canonical specs, registry        |
+| 22   | [MCP integrations](22-MCP-INTEGRATIONS.md)   | Detailed specs: GitHub, Context7, Playwright, Sentry, DB   |
+| 23   | [MCP security](23-MCP-SECURITY.md)           | 5 permission classes, prompt injection, token hygiene      |
+| 24   | [MCP configuration](24-MCP-CONFIGURATION.md) | Antigravity mcp_config.json, env vars, zero commit         |
+| 25   | [MCP portability](25-MCP-PORTABILITY.md)     | Platform mapping: Antigravity, Claude Code, Cursor, Codex  |
+| 26   | [MCP operations](26-MCP-OPERATIONS.md)       | Health checks, audit logging, fallbacks, incident response |
+
 ## Decision records
 
-| ADR | Title                                                       |
-| --- | ----------------------------------------------------------- |
-| 001 | [Foundation decisions](adr/ADR-001-foundation.md)           |
-| 002 | [Canonical-first agent system](adr/ADR-002-agent-system.md) |
-| 003 | [Skills system architecture](adr/ADR-003-skills-system.md)  |
-| 004 | [Rules system architecture](adr/ADR-004-rules-system.md)    |
+| ADR | Title                                                                       |
+| --- | --------------------------------------------------------------------------- |
+| 001 | [Foundation decisions](adr/ADR-001-foundation.md)                           |
+| 002 | [Canonical-first agent system](adr/ADR-002-agent-system.md)                 |
+| 003 | [Skills system architecture](adr/ADR-003-skills-system.md)                  |
+| 004 | [Rules system architecture](adr/ADR-004-rules-system.md)                    |
+| 005 | [MCP integration architecture](adr/ADR-005-mcp-integration-architecture.md) |
 
 ## Project policies
 
@@ -66,8 +78,9 @@ Product documentation for Frontier Engineer. The original 26-part specification 
 ## Reading order
 
 1. Start with [the project overview](01-PROJECT-OVERVIEW.md) and [the architecture](03-SYSTEM-ARCHITECTURE.md).
-2. Read [the verification record](24-OFFICIAL-FORMAT-VERIFICATION.md) before adding any Antigravity-specific component.
+2. Read [the verification record](27-OFFICIAL-FORMAT-VERIFICATION.md) before adding any Antigravity-specific component.
 3. For agent work, read [the specifications](04-AGENT-SPECIFICATIONS.md), then [coordination](05-AGENT-COORDINATION.md) and [communication](06-AGENT-COMMUNICATION.md).
 4. For skills work, read [skills architecture](09-SKILLS-ARCHITECTURE.md), then [specifications](10-SKILL-SPECIFICATIONS.md) and [activation](11-SKILL-ACTIVATION.md).
 5. For rules work, read [rules architecture](15-RULES-ARCHITECTURE.md), then [specifications](16-RULE-SPECIFICATIONS.md) and [priority and conflicts](18-RULE-PRIORITY-AND-CONFLICTS.md).
-6. Consult [portability](07-AGENT-PORTABILITY.md), [repository structure](20-REPOSITORY-STRUCTURE.md) and [ADR-001](adr/ADR-001-foundation.md) when changing the layout.
+6. For MCP integrations, read [MCP architecture](21-MCP-ARCHITECTURE.md), then [security](23-MCP-SECURITY.md), [configuration](24-MCP-CONFIGURATION.md), and [ADR-005](adr/ADR-005-mcp-integration-architecture.md).
+7. Consult [portability](07-AGENT-PORTABILITY.md), [repository structure](20-REPOSITORY-STRUCTURE.md) and [ADR-001](adr/ADR-001-foundation.md) when changing the layout.
