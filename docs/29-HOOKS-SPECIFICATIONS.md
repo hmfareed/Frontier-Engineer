@@ -4,14 +4,14 @@
 
 Frontier Engineer defines six canonical lifecycle hooks that govern execution lifecycle events in Google Antigravity.
 
-| Identifier                     | Lifecycle Event  | Matcher Target                                  | Timeout | Security Classification | Default Failure Mode |
-| ------------------------------ | ---------------- | ----------------------------------------------- | ------- | ----------------------- | -------------------- |
-| `frontier-session-init`        | `SessionStart`   | N/A                                             | 10s     | `session_lifecycle`     | `degrade_gracefully` |
-| `frontier-pre-tool-safety`     | `PreToolUse`     | `run_command\|read_file\|write_file\|edit_file` | 15s     | `critical_security`     | `fail_closed`        |
-| `frontier-post-tool-audit`     | `PostToolUse`    | `run_command\|read_file\|write_file\|edit_file` | 10s     | `audit_logging`         | `fail_open`          |
-| `frontier-engineering-context` | `PreInvocation`  | N/A                                             | 5s      | `context_injection`     | `fail_open`          |
-| `frontier-invocation-audit`    | `PostInvocation` | N/A                                             | 5s      | `audit_logging`         | `fail_open`          |
-| `frontier-session-stop`        | `Stop`           | N/A                                             | 5s      | `session_lifecycle`     | `fail_open`          |
+| Identifier                     | Lifecycle Event  | Matcher Target | Timeout | Security Classification | Default Failure Mode |
+| ------------------------------ | ---------------- | -------------- | ------- | ----------------------- | -------------------- |
+| `frontier-session-init`        | `SessionStart`   | N/A            | 10s     | `session_lifecycle`     | `degrade_gracefully` |
+| `frontier-pre-tool-safety`     | `PreToolUse`     | `*`            | 15s     | `critical_security`     | `fail_closed`        |
+| `frontier-post-tool-audit`     | `PostToolUse`    | `*`            | 10s     | `audit_logging`         | `fail_open`          |
+| `frontier-engineering-context` | `PreInvocation`  | N/A            | 5s      | `context_injection`     | `fail_open`          |
+| `frontier-invocation-audit`    | `PostInvocation` | N/A            | 5s      | `audit_logging`         | `fail_open`          |
+| `frontier-session-stop`        | `Stop`           | N/A            | 5s      | `session_lifecycle`     | `fail_open`          |
 
 ---
 
@@ -40,27 +40,28 @@ Frontier Engineer defines six canonical lifecycle hooks that govern execution li
 
 ## 2. `frontier-pre-tool-safety` (PreToolUse)
 
-- **Purpose**: Safety gate inspecting tool calls before execution.
-- **Matcher**: `run_command|read_file|write_file|edit_file`
+- **Purpose**: Safety gate inspecting tool calls before execution across all native and MCP tools.
+- **Matcher**: `*` (Global Matcher — Approach B)
 - **Input**: Tool call object (`toolCall: { name, args }`), `stepIdx`, `conversationId`.
 - **Output Protocol**:
   - `{"decision": "allow"}` — Safe operation proceeds.
-  - `{"decision": "deny", "reason": "..."}` — Destructive or exfiltrating operation blocked.
-  - `{"decision": "ask", "reason": "..."}` — High-risk command requires human confirmation.
+  - `{"decision": "deny", "reason": "..."}` — Destructive, exfiltrating, or sensitive credential write/read operation blocked.
+  - `{"decision": "force_ask", "reason": "..."}` — High-risk command or unvetted tool requires fresh human confirmation, bypassing cached permissions.
+  - `{"decision": "ask", "reason": "..."}` — Standard human confirmation prompt.
 - **Policies**:
   1. Denies drive formatting and partition tools (`format`, `mkfs`, `diskpart`).
   2. Denies recursive deletion of root or drive trees (`rmdir /s /q C:\`, `rm -rf /`).
-  3. Denies reading or dumping sensitive credentials (`.env`, `id_rsa`, `id_ed25519`).
+  3. Denies reading, writing, or editing sensitive credentials (`.env`, `id_rsa`, `id_ed25519`, `credentials.json`, `.key`, `.pem`, `.pfx`) across native tools (`view_file`, `write_to_file`, `replace_file_content`, `multi_replace_file_content`, `read_file`, `write_file`, `edit_file`).
   4. Denies external credential exfiltration (`curl -d @.env`).
   5. Denies destructive database DDL mutations (`DROP TABLE`, `TRUNCATE`).
-  6. Escalates ambiguous/high-risk actions (`git clean -fdx`, `git reset --hard`, `chmod 777`) to `ask`.
+  6. Escalates high-risk actions (`git clean -fdx`, `git reset --hard`, `chmod 777`, `icacls`, unvetted tools) to `force_ask`.
 
 ---
 
 ## 3. `frontier-post-tool-audit` (PostToolUse)
 
 - **Purpose**: Captures execution telemetry following tool execution.
-- **Matcher**: `run_command|read_file|write_file|edit_file`
+- **Matcher**: `*` (Global Matcher — Approach B)
 - **Input**: Tool call metadata, `stepIdx`, `error` string.
 - **Output Protocol**: `{}`
 - **Storage**: Bounded JSONL log (`.frontier/audit/execution.jsonl`) with 5 MB rotation.

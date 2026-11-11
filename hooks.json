@@ -13,7 +13,7 @@
     "enabled": true,
     "PreToolUse": [
       {
-        "matcher": "run_command|read_file|write_file|edit_file",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",
@@ -28,7 +28,7 @@
     "enabled": true,
     "PostToolUse": [
       {
-        "matcher": "run_command|read_file|write_file|edit_file",
+        "matcher": "*",
         "hooks": [
           {
             "type": "command",

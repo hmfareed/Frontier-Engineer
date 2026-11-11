@@ -1,9 +1,12 @@
 /**
  * Command and tool call classification engine for PreToolUse safety gating.
  * Evaluates proposed tool executions against Frontier Engineer security boundaries.
+ * Supports native Antigravity file operations, command execution, and MCP tools.
  */
 
-export type ToolDecision = "allow" | "deny" | "ask";
+import { normalizeToolCall } from "./event-context.ts";
+
+export type ToolDecision = "allow" | "deny" | "force_ask" | "ask";
 
 export interface ClassificationResult {
   decision: ToolDecision;
@@ -84,12 +87,12 @@ const PROHIBITED_SECRET_PRINT_COMMANDS: Array<{ pattern: RegExp; reason: string 
 const PROHIBITED_DATABASE_MUTATIONS: Array<{ pattern: RegExp; reason: string }> = [
   {
     pattern:
-      /\b(?:DROP\s+DATABASE|DROP\s+SCHEMA|DROP\s+TABLE|TRUNCATE\s+TABLE|ALTER\s+TABLE\s+.*\bDROP\s+COLUMN)\b/i,
+      /\b(?:DROP\s+DATABASE|DROP\s+SCHEMA|DROP\s+TABLE|TRUNCATE(?:\s+TABLE)?|ALTER\s+TABLE\s+.*\bDROP\s+COLUMN)\b/i,
     reason: "Destructive database mutations (DROP, TRUNCATE) violate read-only database policy.",
   },
 ];
 
-/** Commands that require human developer review (escalate to 'ask'). */
+/** Commands that require human developer review (escalate to 'force_ask'). */
 const HIGH_RISK_COMMANDS: Array<{ pattern: RegExp; reason: string }> = [
   // Git operations with untracked/uncommitted data loss
   {
@@ -141,13 +144,13 @@ export function classifyCommandLine(commandLine: string): ClassificationResult {
     }
   }
 
-  // 4. Check high risk operations requiring confirmation ('ask')
+  // 4. Check high risk operations requiring fresh confirmation ('force_ask')
   for (const { pattern, reason } of HIGH_RISK_COMMANDS) {
     if (pattern.test(trimmed)) {
       return {
-        decision: "ask",
+        decision: "force_ask",
         reason: `Confirmation required: ${reason}`,
-        category: "high_risk_git",
+        category: /git/i.test(reason) ? "high_risk_git" : "dangerous_permissions",
       };
     }
   }
@@ -167,16 +170,15 @@ export function classifyFilePath(
   // Normalize path separators
   const normalized = targetPath.replace(/\\/g, "/");
 
-  // Prohibit reading or leaking private credential files
-  if (operation === "read") {
-    for (const pattern of SENSITIVE_FILE_NAMES) {
-      if (pattern.test(normalized)) {
-        return {
-          decision: "deny",
-          reason: `Blocked: Access to sensitive credential file (${pathBasename(normalized)}) is prohibited.`,
-          category: "secret_exposure",
-        };
-      }
+  // Prohibit reading, writing, or editing private credential files
+  for (const pattern of SENSITIVE_FILE_NAMES) {
+    if (pattern.test(normalized)) {
+      const actionWord = operation === "read" ? "Access to" : "Modification of";
+      return {
+        decision: "deny",
+        reason: `Blocked: ${actionWord} sensitive credential file (${pathBasename(normalized)}) is prohibited.`,
+        category: "secret_exposure",
+      };
     }
   }
 
@@ -199,42 +201,46 @@ function pathBasename(p: string): string {
   return parts[parts.length - 1] || p;
 }
 
-/** General classifier for any tool call. */
+/** General classifier for any Antigravity tool call. */
 export function classifyToolCall(
   toolName: string,
   args: Record<string, unknown>,
 ): ClassificationResult {
-  if (!toolName) {
+  if (!toolName || typeof toolName !== "string" || toolName.trim() === "") {
     return { decision: "deny", reason: "Blocked: Missing tool name in toolCall payload." };
   }
 
+  const norm = normalizeToolCall(toolName, args);
+
+  // 1. Command execution
   if (toolName === "run_command") {
-    const cmd = typeof args.CommandLine === "string" ? args.CommandLine : "";
-    return classifyCommandLine(cmd);
+    return classifyCommandLine(norm.commandLine ?? "");
   }
 
-  if (toolName === "read_file") {
-    const p = typeof args.Path === "string" ? args.Path : "";
-    return classifyFilePath(p, "read");
+  // 2. Native file inspection / reading
+  if (toolName === "view_file" || toolName === "read_file") {
+    return classifyFilePath(norm.filePath ?? "", "read");
   }
 
-  if (toolName === "write_file") {
-    const p = typeof args.Path === "string" ? args.Path : "";
-    return classifyFilePath(p, "write");
+  // 3. Native file creation / writing
+  if (toolName === "write_to_file" || toolName === "write_file") {
+    return classifyFilePath(norm.filePath ?? "", "write");
   }
 
-  if (toolName === "edit_file") {
-    const p = typeof args.Path === "string" ? args.Path : "";
-    return classifyFilePath(p, "edit");
+  // 4. Native file modification / replacement
+  if (
+    toolName === "replace_file_content" ||
+    toolName === "multi_replace_file_content" ||
+    toolName === "edit_file"
+  ) {
+    return classifyFilePath(norm.filePath ?? "", "edit");
   }
 
+  // 5. Encapsulated MCP calls via call_mcp_tool
   if (toolName === "call_mcp_tool") {
-    // If calling database tool, check queries
-    const tool = typeof args.ToolName === "string" ? args.ToolName : "";
-    const toolArgs =
-      typeof args.Arguments === "object" && args.Arguments !== null
-        ? (args.Arguments as Record<string, unknown>)
-        : {};
+    const tool = norm.mcpToolName ?? "";
+    const toolArgs = norm.mcpArguments ?? {};
+
     if (tool === "postgres_mcp_query" || tool === "query") {
       const sql = typeof toolArgs.query === "string" ? toolArgs.query : "";
       for (const { pattern, reason } of PROHIBITED_DATABASE_MUTATIONS) {
@@ -242,8 +248,9 @@ export function classifyToolCall(
           return { decision: "deny", reason: `Blocked: ${reason}`, category: "database_mutation" };
         }
       }
+      return { decision: "allow", category: "safe" };
     }
-    // Prohibited tools check
+
     if (tool === "postgres_mcp_modify" || tool === "postgres_mcp_bulk_load_csv") {
       return {
         decision: "deny",
@@ -251,7 +258,72 @@ export function classifyToolCall(
         category: "database_mutation",
       };
     }
+
+    // For other MCP tools, inspect arguments for command/file if present
+    if (typeof toolArgs.CommandLine === "string") {
+      return classifyCommandLine(toolArgs.CommandLine);
+    }
+    if (
+      typeof toolArgs.Path === "string" ||
+      typeof toolArgs.TargetFile === "string" ||
+      typeof toolArgs.AbsolutePath === "string"
+    ) {
+      const p = (toolArgs.TargetFile ?? toolArgs.AbsolutePath ?? toolArgs.Path) as string;
+      return classifyFilePath(p, "read");
+    }
+
+    if (
+      /^(?:read_|get_|list_|fetch_|search_|view_|describe_|inspect_|show_|find_|check_|stat_|query_)/i.test(
+        tool,
+      )
+    ) {
+      return { decision: "allow", category: "safe" };
+    }
+
+    return { decision: "allow", category: "safe" };
   }
 
-  return { decision: "allow", category: "safe" };
+  // 6. Direct MCP tools (when host exposes them directly to hook system)
+  if (toolName === "postgres_mcp_query") {
+    const sql = typeof args.query === "string" ? args.query : "";
+    for (const { pattern, reason } of PROHIBITED_DATABASE_MUTATIONS) {
+      if (pattern.test(sql)) {
+        return { decision: "deny", reason: `Blocked: ${reason}`, category: "database_mutation" };
+      }
+    }
+    return { decision: "allow", category: "safe" };
+  }
+  if (toolName === "postgres_mcp_modify" || toolName === "postgres_mcp_bulk_load_csv") {
+    return {
+      decision: "deny",
+      reason: `Blocked: Prohibited mutating database tool "${toolName}" is not allowed.`,
+      category: "database_mutation",
+    };
+  }
+
+  // 7. Unknown or unrecognized tools
+  if (norm.commandLine) {
+    const cmdResult = classifyCommandLine(norm.commandLine);
+    if (cmdResult.decision !== "allow") return cmdResult;
+  }
+  if (norm.filePath) {
+    const pathResult = classifyFilePath(norm.filePath, "write");
+    if (pathResult.decision !== "allow") return pathResult;
+  }
+
+  // Recognize benign read-only operations
+  if (
+    /^(?:read_|get_|list_|fetch_|search_|view_|describe_|inspect_|show_|find_|check_|stat_|query_)/i.test(
+      toolName,
+    )
+  ) {
+    return { decision: "allow", category: "safe" };
+  }
+
+  // Conservative default for unrecognized tools: force developer confirmation
+  return {
+    decision: "force_ask",
+    reason: `Confirmation required: Unrecognized or unvetted tool "${toolName}" requires developer confirmation.`,
+    category: "ambiguous",
+  };
 }

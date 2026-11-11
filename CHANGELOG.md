@@ -2,6 +2,37 @@
 
 All notable changes to Frontier Engineer are documented here. This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.6.1] - 2026-11-11
+
+Antigravity Tool Coverage Correction & Permission Enforcement (Phase 6.1).
+
+### Added
+
+- **Native Antigravity Tool Coverage**:
+  - Implemented normalized tool call representation (`normalizeToolCall`) in `scripts/hooks/lib/event-context.ts` supporting official native Antigravity file operations: `view_file` (with `AbsolutePath`), `write_to_file` (with `TargetFile`, `Content`), `replace_file_content` (with `TargetFile`), and `multi_replace_file_content` (with `TargetFile`).
+  - Standardized argument extraction across heterogeneous parameter naming conventions (`AbsolutePath`, `TargetFile`, `Path`, `CommandLine`, `Arguments`).
+  - Added support for direct MCP tool execution inspection (`postgres_mcp_query`, `postgres_mcp_modify`, `postgres_mcp_bulk_load_csv`).
+- **Conservative Unrecognized Tool Gating**:
+  - Implemented safe classification for unknown or unvetted tools: non-read-only unknown tools automatically escalate to `force_ask` rather than being auto-approved.
+  - Safe read-only patterns (`read_*`, `get_*`, `list_*`, `fetch_*`, `view_*`, `search_*`) are permitted when their path arguments do not access sensitive secrets.
+- **Extended Adversarial Evaluation & Live Acceptance Scenarios**:
+  - Expanded `specs/evaluation/hook-scenarios.json` to 23 scenarios covering native Antigravity tools (`view_file`, `write_to_file`, `replace_file_content`, `multi_replace_file_content`) and unvetted tools.
+  - Extended live acceptance suite in `scripts/run-live-acceptance.ts` from 10 to 20 scenarios (HOOK-01 through HOOK-20), testing all native file operations, credential overwrite protections, and permission broadening.
+
+### Changed
+
+- **Global Matcher Implementation (Approach B)**:
+  - Transitioned `frontier-pre-tool-safety` (`PreToolUse`) and `frontier-post-tool-audit` (`PostToolUse`) to global matcher `*` across canonical specifications (`specs/hooks/pre-tool-use.md`, `specs/hooks/post-tool-use.md`, `specs/hooks/hook-registry.md`) and regenerated `hooks.json`.
+  - Eliminates potential security bypasses caused by mismatched tool aliases or newly added host tools.
+- **Permission Enforcement with `force_ask`**:
+  - Replaced `ask` with `force_ask` for high-risk operations (`git clean -fdx`, `git reset --hard`, `chmod 777`, `icacls`, administrative privilege escalation) to bypass cached "Always Allow" permissions and guarantee fresh developer awareness.
+- **Credential Protection Across Write/Edit Operations**:
+  - Strengthened `classifyFilePath` to prohibit writing or editing sensitive credential files (`.env`, `id_rsa`, `id_ed25519`, `credentials.json`, `.key`, `.pem`, `.pfx`), in addition to reading.
+- **Documentation & Architecture Records**:
+  - Added Phase 6.1 Addendum to `docs/adr/ADR-006-lifecycle-hooks-architecture.md`.
+  - Updated documentation Parts 28–33 (`docs/28-HOOKS-ARCHITECTURE.md` through `docs/33-HOOKS-PORTABILITY.md`) reflecting global matching and `force_ask` enforcement.
+  - Bumped version to `0.6.1` across `package.json`, `package-lock.json`, `plugin.json`, `specs/hooks/hook-registry.md`, and repository tests.
+
 ## [0.6.0] - 2026-11-11
 
 Lifecycle Hooks System & Execution-Time Safeguards (Phase 6).

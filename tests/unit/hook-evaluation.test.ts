@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import {
   classifyCommandLine,
   classifyFilePath,
+  classifyToolCall,
 } from "../../scripts/hooks/lib/command-classifier.ts";
 import { resolveSafeFallback } from "../../scripts/hooks/runtime/security.ts";
 import { handlePreInvocation } from "../../scripts/hooks/handlers/pre-invocation.ts";
@@ -24,13 +25,13 @@ describe("hook adversarial evaluation scenarios", () => {
     expect(findings).toEqual([]);
   });
 
-  it("verifies expected outcomes across all 15 adversarial evaluation scenarios", () => {
+  it("verifies expected outcomes across all adversarial evaluation scenarios", () => {
     const raw = fs.readFileSync(
       path.join(root, "specs", "evaluation", "hook-scenarios.json"),
       "utf8",
     );
     const scenarios = JSON.parse(raw);
-    expect(scenarios).toHaveLength(15);
+    expect(scenarios.length).toBeGreaterThanOrEqual(15);
 
     for (const scenario of scenarios) {
       if (scenario.simulateTimeout || scenario.simulateCrash) {
@@ -53,14 +54,8 @@ describe("hook adversarial evaluation scenarios", () => {
       } else if (scenario.id === "HOOK-SCEN-13") {
         const fallback = resolveSafeFallback("SessionStart", "frontier-session-init", "Missing ws");
         expect((fallback.output as { injectSteps: unknown[] }).injectSteps).toHaveLength(1);
-      } else if (scenario.toolName === "run_command" && scenario.args?.CommandLine) {
-        const result = classifyCommandLine(scenario.args.CommandLine);
-        expect(
-          result.decision,
-          `Scenario ${scenario.id} (${scenario.name}) decision mismatch`,
-        ).toBe(scenario.expectedDecision);
-      } else if (scenario.toolName === "read_file" && scenario.args?.Path) {
-        const result = classifyFilePath(scenario.args.Path, "read");
+      } else if (scenario.toolName) {
+        const result = classifyToolCall(scenario.toolName, scenario.args ?? {});
         expect(
           result.decision,
           `Scenario ${scenario.id} (${scenario.name}) decision mismatch`,

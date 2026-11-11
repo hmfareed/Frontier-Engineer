@@ -21,7 +21,8 @@ Safeguards operate at the point of action to catch high-risk, destructive, or ex
 | Read approved project metadata (`package.json`, `.git/config`)     | **Restricted**  | Permitted only for session initialization context without scanning full filesystem. |
 | Inspect selected tool arguments (`CommandLine`, `Path`, `Content`) | **Restricted**  | Required for pre-tool safety gating; must never leak inspected secrets to stdout.   |
 | Block a clearly prohibited tool action (`deny`)                    | **Allowed**     | Core enforcement capability for destructive commands and secret leaks.              |
-| Prompt user confirmation (`ask`)                                   | **Allowed**     | Escalates ambiguous or high-risk commands to the human developer.                   |
+| Force fresh user confirmation (`force_ask`)                        | **Allowed**     | Mandatory for high-risk operations; bypasses cached "Always Allow" permissions.     |
+| Prompt standard user confirmation (`ask`)                          | **Allowed**     | Escalates ambiguous commands to the human developer.                                |
 | Automatically approve user-sensitive actions (`auto_approve`)      | **Prohibited**  | Never bypasses standard human confirmation or security approvals.                   |
 | Read arbitrary host files outside workspace                        | **Prohibited**  | Hooks must strictly respect workspace boundaries.                                   |
 | Exfiltrate workspace information or telemetry externally           | **Prohibited**  | Zero external telemetry or remote HTTP transmission.                                |
@@ -37,8 +38,8 @@ Failure behavior is defined per lifecycle event rather than by a blanket policy:
 +------------------------------+--------------------+-----------------------------------------------------+
 | Lifecycle Event              | Failure Strategy   | Operational Behavior on Crash / Timeout / Bad Input |
 +------------------------------+--------------------+-----------------------------------------------------+
-| PreToolUse (Safety Gate)     | Fail-Closed        | Denies tool execution or escalates to `ask`.        |
-|                              |                    | Never silently converts failure into `allow`.       |
+| PreToolUse (Safety Gate)     | Fail-Closed        | Denies tool execution (deny) or escalates to        |
+|                              |                    | `force_ask`. Never converts failure into `allow`.    |
 | SessionStart (Init)          | Degrade-Gracefully | Initializes degraded session without blocking user. |
 | PostToolUse (Audit)          | Fail-Open          | Skips audit write; returns `{}`; does not loop.     |
 | PreInvocation (Context)      | Fail-Open          | Proceeds to model call without injecting reminders. |
@@ -56,12 +57,12 @@ Under no circumstances may a runtime exception, JSON parse error, process crash,
 ### 4.1 Destructive Filesystem Operations
 
 - **Threat**: Agent runs recursive directory deletion (`rmdir /s /q`, `rm -rf /`, `Remove-Item -Recurse -Force`) targeting project root, `.git`, system roots, or core files.
-- **Mitigation**: Lexical command classifier inspects command syntax and path arguments. Prohibited commands are denied immediately. High-risk git cleanup (`git clean -fdx`, `git reset --hard`) returns `ask` requiring explicit developer consent.
+- **Mitigation**: Lexical command classifier inspects command syntax and path arguments across native file tools (`view_file`, `write_to_file`, `replace_file_content`, `multi_replace_file_content`) and shell commands (`run_command`). Prohibited commands are denied immediately. High-risk git cleanup (`git clean -fdx`, `git reset --hard`) returns `force_ask` requiring fresh, un-cached developer confirmation.
 
 ### 4.2 Secret Exposure and Exfiltration
 
-- **Threat**: Agent prints `.env`, SSH private keys (`id_rsa`, `id_ed25519`), AWS credentials, or sends secret keys via `curl`/`wget`.
-- **Mitigation**: Pre-tool checks intercept reading sensitive credential filenames and deny shell commands that attempt to output or exfiltrate private tokens. Post-tool audit redacts all credential patterns using bounded regular expressions.
+- **Threat**: Agent reads, edits, prints, or exfiltrates `.env`, SSH private keys (`id_rsa`, `id_ed25519`), AWS credentials, or sends secret keys via `curl`/`wget`.
+- **Mitigation**: Pre-tool checks intercept reading, writing, or editing sensitive credential filenames across all native file operations (`view_file`, `write_to_file`, `replace_file_content`, `multi_replace_file_content`, `read_file`, `write_file`, `edit_file`) and deny shell commands that attempt to output or exfiltrate private tokens. Post-tool audit redacts all credential patterns using bounded regular expressions.
 
 ### 4.3 Database Mutation Safeguards
 

@@ -3,7 +3,7 @@ id: "frontier-post-tool-audit"
 name: "Frontier Post-Tool Execution Audit"
 description: "Captures sanitized execution diagnostics and privacy-conscious audit trails following tool completion."
 event: "PostToolUse"
-matcher: "run_command|read_file|write_file|edit_file"
+matcher: "*"
 handler:
   type: "command"
   command: "node scripts/hooks/runtime/dispatcher.ts --hook frontier-post-tool-audit --event PostToolUse"
@@ -24,8 +24,9 @@ The Post-Tool Execution Audit hook (`frontier-post-tool-audit`) captures structu
 
 - **Event Name**: `PostToolUse`
 - **Execution Point**: Fires synchronously immediately after a tool call finishes execution.
-- **Matcher Configuration**: `run_command|read_file|write_file|edit_file`
-  - Targets shell commands and filesystem tool executions.
+- **Matcher Configuration**: `*` (Global Matcher — Approach B)
+  - Targets all completed tool invocations across the Antigravity host runtime.
+  - Automatically records audit entries for native file operations (`view_file`, `write_to_file`, `replace_file_content`, `multi_replace_file_content`), command executions (`run_command`), and MCP tools without requiring separate explicit matchers.
 
 ## Handler command and execution
 
@@ -45,9 +46,9 @@ The Post-Tool Execution Audit hook (`frontier-post-tool-audit`) captures structu
 ```json
 {
   "toolCall": {
-    "name": "run_command",
+    "name": "view_file",
     "args": {
-      "CommandLine": "npm test"
+      "AbsolutePath": "C:/Projects/Frontier-Engineer/package.json"
     }
   },
   "stepIdx": 5,

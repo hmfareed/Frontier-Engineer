@@ -28,7 +28,7 @@ The **Lifecycle Hooks System** introduces execution-time control points into Goo
                                  ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │                    TOOL GATING (PreToolUse)                     │
-│    Allow safe actions / Deny destructive actions / Ask approval │
+│    Allow safe actions / Deny destructive / Force Ask on high risk│
 └────────────────────────────────┬────────────────────────────────┘
                                  │ (tool executes safely)
                                  ▼

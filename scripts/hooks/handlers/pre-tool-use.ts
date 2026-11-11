@@ -4,7 +4,7 @@ import { extractCorrelationId } from "../lib/event-context.ts";
 import { writeAuditLog } from "../runtime/logger.ts";
 
 export interface PreToolUseOutput {
-  decision: "allow" | "deny" | "ask";
+  decision: "allow" | "deny" | "force_ask" | "ask";
   reason?: string;
   permissionOverrides?: string[];
 }
@@ -28,7 +28,7 @@ export function handlePreToolUse(payload: PreToolUsePayload): PreToolUseOutput {
       status:
         classification.decision === "deny"
           ? "denied"
-          : classification.decision === "ask"
+          : classification.decision === "force_ask" || classification.decision === "ask"
             ? "escalated"
             : "info",
       metadata: {

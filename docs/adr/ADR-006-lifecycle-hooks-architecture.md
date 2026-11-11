@@ -79,3 +79,36 @@ Handlers are implemented in modular TypeScript executed via Node.js (>= 22.6.0).
 - Pre-tool inspection introduces a small latency overhead (typically 30–70ms per tool invocation), well within the 15-second timeout budget.
 - Substring and regex classification cannot achieve 100% semantic coverage of all arbitrary shell commands; ambiguous commands must be escalated to `ask` rather than silently permitted.
 - Hooks govern actions passing through the Antigravity agent harness; they do not replace operating system or database user security boundaries.
+
+## Addendum: Phase 6.1 Corrective Architecture — Global Tool Coverage & Permission Enforcement (`force_ask`)
+
+- **Date:** 2026-11-11
+- **Status:** Accepted
+
+### Problem Statement
+
+Independent review of Phase 6 identified two execution safeguard compatibility gaps:
+
+1. **Tool Name Mismatch & Missing Native Operations:** `PreToolUse` and `PostToolUse` matchers explicitly specified `run_command|read_file|write_file|edit_file`. However, the official Antigravity host runtime exposes native file operations (`view_file`, `write_to_file`, `replace_file_content`, `multi_replace_file_content`) with differing parameter structures (`AbsolutePath`, `TargetFile`). Any tool call using these native names bypassed the hook entirely.
+2. **Permission Caching Bypass Risk (`ask` vs `force_ask`):** High-risk operations (such as `git clean -fdx`, `git reset --hard`, `chmod 777`) emitted `"decision": "ask"`. In Antigravity, the `ask` decision respects cached "Always Allow" permissions, allowing subsequent destructive runs without developer confirmation.
+
+### Architectural Decisions
+
+1. **Approach B Adoption (Global Matcher `*`):**
+   - Configured `matcher: "*"` in `specs/hooks/pre-tool-use.md`, `specs/hooks/post-tool-use.md`, and loader-visible `hooks.json`.
+   - Every host tool invocation is intercepted and classified by the internal dispatcher.
+   - Eliminates blind spots from explicit alias lists and ensures forward compatibility with future native tools and MCP plugins.
+
+2. **Normalized Internal Tool Representation:**
+   - Implemented `normalizeToolCall` in `scripts/hooks/lib/event-context.ts` to map heterogeneous tool argument shapes (`AbsolutePath`, `TargetFile`, `Path`, `CommandLine`, `Arguments`) into a consistent structure.
+   - File reading tools (`view_file`, `read_file`), creation tools (`write_to_file`, `write_file`), and modification tools (`replace_file_content`, `multi_replace_file_content`, `edit_file`) are classified uniformly.
+
+3. **Permission Enforcement via `force_ask`:**
+   - Transitioned all high-risk commands and unvetted tools from `ask` to `force_ask`.
+   - `force_ask` guarantees an interactive developer prompt on every execution, strictly bypassing any cached permissions.
+
+4. **Conservative Classification for Unrecognized Tools:**
+   - Unknown tools that do not match recognized read patterns (`read_*`, `view_*`, `get_*`, `list_*`, `fetch_*`) are never automatically approved; they escalate to `force_ask` with an explanatory diagnostic.
+
+5. **Bidirectional Credential Protection:**
+   - Prohibits reading, writing, and editing sensitive credential files (`.env`, private keys, certificates, password stores).

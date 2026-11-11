@@ -9,20 +9,21 @@ Execution safeguards in Frontier Engineer operate under a defense-in-depth secur
 
 ## Permission matrix
 
-| Operation                                       | Status         | Policy Rationale                                              |
-| ----------------------------------------------- | -------------- | ------------------------------------------------------------- |
-| Read hook stdin payload                         | **Allowed**    | Core execution communication mechanism.                       |
-| Validate input JSON schemas                     | **Allowed**    | Ensures memory safety and payload integrity.                  |
-| Write local sanitized diagnostics               | **Allowed**    | Provides non-sensitive operational observability.             |
-| Inspect tool parameters (`CommandLine`, `Path`) | **Restricted** | Required for gating; arguments must not be leaked.            |
-| Read project metadata (`package.json`, `.git`)  | **Restricted** | Used strictly for workspace verification at session start.    |
-| Block prohibited actions (`deny`)               | **Allowed**    | Prevents execution of destructive commands.                   |
-| Request confirmation (`ask`)                    | **Allowed**    | Prompts developer for high-risk actions.                      |
-| Auto-approve sensitive actions (`auto_approve`) | **Prohibited** | Never bypasses developer permission gates.                    |
-| Read arbitrary host files outside workspace     | **Prohibited** | Access strictly confined to project workspace roots.          |
-| Exfiltrate workspace data externally            | **Prohibited** | Zero external telemetry or remote HTTP transmission.          |
-| Modify project source from audit hooks          | **Prohibited** | Hooks are strictly non-mutative.                              |
-| Modify database schemas or permissions          | **Prohibited** | Read-only database role verified in Phase 5 remains enforced. |
+| Operation                                       | Status         | Policy Rationale                                               |
+| ----------------------------------------------- | -------------- | -------------------------------------------------------------- |
+| Read hook stdin payload                         | **Allowed**    | Core execution communication mechanism.                        |
+| Validate input JSON schemas                     | **Allowed**    | Ensures memory safety and payload integrity.                   |
+| Write local sanitized diagnostics               | **Allowed**    | Provides non-sensitive operational observability.              |
+| Inspect tool parameters (`CommandLine`, `Path`) | **Restricted** | Required for gating; arguments must not be leaked.             |
+| Read project metadata (`package.json`, `.git`)  | **Restricted** | Used strictly for workspace verification at session start.     |
+| Block prohibited actions (`deny`)               | **Allowed**    | Prevents execution of destructive commands.                    |
+| Force fresh confirmation (`force_ask`)          | **Allowed**    | Prompts developer for high-risk actions without cached bypass. |
+| Request standard confirmation (`ask`)           | **Allowed**    | Prompts developer for ambiguous actions.                       |
+| Auto-approve sensitive actions (`auto_approve`) | **Prohibited** | Never bypasses developer permission gates.                     |
+| Read arbitrary host files outside workspace     | **Prohibited** | Access strictly confined to project workspace roots.           |
+| Exfiltrate workspace data externally            | **Prohibited** | Zero external telemetry or remote HTTP transmission.           |
+| Modify project source from audit hooks          | **Prohibited** | Hooks are strictly non-mutative.                               |
+| Modify database schemas or permissions          | **Prohibited** | Read-only database role verified in Phase 5 remains enforced.  |
 
 ## Fail-closed vs fail-open architecture
 

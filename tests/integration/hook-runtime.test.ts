@@ -85,7 +85,7 @@ describe("hook dispatcher subprocess integration", () => {
     expect(parsed.reason).toContain("Access to sensitive credential file (.env) is prohibited");
   });
 
-  it("escalates high-risk git operations to ask", async () => {
+  it("escalates high-risk git operations to force_ask", async () => {
     const payload = JSON.stringify({
       toolCall: { name: "run_command", args: { CommandLine: "git clean -fdx" } },
       stepIdx: 4,
@@ -98,8 +98,85 @@ describe("hook dispatcher subprocess integration", () => {
     );
     expect(res.code).toBe(0);
     const parsed = JSON.parse(res.stdout);
-    expect(parsed.decision).toBe("ask");
+    expect(parsed.decision).toBe("force_ask");
     expect(parsed.reason).toContain("developer review");
+  });
+
+  it("correctly evaluates native Antigravity file operations", async () => {
+    // view_file safe
+    const safeView = await runDispatcher(
+      ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
+      JSON.stringify({
+        toolCall: {
+          name: "view_file",
+          args: { AbsolutePath: "C:/Projects/Frontier-Engineer/package.json" },
+        },
+        stepIdx: 5,
+        conversationId: "test-runtime-5",
+      }),
+    );
+    expect(safeView.code).toBe(0);
+    expect(JSON.parse(safeView.stdout).decision).toBe("allow");
+
+    // view_file sensitive
+    const sensitiveView = await runDispatcher(
+      ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
+      JSON.stringify({
+        toolCall: {
+          name: "view_file",
+          args: { AbsolutePath: "C:/Projects/Frontier-Engineer/.env" },
+        },
+        stepIdx: 6,
+        conversationId: "test-runtime-6",
+      }),
+    );
+    expect(sensitiveView.code).toBe(0);
+    expect(JSON.parse(sensitiveView.stdout).decision).toBe("deny");
+
+    // write_to_file sensitive
+    const sensitiveWrite = await runDispatcher(
+      ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
+      JSON.stringify({
+        toolCall: {
+          name: "write_to_file",
+          args: { TargetFile: "id_rsa", Content: "private" },
+        },
+        stepIdx: 7,
+        conversationId: "test-runtime-7",
+      }),
+    );
+    expect(sensitiveWrite.code).toBe(0);
+    expect(JSON.parse(sensitiveWrite.stdout).decision).toBe("deny");
+
+    // replace_file_content sensitive
+    const sensitiveReplace = await runDispatcher(
+      ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
+      JSON.stringify({
+        toolCall: {
+          name: "replace_file_content",
+          args: { TargetFile: "credentials.json", Target: "a", Replacement: "b" },
+        },
+        stepIdx: 8,
+        conversationId: "test-runtime-8",
+      }),
+    );
+    expect(sensitiveReplace.code).toBe(0);
+    expect(JSON.parse(sensitiveReplace.stdout).decision).toBe("deny");
+
+    // multi_replace_file_content sensitive
+    const sensitiveMultiReplace = await runDispatcher(
+      ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
+      JSON.stringify({
+        toolCall: {
+          name: "multi_replace_file_content",
+          args: { TargetFile: "server.key" },
+        },
+        stepIdx: 9,
+        conversationId: "test-runtime-9",
+      }),
+    );
+    expect(sensitiveMultiReplace.code).toBe(0);
+    expect(JSON.parse(sensitiveMultiReplace.stdout).decision).toBe("deny");
   });
 
   it("fails closed with deny on malformed JSON", async () => {
@@ -135,7 +212,7 @@ describe("hook dispatcher subprocess integration", () => {
   it("executes PostToolUse and emits empty object", async () => {
     const payload = JSON.stringify({
       toolCall: { name: "run_command", args: { CommandLine: "npm test" } },
-      stepIdx: 5,
+      stepIdx: 10,
       conversationId: "test-post-tool",
     });
 
