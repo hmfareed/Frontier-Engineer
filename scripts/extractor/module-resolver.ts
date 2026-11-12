@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { loadParserSync, type ParserApi } from "./parser-loader.ts";
 import type { EvidenceClassification } from "./types.ts";
 
 export interface TsConfigPaths {
@@ -7,25 +8,31 @@ export interface TsConfigPaths {
 }
 
 export interface TsConfigOptions {
-  compilerOptions?: {
-    baseUrl?: string;
-    paths?: TsConfigPaths;
-  };
+  compilerOptions?: any;
+}
+
+export interface ModuleResolutionOptions {
+  compilerOptions?: any;
+  customHost?: any;
+  parser?: ParserApi;
+  tsconfigPath?: string;
 }
 
 export interface ModuleResolutionResult {
   specifier: string;
+  originalSpecifier: string;
+  importingFile: string;
   resolvedCanonicalPath: string | null;
   status: "resolved" | "unresolved";
+  resolutionMethod: "ts_resolve_module_name";
   classification: EvidenceClassification;
+  isConfirmed: boolean;
   isExternal: boolean;
 }
 
-const EXTENSIONS = [".ts", ".tsx", ".d.ts", ".js", ".jsx", ".mjs", ".cjs"];
-const INDEX_FILES = ["index.ts", "index.tsx", "index.d.ts", "index.js", "index.jsx"];
-
 const NODE_BUILTINS = new Set<string>([
   "assert",
+  "assert/strict",
   "async_hooks",
   "buffer",
   "child_process",
@@ -36,6 +43,7 @@ const NODE_BUILTINS = new Set<string>([
   "dgram",
   "diagnostics_channel",
   "dns",
+  "dns/promises",
   "domain",
   "events",
   "fs",
@@ -55,11 +63,14 @@ const NODE_BUILTINS = new Set<string>([
   "punycode",
   "querystring",
   "readline",
+  "readline/promises",
   "repl",
   "stream",
+  "stream/consumers",
   "stream/promises",
   "stream/web",
   "string_decoder",
+  "test",
   "timers",
   "timers/promises",
   "tls",
@@ -76,177 +87,272 @@ const NODE_BUILTINS = new Set<string>([
 ]);
 
 /**
- * Loads and parses tsconfig.json from workspace root or specified path.
+ * Loads and parses tsconfig.json from workspace root or specified custom path.
+ * Uses bundled TypeScript compiler config parser to correctly resolve 'extends',
+ * baseUrl, paths, and compiler options.
  */
 export function loadTsConfig(
   workspaceRoot: string,
   customPath?: string,
-): TsConfigOptions | undefined {
-  const tsconfigPath = customPath || path.join(workspaceRoot, "tsconfig.json");
+  parser?: ParserApi,
+): any | undefined {
+  const normRoot = path.resolve(workspaceRoot);
+  const tsconfigPath = customPath
+    ? path.resolve(normRoot, customPath)
+    : path.join(normRoot, "tsconfig.json");
+
   if (!fs.existsSync(tsconfigPath)) {
     return undefined;
   }
 
   try {
-    const raw = fs.readFileSync(tsconfigPath, "utf8");
-    // Strip single-line comments and trailing commas before parsing
-    const sanitized = raw
-      .replace(/\/\/[^\n\r]*/g, "")
-      .replace(/\/\*[\s\S]*?\*\//g, "")
-      .replace(/,\s*([\]}])/g, "$1");
-    return JSON.parse(sanitized);
+    const p = parser || loadParserSync();
+    const configFile = p.readConfigFile(tsconfigPath, (filePath: string) => {
+      try {
+        return fs.readFileSync(filePath, "utf8");
+      } catch {
+        return undefined;
+      }
+    });
+
+    if (configFile.error || !configFile.config) {
+      return undefined;
+    }
+
+    const parseConfigHost = {
+      useCaseSensitiveFileNames: process.platform !== "win32",
+      readDirectory: () => [],
+      fileExists: (filePath: string) => {
+        try {
+          return fs.existsSync(filePath) && fs.statSync(filePath).isFile();
+        } catch {
+          return false;
+        }
+      },
+      readFile: (filePath: string) => {
+        try {
+          return fs.readFileSync(filePath, "utf8");
+        } catch {
+          return undefined;
+        }
+      },
+    };
+
+    const parsed = p.parseJsonConfigFileContent(
+      configFile.config,
+      parseConfigHost,
+      path.dirname(tsconfigPath),
+      {},
+      tsconfigPath,
+    );
+
+    return parsed.options || {};
   } catch {
     return undefined;
   }
 }
 
-/** Probes file candidate variations (exact, extensions, directory index, package.json). */
-function probeCandidate(targetPath: string): string | null {
-  // 1. Exact file
-  if (fs.existsSync(targetPath)) {
-    try {
-      const stat = fs.statSync(targetPath);
-      if (stat.isFile()) return targetPath;
-      if (stat.isDirectory()) {
-        // Probe directory package.json
-        const pkgJsonPath = path.join(targetPath, "package.json");
-        if (fs.existsSync(pkgJsonPath)) {
-          try {
-            const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, "utf8"));
-            if (typeof pkg.main === "string") {
-              const mainProbe = probeCandidate(path.resolve(targetPath, pkg.main));
-              if (mainProbe) return mainProbe;
-            }
-          } catch {
-            // Ignore package.json parse error
-          }
-        }
-        // Probe directory index files
-        for (const indexName of INDEX_FILES) {
-          const indexPath = path.join(targetPath, indexName);
-          if (fs.existsSync(indexPath) && fs.statSync(indexPath).isFile()) {
-            return indexPath;
-          }
-        }
+/**
+ * Creates a standard TypeScript ModuleResolutionHost bounded to the workspace filesystem.
+ */
+export function createModuleResolutionHost(workspaceRoot: string, customHost?: any): any {
+  if (customHost) return customHost;
+
+  const normRoot = path.resolve(workspaceRoot);
+
+  return {
+    fileExists(fileName: string): boolean {
+      try {
+        return fs.existsSync(fileName) && fs.statSync(fileName).isFile();
+      } catch {
+        return false;
       }
-    } catch {
-      // Ignore stat error
-    }
-  }
-
-  // 2. TypeScript ESM source mapping (.js/.jsx -> .ts/.tsx/.d.ts)
-  if (targetPath.endsWith(".js") || targetPath.endsWith(".jsx")) {
-    const base = targetPath.replace(/\.jsx?$/, "");
-    for (const ext of [".ts", ".tsx", ".d.ts"]) {
-      const candidate = `${base}${ext}`;
-      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-        return candidate;
+    },
+    readFile(fileName: string): string | undefined {
+      try {
+        return fs.readFileSync(fileName, "utf8");
+      } catch {
+        return undefined;
       }
-    }
-  }
-
-  // 3. Extension probing
-  for (const ext of EXTENSIONS) {
-    const candidate = `${targetPath}${ext}`;
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-      return candidate;
-    }
-  }
-
-  // 4. Directory index probing without existing directory check
-  for (const indexName of INDEX_FILES) {
-    const candidate = path.join(targetPath, indexName);
-    if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-      return candidate;
-    }
-  }
-
-  return null;
+    },
+    directoryExists(directoryName: string): boolean {
+      try {
+        return fs.existsSync(directoryName) && fs.statSync(directoryName).isDirectory();
+      } catch {
+        return false;
+      }
+    },
+    realpath(filePath: string): string {
+      try {
+        return fs.realpathSync(filePath);
+      } catch {
+        return filePath;
+      }
+    },
+    getCurrentDirectory(): string {
+      return normRoot;
+    },
+    getDirectories(dirPath: string): string[] {
+      try {
+        return fs
+          .readdirSync(dirPath, { withFileTypes: true })
+          .filter((d) => d.isDirectory())
+          .map((d) => d.name);
+      } catch {
+        return [];
+      }
+    },
+    useCaseSensitiveFileNames: process.platform !== "win32",
+  };
 }
 
 /**
- * Resolves an import/export module specifier to an on-disk canonical path.
- * Adheres to standard TypeScript resolution: baseUrl, paths, relative probing, and package exports.
+ * Resolves an import/export module specifier to an on-disk canonical path using
+ * the bundled TypeScript compiler's actual ts.resolveModuleName() engine.
+ *
+ * Guarantees standard TypeScript module resolution semantics:
+ * - tsconfig.json extends, baseUrl, and wildcard path mappings
+ * - Multiple path targets and fallback order
+ * - NodeNext, Node16, and Bundler module resolution modes
+ * - Conditional package exports (import, require, types)
+ * - Package types, typings, and typesVersions
+ * - Package self-references and workspace package boundaries
+ * - .mts, .cts, .mjs, .cjs, and .d.ts extensions
  */
 export function resolveModuleSpecifier(
   specifier: string,
   fromCanonicalPath: string,
   workspaceRoot: string,
-  tsconfig?: TsConfigOptions,
+  optionsOrTsConfig?: ModuleResolutionOptions | TsConfigOptions | any,
+  providedParser?: ParserApi,
 ): ModuleResolutionResult {
   const normWorkspace = path.resolve(workspaceRoot);
+  const containingFileAbs = path.resolve(normWorkspace, fromCanonicalPath);
 
-  // 1. Check for standard library or external module
+  // 1. Detect standard Node built-in modules
   const isNodeBuiltin = specifier.startsWith("node:") || NODE_BUILTINS.has(specifier);
+  if (isNodeBuiltin) {
+    return {
+      specifier,
+      originalSpecifier: specifier,
+      importingFile: fromCanonicalPath,
+      resolvedCanonicalPath: null,
+      status: "unresolved",
+      resolutionMethod: "ts_resolve_module_name",
+      classification: "external_or_missing",
+      isConfirmed: false,
+      isExternal: true,
+    };
+  }
+
+  // 2. Resolve parser instance
+  const parser = providedParser || optionsOrTsConfig?.parser || loadParserSync();
+
+  // 3. Extract compiler options
+  let compilerOptions: any;
+  if (optionsOrTsConfig?.compilerOptions) {
+    compilerOptions = { ...optionsOrTsConfig.compilerOptions };
+  } else if (
+    optionsOrTsConfig &&
+    (optionsOrTsConfig.baseUrl || optionsOrTsConfig.paths || optionsOrTsConfig.moduleResolution)
+  ) {
+    compilerOptions = { ...optionsOrTsConfig };
+  } else {
+    compilerOptions = loadTsConfig(normWorkspace, optionsOrTsConfig?.tsconfigPath, parser) || {};
+  }
+
+  // Ensure default module resolution if not specified
+  if (!compilerOptions.moduleResolution) {
+    compilerOptions.moduleResolution = parser.ModuleResolutionKind.Bundler ?? 99;
+  }
+
+  // Ensure baseUrl is absolute when provided
+  if (compilerOptions.baseUrl && !path.isAbsolute(compilerOptions.baseUrl)) {
+    compilerOptions.baseUrl = path.resolve(normWorkspace, compilerOptions.baseUrl);
+  }
+
+  // 4. Create resolution host
+  const host = createModuleResolutionHost(normWorkspace, optionsOrTsConfig?.customHost);
+
+  // 5. Invoke TypeScript compiler module resolution
+  let resolutionResult: any;
+  try {
+    resolutionResult = parser.resolveModuleName(
+      specifier,
+      containingFileAbs,
+      compilerOptions,
+      host,
+    );
+  } catch {
+    resolutionResult = undefined;
+  }
+
   const isRelative = specifier.startsWith("./") || specifier.startsWith("../");
 
-  // 2. Handle tsconfig path mapping (e.g. @/* -> src/*)
-  if (!isRelative && !isNodeBuiltin && tsconfig?.compilerOptions?.paths) {
-    const baseUrl = path.resolve(normWorkspace, tsconfig.compilerOptions.baseUrl || ".");
-    const pathsMap = tsconfig.compilerOptions.paths;
-
-    for (const [pattern, targets] of Object.entries(pathsMap)) {
-      let matched = false;
-      let matchedSuffix = "";
-
-      if (pattern.endsWith("/*")) {
-        const prefix = pattern.slice(0, -2);
-        if (specifier.startsWith(prefix + "/")) {
-          matched = true;
-          matchedSuffix = specifier.slice(prefix.length + 1);
-        }
-      } else if (pattern === specifier) {
-        matched = true;
-        matchedSuffix = "";
-      }
-
-      if (matched) {
-        for (const targetPattern of targets) {
-          const resolvedTarget = targetPattern.endsWith("/*")
-            ? targetPattern.slice(0, -2) + "/" + matchedSuffix
-            : targetPattern;
-
-          const candidateAbs = path.resolve(baseUrl, resolvedTarget);
-          const probed = probeCandidate(candidateAbs);
-          if (probed && probed.startsWith(normWorkspace)) {
-            const canonical = path.relative(normWorkspace, probed).replace(/\\/g, "/");
-            return {
-              specifier,
-              resolvedCanonicalPath: canonical,
-              status: "resolved",
-              classification: "syntactic_ast",
-              isExternal: false,
-            };
-          }
-        }
-      }
-    }
+  if (!resolutionResult || !resolutionResult.resolvedModule) {
+    return {
+      specifier,
+      originalSpecifier: specifier,
+      importingFile: fromCanonicalPath,
+      resolvedCanonicalPath: null,
+      status: "unresolved",
+      resolutionMethod: "ts_resolve_module_name",
+      classification: "external_or_missing",
+      isConfirmed: false,
+      isExternal: !isRelative,
+    };
   }
 
-  // 3. Handle relative imports
-  if (isRelative) {
-    const fromDirAbs = path.dirname(path.resolve(normWorkspace, fromCanonicalPath));
-    const targetAbs = path.resolve(fromDirAbs, specifier);
-    const probed = probeCandidate(targetAbs);
+  const resolvedFileName = resolutionResult.resolvedModule.resolvedFileName;
 
-    if (probed && probed.startsWith(normWorkspace)) {
-      const canonical = path.relative(normWorkspace, probed).replace(/\\/g, "/");
-      return {
-        specifier,
-        resolvedCanonicalPath: canonical,
-        status: "resolved",
-        classification: "syntactic_ast",
-        isExternal: false,
-      };
-    }
+  // 6. Enforce workspace boundary: reject resolutions outside the workspace
+  const rel = path.relative(normWorkspace, resolvedFileName);
+  const isInsideWorkspace = !rel.startsWith("..") && !path.isAbsolute(rel);
+
+  if (!isInsideWorkspace) {
+    return {
+      specifier,
+      originalSpecifier: specifier,
+      importingFile: fromCanonicalPath,
+      resolvedCanonicalPath: null,
+      status: "unresolved",
+      resolutionMethod: "ts_resolve_module_name",
+      classification: "external_or_missing",
+      isConfirmed: false,
+      isExternal: true,
+    };
   }
 
-  // 4. External or unresolvable
+  // 7. Check if resolved target is inside node_modules
+  const segments = rel.split(/[\\/]/);
+  const isNodeModules = segments.includes("node_modules");
+
+  if (isNodeModules) {
+    return {
+      specifier,
+      originalSpecifier: specifier,
+      importingFile: fromCanonicalPath,
+      resolvedCanonicalPath: null,
+      status: "unresolved",
+      resolutionMethod: "ts_resolve_module_name",
+      classification: "external_or_missing",
+      isConfirmed: false,
+      isExternal: true,
+    };
+  }
+
+  // 8. Confirmed internal workspace module
+  const canonicalPath = rel.replace(/\\/g, "/");
+
   return {
     specifier,
-    resolvedCanonicalPath: null,
-    status: "unresolved",
-    classification: "external_or_missing",
-    isExternal: !isRelative || isNodeBuiltin,
+    originalSpecifier: specifier,
+    importingFile: fromCanonicalPath,
+    resolvedCanonicalPath: canonicalPath,
+    status: "resolved",
+    resolutionMethod: "ts_resolve_module_name",
+    classification: "syntactic_ast",
+    isConfirmed: true,
+    isExternal: false,
   };
 }

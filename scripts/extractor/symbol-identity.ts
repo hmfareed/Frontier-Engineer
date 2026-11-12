@@ -51,7 +51,12 @@ function extractNodeTokens(node: any, tokens: NormalizedToken[], parser: ParserA
     node.kind === parser.SyntaxKind.StringLiteral ||
     node.kind === parser.SyntaxKind.NumericLiteral ||
     node.kind === parser.SyntaxKind.BigIntLiteral ||
-    node.kind === parser.SyntaxKind.RegularExpressionLiteral;
+    node.kind === parser.SyntaxKind.RegularExpressionLiteral ||
+    node.kind === parser.SyntaxKind.NoSubstitutionTemplateLiteral ||
+    node.kind === parser.SyntaxKind.TemplateHead ||
+    node.kind === parser.SyntaxKind.TemplateMiddle ||
+    node.kind === parser.SyntaxKind.TemplateTail ||
+    node.kind === parser.SyntaxKind.JsxText;
 
   tokens.push({
     k: node.kind,

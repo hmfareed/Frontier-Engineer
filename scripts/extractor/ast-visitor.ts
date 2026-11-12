@@ -41,6 +41,14 @@ function hasExportModifier(node: any, parser: ParserApi): boolean {
   return false;
 }
 
+function hasDefaultModifier(node: any, parser: ParserApi): boolean {
+  if (!node.modifiers) return false;
+  for (const mod of node.modifiers) {
+    if (mod.kind === parser.SyntaxKind.DefaultKeyword) return true;
+  }
+  return false;
+}
+
 function hasJsx(node: any, parser: ParserApi): boolean {
   let found = false;
   function walk(n: any) {
@@ -84,6 +92,7 @@ export function visitSourceFile(
   const callExpressions: CallExpressionRecord[] = [];
 
   const nameCounts = new Map<string, number>();
+  const overloadCounts = new Map<string, number>();
 
   function getDisambiguator(scope: string | null, name: string): number {
     const key = `${scope || ""}::${name}`;
@@ -99,8 +108,12 @@ export function visitSourceFile(
     node: any,
     isExported: boolean,
     metadata?: SymbolMetadata,
+    explicitDisambiguator?: string | number,
   ): void {
-    const disambiguator = getDisambiguator(parentScope, name);
+    const disambiguator =
+      explicitDisambiguator !== undefined
+        ? explicitDisambiguator
+        : getDisambiguator(parentScope, name);
     const symbolId = computeSymbolId(canonicalPath, parentScope, kind, name, disambiguator);
     const fingerprint = computeFingerprint(node, sourceFile, parser);
     const sourceEvidence = extractEvidence(node, sourceFile);
@@ -122,10 +135,12 @@ export function visitSourceFile(
 
     // 1. FunctionDeclaration
     if (node.kind === parser.SyntaxKind.FunctionDeclaration) {
-      const name = node.name?.text;
+      const isDefault = hasDefaultModifier(node, parser);
+      const isExported = hasExportModifier(node, parser);
+      const name = node.name?.text || (isDefault ? "default" : undefined);
+
       if (name) {
-        const isExported = hasExportModifier(node, parser);
-        const containsJsx = hasJsx(node.body, parser);
+        const containsJsx = node.body ? hasJsx(node.body, parser) : false;
         const isComponent = isPascalCase(name) && containsJsx;
 
         const metadata: SymbolMetadata = {
@@ -138,30 +153,122 @@ export function visitSourceFile(
           metadata.evidenceClassification = "heuristic_jsx_return";
         }
 
-        addSymbol(name, currentScope, "function", node, isExported, metadata);
+        const scopeKey = `${currentScope || ""}::function::${name}`;
+        let explicitDis: string | number | undefined;
+
+        if (node.body === undefined) {
+          // Overload signature
+          const count = (overloadCounts.get(scopeKey) || 0) + 1;
+          overloadCounts.set(scopeKey, count);
+          explicitDis = `overload:${count}`;
+        } else if (overloadCounts.has(scopeKey)) {
+          // Implementation of overloaded function
+          explicitDis = "impl";
+        }
+
+        addSymbol(name, currentScope, "function", node, isExported, metadata, explicitDis);
+
+        // Recurse into function body with nested scope
+        if (node.body) {
+          const nextScope = currentScope ? `${currentScope}.${name}` : name;
+          parser.forEachChild(node.body, (child: any) => visit(child, nextScope));
+          return;
+        }
       }
     }
 
     // 2. ClassDeclaration
     else if (node.kind === parser.SyntaxKind.ClassDeclaration) {
-      const className = node.name?.text;
-      if (className) {
-        const isExported = hasExportModifier(node, parser);
-        addSymbol(className, currentScope, "class", node, isExported);
+      const isDefault = hasDefaultModifier(node, parser);
+      const isExported = hasExportModifier(node, parser);
+      const className = node.name?.text || (isDefault ? "default" : undefined);
 
-        // Visit class members with className as parent scope
+      if (className) {
+        addSymbol(className, currentScope, "class", node, isExported);
+        const classScope = currentScope ? `${currentScope}.${className}` : className;
+
+        // Visit class members with classScope as parent scope
         if (node.members) {
           for (const member of node.members) {
+            // Method
             if (member.kind === parser.SyntaxKind.MethodDeclaration) {
               const methodName = member.name?.text;
               if (methodName) {
-                addSymbol(methodName, className, "method", member, false, {
-                  inferredCallable: true,
-                });
+                const methodScopeKey = `${classScope}::method::${methodName}`;
+                let explicitDis: string | number | undefined;
+                if (member.body === undefined) {
+                  const count = (overloadCounts.get(methodScopeKey) || 0) + 1;
+                  overloadCounts.set(methodScopeKey, count);
+                  explicitDis = `overload:${count}`;
+                } else if (overloadCounts.has(methodScopeKey)) {
+                  explicitDis = "impl";
+                }
+
+                addSymbol(
+                  methodName,
+                  classScope,
+                  "method",
+                  member,
+                  false,
+                  { inferredCallable: true },
+                  explicitDis,
+                );
+
+                if (member.body) {
+                  const methodScope = `${classScope}.${methodName}`;
+                  parser.forEachChild(member.body, (child: any) => visit(child, methodScope));
+                }
+              }
+            }
+            // Get Accessor
+            else if (member.kind === parser.SyntaxKind.GetAccessor) {
+              const propName = member.name?.text;
+              if (propName) {
+                addSymbol(
+                  propName,
+                  classScope,
+                  "method",
+                  member,
+                  false,
+                  { inferredCallable: true },
+                  "get",
+                );
+              }
+            }
+            // Set Accessor
+            else if (member.kind === parser.SyntaxKind.SetAccessor) {
+              const propName = member.name?.text;
+              if (propName) {
+                addSymbol(
+                  propName,
+                  classScope,
+                  "method",
+                  member,
+                  false,
+                  { inferredCallable: true },
+                  "set",
+                );
+              }
+            }
+            // Constructor
+            else if (member.kind === parser.SyntaxKind.Constructor) {
+              addSymbol(
+                "constructor",
+                classScope,
+                "method",
+                member,
+                false,
+                { inferredCallable: true },
+                0,
+              );
+              if (member.body) {
+                const ctorScope = `${classScope}.constructor`;
+                parser.forEachChild(member.body, (child: any) => visit(child, ctorScope));
               }
             }
           }
         }
+        return;
       }
     }
 
@@ -222,6 +329,11 @@ export function visitSourceFile(
             }
 
             addSymbol(varName, currentScope, "variable", decl, isExported, metadata);
+
+            if (isArrowOrFn && init.body) {
+              const arrowScope = currentScope ? `${currentScope}.${varName}` : varName;
+              parser.forEachChild(init.body, (child: any) => visit(child, arrowScope));
+            }
           }
         }
       }
@@ -265,7 +377,7 @@ export function visitSourceFile(
 
         imports.push({
           specifier,
-          resolvedPath: null, // Resolved in module-resolver step
+          resolvedPath: null,
           importedSymbols: isWildcard ? "*" : importedSymbols,
           isTypeOnly,
           isDynamic: false,
@@ -282,7 +394,6 @@ export function visitSourceFile(
       const isTypeOnly = Boolean(node.isTypeOnly);
 
       if (!node.exportClause) {
-        // export * from "./mod"
         exports.push({
           name: "*",
           localName: "*",
@@ -312,10 +423,9 @@ export function visitSourceFile(
       }
     }
 
-    // 9. CallExpression (Detect dynamic imports and invocations)
+    // 9. CallExpression (Dynamic import detection)
     else if (node.kind === parser.SyntaxKind.CallExpression) {
       if (node.expression?.kind === parser.SyntaxKind.ImportKeyword) {
-        // Dynamic import: import("./mod")
         const arg0 = node.arguments?.[0];
         if (arg0 && (arg0.text || arg0.kind === parser.SyntaxKind.StringLiteral)) {
           const specifier = arg0.text || "";
@@ -346,11 +456,11 @@ export function visitSourceFile(
     }
 
     // Recurse into children
-    parser.forEachChild(node, (child) => visit(child, currentScope));
+    parser.forEachChild(node, (child: any) => visit(child, currentScope));
   }
 
   // Visit top-level statements
-  parser.forEachChild(sourceFile, (child) => visit(child, null));
+  parser.forEachChild(sourceFile, (child: any) => visit(child, null));
 
   return { symbols, imports, exports, callExpressions };
 }

@@ -118,6 +118,7 @@ export interface ExtractorOptions {
   extractComments?: boolean;
   workspaceRoot?: string;
   tsconfigPath?: string;
+  cancellationToken?: { isCancellationRequested: boolean };
 }
 
 export function isExtractionResult(val: unknown): val is ExtractionResult {
