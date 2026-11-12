@@ -33,6 +33,16 @@ describe("query-adversarial (Security, Injection Safety & Robustness Boundaries)
   });
 
   function createMockInventory(ws: string, files: string[]): FileInventoryResult {
+    for (const f of files) {
+      const full = path.join(ws, f);
+      if (!fs.existsSync(full)) {
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, "mock content", "utf8");
+        const t = new Date(1700000000000);
+        fs.utimesSync(full, t, t);
+      }
+    }
+
     return {
       workspaceRoot: ws,
       scannedAt: new Date().toISOString(),

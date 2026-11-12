@@ -16,17 +16,33 @@ Frontier Engineer does not use stochastic AI text generators, vector embeddings,
 
 ### 1.1 Multi-Evidence Component Classification
 
-Component classification evaluates multiple structural signals rather than relying solely on directory names:
+Component classification evaluates multiple structural signals rather than relying solely on directory names or raw imports:
 
-| Category     | Typical Roots                                    | Primary Required Evidence for `CONFIRMED` Status                                                                                                                       | Fallback `INFERRED` / `CANDIDATE`                                            |
-| ------------ | ------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
-| `frontend`   | `src/components`, `ui`, `pages`                  | JSX/TSX AST nodes, React/Vue/Svelte/Next.js imports                                                                                                                    | Directory convention without direct JSX evidence (`confidence = 0.70`)       |
-| `backend`    | `src/api`, `src/server`, `controllers`, `routes` | HTTP server imports (`express`, `fastify`, `hono`, `node:http`), API route handlers (`route.ts`, `route.js`)                                                           | Directory naming without confirmed framework imports (`confidence = 0.65`)   |
-| `database`   | `src/db`, `schema`, `migrations`, `prisma`       | SQL migration files, Prisma schema (`schema.prisma`), ORM/client imports (`node:sqlite`, `pg`, `mysql2`, `@prisma/client`, `typeorm`, `drizzle-orm`, `knex`, `kysely`) | Directory named `db` without verified driver imports (`confidence = 0.70`)   |
-| `auth`       | `src/auth`, `security`                           | Authentication/crypto libraries (`jsonwebtoken`, `bcrypt`, `passport`, `next-auth`, `@auth0/nextjs-auth0`, `argon2`, `lucia`)                                          | Directory named `auth` without verified crypto imports (`confidence = 0.70`) |
-| `shared_lib` | `packages/*`, `src/lib`, `common`                | Monorepo package manifests (`packages/*/package.json`) or shared library conventions                                                                                   | Directory naming without package boundary (`confidence = 0.75`)              |
-| `test`       | `tests`, `test`, `__tests__`                     | Verified test files (`.test.ts`, `.spec.ts`)                                                                                                                           | Directory convention (`confidence = 1.0`)                                    |
-| `docs`       | `docs`, `documentation`                          | Markdown documentation or Architecture Decision Records                                                                                                                | Directory convention (`confidence = 1.0`)                                    |
+| Category     | Typical Roots                                    | Primary Required Evidence for `CONFIRMED` Status                                                                | Fallback `INFERRED` / `CANDIDATE`                                                                                              |
+| ------------ | ------------------------------------------------ | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `frontend`   | `src/components`, `ui`, `pages`                  | JSX/TSX AST nodes, React/Vue/Svelte/Next.js imports                                                             | Directory convention without direct JSX evidence (`confidence = 0.70`)                                                         |
+| `backend`    | `src/api`, `src/server`, `controllers`, `routes` | HTTP server imports (`express`, `fastify`, `hono`, `node:http`), API route handlers (`route.ts`, `route.js`)    | Directory naming without confirmed framework imports (`confidence = 0.65`)                                                     |
+| `database`   | `src/db`, `schema`, `migrations`, `prisma`       | SQL migration files, Prisma schema (`schema.prisma`), or direct schema definitions                              | ORM or driver imports alone without verified migration/schema files, or directory named `db` (`confidence = 0.70`, `INFERRED`) |
+| `auth`       | `src/auth`, `security`                           | Dedicated auth middleware/handler files (`middleware.ts`, `auth.ts`, `passport.ts`) implementing access control | Auth package imports alone without verified middleware/handlers, or directory named `auth` (`confidence = 0.70`, `INFERRED`)   |
+| `shared_lib` | `packages/*`, `src/lib`, `common`                | Monorepo package manifests (`packages/*/package.json`) or shared library conventions                            | Directory naming without package boundary (`confidence = 0.75`)                                                                |
+| `test`       | `tests`, `test`, `__tests__`                     | Verified test files (`.test.ts`, `.spec.ts`)                                                                    | Directory convention (`confidence = 1.0`)                                                                                      |
+| `docs`       | `docs`, `documentation`                          | Markdown documentation or Architecture Decision Records                                                         | Directory convention (`confidence = 1.0`)                                                                                      |
+
+#### Four-Tier Deterministic Confidence Model
+
+The query engine and architecture analyzer assign one of four confidence ratings based on verified repository evidence:
+
+1. **`CONFIRMED` (1.00 / 0.90+):** Verified by direct AST nodes, schema files, or explicit manifest declarations.
+2. **`INFERRED` (0.70 – 0.85):** Supported by indirect structural signals, package imports without handler implementations, or standard naming conventions.
+3. **`CANDIDATE` (0.50 – 0.65):** Tentative evidence such as loose folder naming without matching symbols or configuration.
+4. **`MIXED`:** Aggregated results spanning multiple evidence tiers.
+
+#### Relationship Evidence Integrity
+
+Edges such as `CALLS`, `AUTHENTICATES`, `AUTHORIZES`, `USES_DATABASE`, `IMPLEMENTS`, `REFERENCES`, and `EXPOSES` are strictly evidence-backed:
+
+- **`CALLS` Relationships:** A syntactic call expression does not create a confirmed `CALLS` edge unless the target symbol can be resolved to a specific declaration. Unresolved syntactic calls are preserved separately as unconfirmed references without misrepresenting imports as function calls.
+- **`USES_DATABASE` and `AUTHENTICATES`:** Importing an ORM (e.g. Prisma, TypeORM, Drizzle) or authentication library (e.g. bcrypt, jsonwebtoken, next-auth) provides candidate/inferred evidence of architectural subsystem affiliation, but does not confirm an active database or security boundary without supporting AST usage, migration files, or middleware logic.
 
 ### 1.2 Application Entrypoint Detection
 
@@ -67,6 +83,7 @@ The `ArchitectureQueryEngine` (`scripts/query/query-engine.ts`) provides a reusa
 export interface ArchitectureQueryEngineInterface {
   getStatus(): Promise<QueryResult<RepositoryStatusData>>;
   getOverview(options?: QueryOptions): Promise<QueryResult<RepositoryOverviewData>>;
+  getFreshness(options?: FreshnessEvaluationOptions): Promise<QueryResult<FreshnessAssessment>>;
   listComponents(options?: QueryOptions): Promise<QueryResult<ComponentListData>>;
   getComponent(
     nameOrIdentity: string,
@@ -99,7 +116,7 @@ export interface QueryResult<T> {
   repositoryId: number;
   repositoryIdentity: string;
   scanId: number;
-  snapshotStatus: "COMPLETE" | "PARTIAL" | "STALE" | "FAILED" | "NONE";
+  snapshotStatus: "FRESH" | "COMPLETE" | "PARTIAL" | "STALE" | "FAILED" | "NONE";
   freshness: FreshnessAssessment;
   query: {
     category: string;
@@ -121,42 +138,92 @@ export interface QueryResult<T> {
 
 ### 2.3 Freshness & Staleness Assessment
 
-The `FreshnessEvaluator` assesses repository intelligence without mutating data:
+The `FreshnessEvaluator` (`scripts/query/freshness-evaluator.ts`) verifies repository intelligence without mutating data or executing repository code:
 
-- **`NONE`:** No active scan index exists.
-- **`COMPLETE`:** Active scan succeeded and workspace files have not drifted.
-- **`PARTIAL`:** Active scan was promoted under partial opt-in.
-- **`STALE`:** Key configuration (`package.json`, `tsconfig.json`) or source files have modification timestamps newer than `scan_runs.started_at`.
-- **`FAILED`:** Latest scan failed with preserved failure reason.
+- **`FRESH`:** Active scan completed successfully, all manifests and indexed source files match workspace disk state, and no unindexed source additions or deletions exist.
+- **`COMPLETE`:** Legacy alias for fresh active scan.
+- **`PARTIAL`:** Active scan was promoted under partial opt-in mode. Emits prominent `[PARTIAL SNAPSHOT]` warning banner.
+- **`STALE`:** Drift detected between workspace disk files and active snapshot metadata.
+- **`FAILED`:** Latest scan failed, superseding older active snapshots until re-indexed.
+- **`NONE`:** No active scan run exists or repository root is missing/inaccessible.
+
+#### Mandatory Evaluated Conditions
+
+The evaluator checks nine discrete conditions:
+
+1. **Source Modification:** Any indexed source file has `stat.mtimeMs > scanStartedAt + 1000ms`.
+2. **Source Deletion:** Any indexed file no longer exists on disk.
+3. **Source Addition:** Unindexed source files discovered in the workspace (honoring `.gitignore`).
+4. **Manifest Modification:** Key project manifests (`package.json`, `tsconfig.json`, `pnpm-lock.yaml`, etc.) modified after scan.
+5. **Preserved Timestamps with Changed Content:** File size mismatch with preserved timestamp, or optional content hash drift.
+6. **Partial Snapshot:** Snapshot marked with partial status.
+7. **Failed Latest Scan:** Latest scan failed, preventing silent fallback to outdated snapshots.
+8. **Missing Active Scan:** Database contains no active scan.
+9. **Missing / Inaccessible Root:** Workspace directory does not exist or cannot be read.
+
+#### Performance and Verification Strategy
+
+Freshness checking employs a two-tier strategy:
+
+- **`INVENTORY_METADATA` (Default):** Bounded filesystem stat and directory walk against indexed inventory. Avoids expensive re-parsing of ASTs or re-extraction.
+- **`CONTENT_HASH` (Explicit):** Performs SHA-256 content hash comparison for files when byte verification is explicitly requested.
+
+### 2.4 Snapshot Isolation and Historical Scans
+
+All queries target the active snapshot by default. Historical snapshots can be explicitly inspected using `--scan-id <id>` or `options.scanId`.
+
+- **Safe Rejection:** If a requested historical scan ID does not exist in `scan_runs`, the engine throws a clear error and rejects the request; it never silently substitutes an arbitrary snapshot.
+- **Snapshot Diffs:** Historical snapshot comparisons and diffing (`getSnapshotDiff`) are not part of Phase 7.4 and are reserved for Phase 7.5.
+
+### 2.5 Evidence Integrity & Secret Safety
+
+- **Canonical Paths:** Evidence records use canonical repository-relative POSIX paths.
+- **Valid Coordinates:** Start and end lines are verified AST coordinates.
+- **Redaction of Sensitive Files:** Files flagged as sensitive in the inventory have their contents redacted (`contentHash: null`) and their symbols omitted from search results.
+- **Honest Warnings:** If an evidence file was deleted or moved from disk after indexing, the query engine records an honest warning in `warnings[]` rather than fabricating file contents.
 
 ---
 
 ## 3. Intelligence Query CLI
 
-The command-line interface is available via `frontier intelligence <subcommand>` or `npm run frontier -- intelligence <subcommand>`.
+The command-line interface is available via npm script or node invocation:
+
+```bash
+npm run frontier -- [intelligence] <command> [options]
+# or directly:
+node scripts/cli/frontier-cli.ts [intelligence] <command> [options]
+```
+
+_(Note: `frontier` is an npm script in `package.json`, not a globally installed standalone executable unless linked)._
 
 ### 3.1 Command Reference
 
+The CLI supports 14 architecture intelligence commands:
+
 ```bash
-frontier intelligence status [--format text|json]
-frontier intelligence overview [--format text|json]
-frontier intelligence components [--format text|json] [--limit 50]
-frontier intelligence component <name> [--format text|json]
-frontier intelligence entrypoints [--format text|json]
-frontier intelligence dependencies <target> [--depth 3] [--limit 50] [--format text|json]
-frontier intelligence dependents <target> [--depth 3] [--limit 50] [--format text|json]
-frontier intelligence cycles [--format text|json]
-frontier intelligence file <path> [--format text|json]
-frontier intelligence symbol <name> [--format text|json]
-frontier intelligence tests [target] [--format text|json]
-frontier intelligence decisions [--format text|json]
-frontier intelligence decision <id> [--format text|json]
-frontier intelligence query "<expression>" [--format text|json]
+npm run frontier -- status [--format text|json]
+npm run frontier -- overview [--format text|json]
+npm run frontier -- freshness [--verify-content] [--format text|json]
+npm run frontier -- components [--format text|json] [--limit 50]
+npm run frontier -- component <name> [--format text|json]
+npm run frontier -- entrypoints [--format text|json]
+npm run frontier -- dependencies <target> [--depth 3] [--limit 50] [--format text|json]
+npm run frontier -- deps <target> [--depth 3] [--limit 50] [--format text|json]  # alias for dependencies
+npm run frontier -- dependents <target> [--depth 3] [--limit 50] [--format text|json]
+npm run frontier -- cycles [--format text|json]
+npm run frontier -- file <path> [--format text|json]
+npm run frontier -- symbol <name> [--format text|json]
+npm run frontier -- tests [target] [--format text|json]
+npm run frontier -- decisions [--format text|json]
+npm run frontier -- decision <id> [--format text|json]
+npm run frontier -- query "<expression>" [--format text|json]
 ```
+
+All commands accept `--scan-id <id>` to target an explicit historical scan.
 
 ### 3.2 Output Formats
 
-- **Terminal Output (`--format text`, default):** Human-readable, structured layout with status badges, aligned tables, dependency trees, and truncation indicators.
+- **Terminal Output (`--format text`, default):** Human-readable, structured layout with status badges, aligned tables, dependency trees, and truncation indicators. Displays `[PARTIAL SNAPSHOT]` warning banner when inspecting partial snapshots.
 - **JSON Output (`--format json`):** 100% parseable JSON on `stdout` without debug pollution, suitable for tool piping and future agent integration.
 
 ### 3.3 Exit Codes Contract
@@ -179,6 +246,8 @@ The `QueryGrammar` parser translates English-like questions into structured quer
 | ------------------------------------------------- | ----------------------- |
 | `what does this repository contain?`              | `overview`              |
 | `what is the status of the index?`                | `status`                |
+| `is the index fresh?`                             | `freshness`             |
+| `check freshness`                                 | `freshness`             |
 | `what are the architectural components?`          | `components`            |
 | `inspect component <name>`                        | `component <name>`      |
 | `which files are responsible for authentication?` | `component auth`        |
@@ -201,11 +270,20 @@ The `QueryGrammar` parser translates English-like questions into structured quer
 - **Parameterized SQL:** All user inputs and targets are parameterized (`?` placeholders). No string concatenation into SQL statements.
 - **Filesystem Sandbox Bounding:** Target paths are resolved and verified against the workspace root. Symlinks resolving outside the root and path traversal attempts (`../../`) are rejected.
 - **Zero Raw Source Persistence:** Source code bodies, secret values, and environment credentials are never persisted in the intelligence database.
+- **Sensitive File Protection:** Sensitive files have their content hashes redacted and symbols suppressed from public query output.
 - **Inert Data Handling:** Repository descriptions, README text, and comments are treated strictly as inert string data and never interpreted as instructions.
 
 ---
 
-## 6. Performance Benchmarks
+## 6. Performance Benchmarks & Platform Disclosures
+
+### 6.1 Test Environment Disclosures
+
+- **Host Environment:** Windows 11 x64, Intel Core i7, Node.js v22.14.0, SQLite (via `node:sqlite`).
+- **Cross-Platform Compatibility:** Internally, path handling and query normalizers enforce canonical POSIX paths (`/`). Actual automated tests run on the host environment; full cross-platform CI verification (Linux / macOS) is performed in containerized environments.
+- **Scope Limitation:** Benchmark fixtures represent synthetic repositories of 50, 200, and 600 files. 600 files represents a synthetic scaling test sample, not a claim of universal suitability for multi-million-line monorepos. No universal 100ms SLA is claimed or guaranteed across arbitrary host hardware.
+
+### 6.2 Measured Benchmark Results
 
 Measured on synthetic repositories across small, medium, and large scales under Vitest:
 
@@ -215,4 +293,4 @@ Measured on synthetic repositories across small, medium, and large scales under 
 | **Medium**       | 200   | 600               | 805         | 1202        | 341ms             | 40ms           | 5ms              | 7ms                    | 4ms            | 4ms           |
 | **Large**        | 600   | 1800              | 2405        | 3602        | 822ms             | 33ms           | 9ms              | 9ms                    | 8ms            | 4ms           |
 
-All individual queries execute within **< 70ms** even on large synthetic repositories.
+Observed query latencies across all synthetic benchmark fixtures remain under **70ms** under the tested environment.

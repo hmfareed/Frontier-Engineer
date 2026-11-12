@@ -36,6 +36,16 @@ describe("query-engine (Architecture Query Engine APIs & DTO Contract)", () => {
     ws: string,
     files: { path: string; size: number }[],
   ): FileInventoryResult {
+    for (const f of files) {
+      const full = path.join(ws, f.path);
+      if (!fs.existsSync(full)) {
+        fs.mkdirSync(path.dirname(full), { recursive: true });
+        fs.writeFileSync(full, "x".repeat(f.size), "utf8");
+        const t = new Date(1700000000000);
+        fs.utimesSync(full, t, t);
+      }
+    }
+
     return {
       workspaceRoot: ws,
       scannedAt: new Date().toISOString(),

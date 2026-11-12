@@ -20,7 +20,8 @@ export interface ParsedQueryIntent {
     | "symbol"
     | "tests"
     | "decisions"
-    | "decision";
+    | "decision"
+    | "freshness";
   target?: string;
   parameters?: Record<string, unknown>;
 }
@@ -51,7 +52,11 @@ export class QueryGrammar {
     const rawTrimmed = raw.replace(/[?!.,;]+$/, "").trim();
     const clean = rawTrimmed.toLowerCase();
 
-    // 1. Status
+    // 1. Status & Freshness
+    if (clean === "freshness" || clean === "check freshness" || clean === "index freshness") {
+      return { category: "freshness" };
+    }
+
     if (
       clean === "status" ||
       clean === "show status" ||
@@ -236,6 +241,8 @@ export class QueryGrammar {
         return engine.getDecisions(options);
       case "decision":
         return engine.getDecision(intent.target!, options);
+      case "freshness":
+        return engine.getFreshness(options);
       default:
         throw new Error(`Unhandled query category: ${intent.category}`);
     }

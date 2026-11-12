@@ -30,6 +30,8 @@ import type {
   TestAssociationData,
   DecisionListData,
   DecisionDetailData,
+  FreshnessAssessment,
+  SnapshotFreshnessStatus,
   QueryEvidence,
   QueryLimitsApplied,
 } from "./types.ts";
@@ -60,6 +62,14 @@ export class ArchitectureQueryEngine {
 
   private resolveScanId(explicitScanId?: number): { scanId: number; isHistorical: boolean } {
     if (explicitScanId !== undefined) {
+      const scanRow = this.db
+        .prepare("SELECT id FROM scan_runs WHERE repository_id = ? AND id = ?")
+        .get(this.repository.id, explicitScanId) as { id: number } | undefined;
+      if (!scanRow) {
+        throw new Error(
+          `Scan run ID ${explicitScanId} was not found for repository '${this.repository.identity}'.`,
+        );
+      }
       return { scanId: explicitScanId, isHistorical: true };
     }
     if (!this.repository.activeScanId) {
@@ -96,11 +106,29 @@ export class ArchitectureQueryEngine {
       warnings.push("Warning: Results are derived from a PARTIAL scan snapshot.");
     }
 
+    // Verify evidence files on disk; missing/deleted files produce an honest warning
+    if (params.evidence) {
+      for (const ev of params.evidence) {
+        if (ev.file && !ev.file.startsWith("comp:") && !ev.file.startsWith("pkg:")) {
+          const fullPath = path.join(this.rootPath, ev.file);
+          if (!fs.existsSync(fullPath)) {
+            warnings.push(
+              `Warning: Evidence file '${ev.file}' was not found on disk (may have been deleted or moved).`,
+            );
+          }
+        }
+      }
+    }
+
+    const scanRow = this.db
+      .prepare("SELECT status FROM scan_runs WHERE repository_id = ? AND id = ?")
+      .get(this.repository.id, params.scanId) as { status: string } | undefined;
+
     return {
       repositoryId: this.repository.id,
       repositoryIdentity: this.repository.identity,
       scanId: params.scanId,
-      snapshotStatus: freshness.status,
+      snapshotStatus: (scanRow?.status as SnapshotFreshnessStatus) ?? freshness.status,
       freshness,
       query: {
         category: params.category,
@@ -150,7 +178,8 @@ export class ArchitectureQueryEngine {
       activeScanId: this.repository.activeScanId,
       activeScanStatus: activeScanRow?.status ?? null,
       lastSuccessfulIndexTime: activeScanRow?.completedAt ?? null,
-      isFresh: !freshness.isStale && freshness.status === "COMPLETE",
+      isFresh:
+        !freshness.isStale && (freshness.status === "FRESH" || freshness.status === "COMPLETE"),
       isPartial: freshness.isPartial,
       stalenessReason: freshness.staleReason,
       totalScansCount: totalScans.count,
@@ -595,6 +624,14 @@ export class ArchitectureQueryEngine {
       throw new Error(`File '${filePath}' not found in active scan index.`);
     }
 
+    const warnings: string[] = [];
+    if (fileRow.sensitivityStatus === "SENSITIVE") {
+      fileRow.contentHash = null;
+      warnings.push(
+        `Notice: Target file '${fileRow.normalizedPath}' is marked sensitive; content hash and symbol extraction are redacted.`,
+      );
+    }
+
     // Symbols
     const symbols = this.db
       .prepare(
@@ -679,6 +716,7 @@ export class ArchitectureQueryEngine {
       data,
       evidence,
       confidence: "CONFIRMED",
+      warnings,
     });
   }
 
@@ -703,7 +741,7 @@ export class ArchitectureQueryEngine {
           f.normalized_path AS filePath
         FROM symbols s
         JOIN files f ON f.id = s.file_id
-        WHERE s.scan_id = ? AND (s.name = ? OR s.symbol_identity LIKE ?)
+        WHERE s.scan_id = ? AND f.sensitivity_status = 'SAFE' AND (s.name = ? OR s.symbol_identity LIKE ?)
         ORDER BY s.is_exported DESC, s.name ASC
         LIMIT ?`,
       )
@@ -1105,6 +1143,24 @@ export class ArchitectureQueryEngine {
       scanId,
       data,
       evidence,
+      confidence: "CONFIRMED",
+    });
+  }
+
+  // 14. Freshness Assessment
+  public async getFreshness(options: QueryOptions = {}): Promise<QueryResult<FreshnessAssessment>> {
+    const { scanId } = this.resolveScanId(options.scanId);
+    const freshness = FreshnessEvaluator.evaluate(
+      this.db,
+      this.repository.id,
+      this.rootPath,
+      scanId,
+    );
+
+    return this.buildBaseResult({
+      category: "freshness",
+      scanId,
+      data: freshness,
       confidence: "CONFIRMED",
     });
   }

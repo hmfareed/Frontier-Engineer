@@ -17,6 +17,7 @@ import type {
   TestAssociationData,
   DecisionListData,
   DecisionDetailData,
+  FreshnessAssessment,
 } from "./types.ts";
 
 export class QueryFormatter {
@@ -37,6 +38,10 @@ export class QueryFormatter {
 
     if (result.freshness.isStale && result.freshness.staleReason) {
       lines.push(`[STALE NOTICE] ${result.freshness.staleReason}`);
+    }
+
+    if (result.freshness.isPartial || result.snapshotStatus === "PARTIAL") {
+      lines.push("[PARTIAL SNAPSHOT] Notice: Results are derived from a partial scan snapshot.");
     }
 
     if (result.warnings.length > 0) {
@@ -85,6 +90,9 @@ export class QueryFormatter {
         break;
       case "decision":
         this.renderDecisionDetail(lines, result.data as DecisionDetailData);
+        break;
+      case "freshness":
+        this.renderFreshness(lines, result.data as FreshnessAssessment);
         break;
       default:
         lines.push(JSON.stringify(result.data, null, 2));
@@ -426,6 +434,24 @@ export class QueryFormatter {
       for (const r of d.relatedDocuments) {
         lines.push(`  - ${r}`);
       }
+    }
+  }
+
+  private static renderFreshness(lines: string[], fresh: FreshnessAssessment): void {
+    lines.push("--- Index Freshness Assessment ---");
+    lines.push(`  Freshness Status : ${fresh.status}`);
+    lines.push(`  Is Stale         : ${fresh.isStale ? "YES" : "NO"}`);
+    lines.push(`  Is Partial       : ${fresh.isPartial ? "YES" : "NO"}`);
+    lines.push(`  Active Scan ID   : ${fresh.activeScanId ?? "none"}`);
+    lines.push(`  Last Indexed At  : ${fresh.lastIndexedAt ?? "never"}`);
+    if (fresh.strategy) {
+      lines.push(`  Strategy         : ${fresh.strategy}`);
+    }
+    if (fresh.checkedFilesCount !== undefined) {
+      lines.push(`  Files Checked    : ${fresh.checkedFilesCount}`);
+    }
+    if (fresh.staleReason) {
+      lines.push(`  Staleness Reason : ${fresh.staleReason}`);
     }
   }
 }

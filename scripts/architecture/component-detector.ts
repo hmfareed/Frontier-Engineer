@@ -130,12 +130,14 @@ export class ComponentDetector {
 
       // Database Subsystem
       const hasSqlFiles = extSet.has(".sql") || extSet.has(".prisma");
-      const hasDbImports =
+      const isMigrationDir = baseName === "migrations" || dir.includes("/migrations");
+      const hasDriverImports =
         collectedImports.has("node:sqlite") ||
         collectedImports.has("sqlite3") ||
         collectedImports.has("better-sqlite3") ||
         collectedImports.has("pg") ||
-        collectedImports.has("mysql2") ||
+        collectedImports.has("mysql2");
+      const hasOrmImports =
         collectedImports.has("prisma") ||
         collectedImports.has("@prisma/client") ||
         collectedImports.has("typeorm") ||
@@ -144,6 +146,8 @@ export class ComponentDetector {
         collectedImports.has("kysely") ||
         collectedImports.has("mongoose") ||
         collectedImports.has("ioredis");
+
+      const hasDbImports = hasDriverImports || hasOrmImports;
 
       if (
         baseName === "db" ||
@@ -154,24 +158,40 @@ export class ComponentDetector {
         hasSqlFiles ||
         hasDbImports
       ) {
-        const isConfirmed = hasSqlFiles || hasDbImports;
+        // Direct schema files, migrations, or native driver client setup establish a CONFIRMED boundary.
+        // ORM imports alone without schema files or migration directories are INFERRED, not CONFIRMED.
+        const isConfirmed =
+          hasSqlFiles || isMigrationDir || (hasDriverImports && baseName === "db");
+        const status: ComponentStatus = isConfirmed
+          ? "CONFIRMED"
+          : hasDbImports
+            ? "INFERRED"
+            : "CANDIDATE";
+        const confidence = isConfirmed ? 0.95 : hasDbImports ? 0.7 : 0.45;
+
         components.push({
           componentIdentity: `comp:${dir}`,
           name: dir,
           category: "database",
           rootPath: dir,
-          status: isConfirmed ? "CONFIRMED" : "INFERRED",
-          confidence: isConfirmed ? 0.95 : 0.7,
+          status,
+          confidence,
           detectionMethod: isConfirmed
             ? "database_driver_and_schema_evidence"
-            : "naming_convention",
+            : hasDbImports
+              ? "orm_library_imports"
+              : "naming_convention",
           evidenceDescription: isConfirmed
             ? `Contains database schemas, migrations, or driver imports (${
                 Array.from(collectedImports)
                   .filter((i) => i.includes("sql") || i.includes("prisma") || i.includes("orm"))
                   .join(", ") || "SQL/Prisma files"
               })`
-            : "Directory name indicates database layer without verified driver imports",
+            : hasDbImports
+              ? `Contains ORM or database package imports (${Array.from(collectedImports)
+                  .filter((i) => i.includes("sql") || i.includes("prisma") || i.includes("orm"))
+                  .join(", ")}) without dedicated schema/migration artifacts`
+              : "Directory name indicates database layer without verified driver imports or schemas",
           filesCount: files.length,
           filePaths,
         });
@@ -301,19 +321,45 @@ export class ComponentDetector {
         collectedImports.has("argon2") ||
         collectedImports.has("lucia");
 
+      const hasAuthHandler = files.some((f) => {
+        const lower = f.normalizedPath.toLowerCase();
+        return (
+          lower.includes("middleware") ||
+          lower.includes("guard") ||
+          lower.includes("handler") ||
+          lower.includes("strategy") ||
+          lower.includes("session")
+        );
+      });
+
       if (baseName === "auth" || hasAuthImports) {
-        const isConfirmed = hasAuthImports;
+        // Auth-related package import alone is insufficient to confirm an authentication boundary.
+        // Requires middleware or handler behavior with supporting AST evidence for CONFIRMED.
+        const isConfirmed = hasAuthImports && hasAuthHandler;
+        const status: ComponentStatus = isConfirmed
+          ? "CONFIRMED"
+          : hasAuthImports
+            ? "INFERRED"
+            : "CANDIDATE";
+        const confidence = isConfirmed ? 0.95 : hasAuthImports ? 0.7 : 0.45;
+
         components.push({
           componentIdentity: `comp:${dir}`,
           name: dir,
           category: "auth",
           rootPath: dir,
-          status: isConfirmed ? "CONFIRMED" : "INFERRED",
-          confidence: isConfirmed ? 0.95 : 0.7,
-          detectionMethod: isConfirmed ? "security_credential_libraries" : "naming_convention",
+          status,
+          confidence,
+          detectionMethod: isConfirmed
+            ? "auth_middleware_and_security_libraries"
+            : hasAuthImports
+              ? "security_credential_libraries"
+              : "naming_convention",
           evidenceDescription: isConfirmed
-            ? "Contains security/token verification dependencies"
-            : "Directory named auth without verified crypto/auth imports",
+            ? "Contains security/token verification dependencies with active auth middleware/handlers"
+            : hasAuthImports
+              ? "Contains auth-related package import without verified auth middleware/handler structures"
+              : "Directory named auth without verified crypto/auth imports",
           filesCount: files.length,
           filePaths,
         });

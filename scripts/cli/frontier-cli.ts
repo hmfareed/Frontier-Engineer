@@ -128,6 +128,7 @@ export async function runCli(argv: string[]): Promise<number> {
     "component",
     "entrypoints",
     "dependencies",
+    "deps",
     "dependents",
     "cycles",
     "file",
@@ -135,6 +136,7 @@ export async function runCli(argv: string[]): Promise<number> {
     "tests",
     "decisions",
     "decision",
+    "freshness",
     "query",
   ]);
 
@@ -150,6 +152,7 @@ export async function runCli(argv: string[]): Promise<number> {
   const REQUIRES_TARGET: Record<string, string> = {
     component: "<component_name>",
     dependencies: "<target_file_or_component>",
+    deps: "<target_file_or_component>",
     dependents: "<target_file_or_component>",
     file: "<file_path>",
     symbol: "<symbol_name>",
@@ -174,7 +177,12 @@ export async function runCli(argv: string[]): Promise<number> {
     await connectionManager.initialize();
 
     const repo = connectionManager.getRepository();
-    if (!repo.activeScanId && scanId === undefined && subcommand !== "status") {
+    if (
+      !repo.activeScanId &&
+      scanId === undefined &&
+      subcommand !== "status" &&
+      subcommand !== "freshness"
+    ) {
       outputError(
         `Repository index is unavailable: no active scan exists for '${repo.identity}'. Run repository scan to generate an index.`,
         3,
@@ -215,6 +223,7 @@ export async function runCli(argv: string[]): Promise<number> {
         break;
 
       case "dependencies":
+      case "deps":
         if (!target) {
           outputError("Missing required argument: <target_file_or_component>", 2, format);
           return 2;
@@ -264,6 +273,10 @@ export async function runCli(argv: string[]): Promise<number> {
           return 2;
         }
         result = await engine.getDecision(target, queryOpts);
+        break;
+
+      case "freshness":
+        result = await engine.getFreshness(queryOpts);
         break;
 
       case "query":
@@ -349,7 +362,8 @@ function printHelp(): void {
 Frontier Engineer — Architecture Intelligence Query CLI
 
 Usage:
-  frontier intelligence <command> [options]
+  npm run frontier -- [intelligence] <command> [options]
+  node scripts/cli/frontier-cli.ts [intelligence] <command> [options]
 
 Commands:
   status                     Show repository identity, database, and index freshness status
@@ -357,6 +371,7 @@ Commands:
   components                 List detected architectural components and boundaries
   component <name>           Inspect a component's files, symbols, dependencies, and tests
   entrypoints                Discover and list verified application entrypoints
+  deps <target>              Inspect direct and transitive dependencies (alias: dependencies)
   dependencies <target>      Inspect direct and transitive dependencies of a file or component
   dependents <target>        Inspect what files or components depend on a given target
   cycles                     Detect circular dependency loops and strongly connected components
@@ -365,6 +380,7 @@ Commands:
   tests [target]             Query test associations for a module or list all test coverage
   decisions                  List discovered Architecture Decision Records (ADRs)
   decision <id>              Inspect an ADR and its governed components
+  freshness                  Evaluate non-destructive index freshness against filesystem
   query "<expression>"       Deterministic natural query expression
 
 Options:

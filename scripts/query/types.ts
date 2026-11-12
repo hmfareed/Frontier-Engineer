@@ -14,7 +14,8 @@ import type {
 } from "../architecture/types.ts";
 import type { StronglyConnectedComponent } from "../architecture/cycle-analyzer.ts";
 
-export type SnapshotFreshnessStatus = "COMPLETE" | "PARTIAL" | "STALE" | "FAILED" | "NONE";
+export type SnapshotFreshnessStatus =
+  "FRESH" | "COMPLETE" | "PARTIAL" | "STALE" | "FAILED" | "NONE";
 
 export interface FreshnessAssessment {
   status: SnapshotFreshnessStatus;
@@ -23,6 +24,13 @@ export interface FreshnessAssessment {
   staleReason?: string;
   activeScanId: number | null;
   isPartial: boolean;
+  checkedFilesCount?: number;
+  strategy?: "INVENTORY_METADATA" | "CONTENT_HASH";
+}
+
+export interface FreshnessEvaluationOptions {
+  explicitScanId?: number;
+  verifyContentHashes?: boolean;
 }
 
 export interface QueryEvidence {

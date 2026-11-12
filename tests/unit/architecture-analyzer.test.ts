@@ -277,4 +277,125 @@ describe("architecture-analyzer (Deterministic Architecture Intelligence)", () =
     expect(cycleFinding).toBeDefined();
     expect(cycleFinding?.status).toBe("CONFIRMED");
   });
+
+  it("distinguishes confirmed from inferred boundaries for database and authentication", async () => {
+    const ws = createTempWorkspace();
+    fs.writeFileSync(path.join(ws, "package.json"), "{}", "utf8");
+
+    const cm = new ConnectionManager({ workspaceRoot: ws });
+    const sm = new StorageManager(cm);
+    await sm.initialize();
+
+    const inventory = createMockInventory([
+      // ORM import alone: src/orm-service/client.ts
+      { path: "src/orm-service/client.ts", size: 200 },
+      // Confirmed DB: src/db-confirmed/schema.sql
+      { path: "src/db-confirmed/schema.sql", size: 500 },
+      // Auth package import alone: src/auth-service/token.ts
+      { path: "src/auth-service/token.ts", size: 300 },
+      // Confirmed Auth: src/auth-confirmed/middleware.ts
+      { path: "src/auth-confirmed/middleware.ts", size: 400 },
+    ]);
+
+    const extractions = new Map<string, ExtractionResult>();
+
+    // orm-service imports @prisma/client alone
+    extractions.set("src/orm-service/client.ts", {
+      canonicalPath: "src/orm-service/client.ts",
+      symbols: [],
+      imports: [
+        {
+          specifier: "@prisma/client",
+          resolvedPath: null,
+          importedSymbols: [{ name: "PrismaClient" }],
+          isTypeOnly: false,
+          isDynamic: false,
+          evidenceClassification: "syntactic_ast",
+        },
+      ],
+      exports: [],
+      callExpressions: [],
+      status: "SUCCESS",
+      diagnostics: [],
+    });
+
+    // auth-service imports jsonwebtoken alone
+    extractions.set("src/auth-service/token.ts", {
+      canonicalPath: "src/auth-service/token.ts",
+      symbols: [],
+      imports: [
+        {
+          specifier: "jsonwebtoken",
+          resolvedPath: null,
+          importedSymbols: [{ name: "verify" }],
+          isTypeOnly: false,
+          isDynamic: false,
+          evidenceClassification: "syntactic_ast",
+        },
+      ],
+      exports: [],
+      callExpressions: [],
+      status: "SUCCESS",
+      diagnostics: [],
+    });
+
+    // auth-confirmed imports jsonwebtoken and has middleware.ts
+    extractions.set("src/auth-confirmed/middleware.ts", {
+      canonicalPath: "src/auth-confirmed/middleware.ts",
+      symbols: [],
+      imports: [
+        {
+          specifier: "jsonwebtoken",
+          resolvedPath: null,
+          importedSymbols: [{ name: "verify" }],
+          isTypeOnly: false,
+          isDynamic: false,
+          evidenceClassification: "syntactic_ast",
+        },
+      ],
+      exports: [],
+      callExpressions: [],
+      status: "SUCCESS",
+      diagnostics: [],
+    });
+
+    await sm.persistSnapshot({
+      repositoryIdentity: cm.getRepository().identity,
+      rootPath: ws,
+      displayName: "db-auth-boundaries",
+      inventory,
+      extractions,
+      scannerVersion: "0.6.3",
+      extractorVersion: "0.6.3",
+    });
+
+    const analyzer = new ArchitectureAnalyzer(cm.getDatabase());
+    const components = await analyzer.getComponents(cm.getRepository().id);
+
+    // ORM import alone -> INFERRED database
+    const ormComp = components.find((c) => c.rootPath === "src/orm-service")!;
+    expect(ormComp.category).toBe("database");
+    expect(ormComp.status).toBe("INFERRED");
+    expect(ormComp.confidence).toBe(0.7);
+
+    // SQL schema file -> CONFIRMED database
+    const dbConfirmed = components.find((c) => c.rootPath === "src/db-confirmed")!;
+    expect(dbConfirmed.category).toBe("database");
+    expect(dbConfirmed.status).toBe("CONFIRMED");
+    expect(dbConfirmed.confidence).toBe(0.95);
+
+    // Auth package import alone -> INFERRED auth
+    const authComp = components.find((c) => c.rootPath === "src/auth-service")!;
+    expect(authComp.category).toBe("auth");
+    expect(authComp.status).toBe("INFERRED");
+    expect(authComp.confidence).toBe(0.7);
+
+    // Auth package import + active middleware handler -> CONFIRMED auth
+    const authConfirmed = components.find((c) => c.rootPath === "src/auth-confirmed")!;
+    expect(authConfirmed.category).toBe("auth");
+    expect(authConfirmed.status).toBe("CONFIRMED");
+    expect(authConfirmed.confidence).toBe(0.95);
+
+    await sm.close();
+  });
 });
