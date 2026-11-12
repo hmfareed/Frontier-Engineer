@@ -65,6 +65,14 @@ Product documentation for Frontier Engineer. The original 26-part specification 
 | 32   | [Hooks testing](32-HOOKS-TESTING.md)               | 15 adversarial scenarios, live acceptance HOOK-01 to HOOK-10 |
 | 33   | [Hooks portability](33-HOOKS-PORTABILITY.md)       | Canonical policies, Antigravity adapter, planned platforms   |
 
+## Repository intelligence subsystem (Phase 7)
+
+| Part | Document                                                     | Coverage                                                  |
+| ---- | ------------------------------------------------------------ | --------------------------------------------------------- |
+| 34   | [Storage architecture](34-STORAGE-ARCHITECTURE.md)           | SQLite relational storage, migrations, snapshot promotion |
+| 35   | [Graph engine architecture](35-GRAPH-ENGINE-ARCHITECTURE.md) | Deterministic engineering graph, cycle-safe traversals    |
+| 36   | [Architecture intelligence](36-ARCHITECTURE-INTELLIGENCE.md) | Evidence-based entrypoint, component, and test discovery  |
+
 ## Decision records
 
 | ADR | Title                                                                       |
@@ -75,6 +83,7 @@ Product documentation for Frontier Engineer. The original 26-part specification 
 | 004 | [Rules system architecture](adr/ADR-004-rules-system.md)                    |
 | 005 | [MCP integration architecture](adr/ADR-005-mcp-integration-architecture.md) |
 | 006 | [Lifecycle hooks architecture](adr/ADR-006-lifecycle-hooks-architecture.md) |
+| 007 | [Storage and graph engine](adr/ADR-007-storage-and-graph-engine.md)         |
 
 ## Project policies
 
