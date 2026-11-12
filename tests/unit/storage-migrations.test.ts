@@ -24,7 +24,7 @@ describe("storage-migrations (Database Foundation & Schema Integrity)", () => {
     expect(getCurrentSchemaVersion(db.rawDb)).toBe(0);
     const result = runMigrations(db.rawDb);
 
-    expect(result.applied).toBe(1);
+    expect(result.applied).toBe(CURRENT_SCHEMA_VERSION);
     expect(result.currentVersion).toBe(CURRENT_SCHEMA_VERSION);
     expect(getCurrentSchemaVersion(db.rawDb)).toBe(CURRENT_SCHEMA_VERSION);
   });
@@ -250,7 +250,7 @@ describe("storage-migrations (Database Foundation & Schema Integrity)", () => {
 
   it("rolls back failed migrations atomically and leaves schema_migrations unchanged", () => {
     runMigrations(db.rawDb);
-    expect(getCurrentSchemaVersion(db.rawDb)).toBe(1);
+    expect(getCurrentSchemaVersion(db.rawDb)).toBe(CURRENT_SCHEMA_VERSION);
 
     // Simulate an invalid migration that fails halfway through
     const badMigrationSql = `
@@ -264,7 +264,7 @@ describe("storage-migrations (Database Foundation & Schema Integrity)", () => {
         db.rawDb.exec(badMigrationSql);
         db.rawDb
           .prepare("INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)")
-          .run(2, "002-bad-migration", new Date().toISOString());
+          .run(CURRENT_SCHEMA_VERSION + 1, "999-bad-migration", new Date().toISOString());
         db.rawDb.exec("COMMIT;");
       } catch (err) {
         db.rawDb.exec("ROLLBACK;");
@@ -272,8 +272,8 @@ describe("storage-migrations (Database Foundation & Schema Integrity)", () => {
       }
     }).toThrow();
 
-    // Invariant: Version remains 1, and test_migration_table was rolled back!
-    expect(getCurrentSchemaVersion(db.rawDb)).toBe(1);
+    // Invariant: Version remains CURRENT_SCHEMA_VERSION, and test_migration_table was rolled back!
+    expect(getCurrentSchemaVersion(db.rawDb)).toBe(CURRENT_SCHEMA_VERSION);
     const tableCheck = db.rawDb
       .prepare(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'test_migration_table'",
@@ -291,9 +291,9 @@ describe("storage-migrations (Database Foundation & Schema Integrity)", () => {
 
   it("reopening database after failed migration does not mark it successful and preserves recoverable state", () => {
     runMigrations(db.rawDb);
-    expect(getCurrentSchemaVersion(db.rawDb)).toBe(1);
+    expect(getCurrentSchemaVersion(db.rawDb)).toBe(CURRENT_SCHEMA_VERSION);
 
-    // Simulate failed migration 2
+    // Simulate failed migration
     try {
       db.rawDb.exec("BEGIN IMMEDIATE;");
       db.rawDb.exec("CREATE TABLE should_not_exist (id INT); INVALID SQL;");
@@ -309,8 +309,8 @@ describe("storage-migrations (Database Foundation & Schema Integrity)", () => {
     // Reopen / re-run migrations
     const res = runMigrations(db.rawDb);
     expect(res.applied).toBe(0);
-    expect(res.currentVersion).toBe(1);
-    expect(getCurrentSchemaVersion(db.rawDb)).toBe(1);
+    expect(res.currentVersion).toBe(CURRENT_SCHEMA_VERSION);
+    expect(getCurrentSchemaVersion(db.rawDb)).toBe(CURRENT_SCHEMA_VERSION);
 
     const checkTable = db.rawDb
       .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'should_not_exist'")

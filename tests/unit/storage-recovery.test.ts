@@ -238,7 +238,44 @@ describe("storage-recovery (Crash Recovery & Staging Invariants)", () => {
   it("enforces explicit partial scan promotion rules", async () => {
     const repo = connectionManager.getRepository();
 
-    // 1. Establish an initial COMPLETE scan
+    const partialInv = createMockInventory(
+      [{ path: "src/part.ts", size: 100 }],
+      "PARTIAL_WITH_ERRORS",
+    );
+
+    // 1. First-ever partial scan without opt-in: MUST NOT be promoted
+    const resPartialFirstNoOptIn = await storageManager.persistSnapshot({
+      repositoryIdentity: repo.identity,
+      rootPath: repo.rootPath,
+      displayName: repo.displayName,
+      inventory: partialInv,
+      extractions: new Map(),
+      scannerVersion: "0.6.3",
+      extractorVersion: "0.6.3",
+      allowPartialPromotion: false,
+    });
+    expect(resPartialFirstNoOptIn.status).toBe("PARTIAL");
+    expect(resPartialFirstNoOptIn.promoted).toBe(false);
+    expect(await storageManager.getActiveScan(repo.id)).toBeNull();
+
+    // 2. First-ever partial scan WITH explicit opt-in: Promoted to active scan
+    const resPartialFirstWithOptIn = await storageManager.persistSnapshot({
+      repositoryIdentity: repo.identity,
+      rootPath: repo.rootPath,
+      displayName: repo.displayName,
+      inventory: partialInv,
+      extractions: new Map(),
+      scannerVersion: "0.6.3",
+      extractorVersion: "0.6.3",
+      allowPartialPromotion: true,
+    });
+    expect(resPartialFirstWithOptIn.status).toBe("PARTIAL");
+    expect(resPartialFirstWithOptIn.promoted).toBe(true);
+    const activeFirst = await storageManager.getActiveScan(repo.id);
+    expect(activeFirst?.id).toBe(resPartialFirstWithOptIn.scanId);
+    expect(activeFirst?.status).toBe("PARTIAL");
+
+    // 3. COMPLETE scan succeeds and replaces the partial scan
     const completeInv = createMockInventory([{ path: "src/comp.ts", size: 100 }], "COMPLETE");
     const resComplete = await storageManager.persistSnapshot({
       repositoryIdentity: repo.identity,
@@ -250,30 +287,13 @@ describe("storage-recovery (Crash Recovery & Staging Invariants)", () => {
       extractorVersion: "0.6.3",
     });
     expect(resComplete.promoted).toBe(true);
+    const activeComplete = await storageManager.getActiveScan(repo.id);
+    expect(activeComplete?.id).toBe(resComplete.scanId);
+    expect(activeComplete?.status).toBe("COMPLETE");
 
-    // 2. Ingest a PARTIAL scan without override: MUST NOT replace complete scan!
-    const partialInv = createMockInventory(
-      [{ path: "src/part.ts", size: 100 }],
-      "PARTIAL_WITH_ERRORS",
-    );
-    const resPartial1 = await storageManager.persistSnapshot({
-      repositoryIdentity: repo.identity,
-      rootPath: repo.rootPath,
-      displayName: repo.displayName,
-      inventory: partialInv,
-      extractions: new Map(),
-      scannerVersion: "0.6.3",
-      extractorVersion: "0.6.3",
-    });
-
-    expect(resPartial1.status).toBe("PARTIAL");
-    expect(resPartial1.promoted).toBe(false); // Invariant: preserved complete scan!
-
-    const activeAfterPartial1 = await storageManager.getActiveScan(repo.id);
-    expect(activeAfterPartial1?.id).toBe(resComplete.scanId);
-
-    // 3. Ingest a PARTIAL scan WITH allowPartialPromotion = true: replaces complete scan
-    const resPartial2 = await storageManager.persistSnapshot({
+    // 4. Ingest a PARTIAL scan when a COMPLETE scan already exists:
+    // Even if allowPartialPromotion=true, it MUST NOT replace the existing COMPLETE active scan!
+    const resPartialAfterComplete = await storageManager.persistSnapshot({
       repositoryIdentity: repo.identity,
       rootPath: repo.rootPath,
       displayName: repo.displayName,
@@ -283,12 +303,10 @@ describe("storage-recovery (Crash Recovery & Staging Invariants)", () => {
       extractorVersion: "0.6.3",
       allowPartialPromotion: true,
     });
-
-    expect(resPartial2.status).toBe("PARTIAL");
-    expect(resPartial2.promoted).toBe(true);
-
-    const activeAfterPartial2 = await storageManager.getActiveScan(repo.id);
-    expect(activeAfterPartial2?.id).toBe(resPartial2.scanId);
+    expect(resPartialAfterComplete.status).toBe("PARTIAL");
+    expect(resPartialAfterComplete.promoted).toBe(false); // COMPLETE scan is preserved!
+    const activePreserved = await storageManager.getActiveScan(repo.id);
+    expect(activePreserved?.id).toBe(resComplete.scanId);
   });
 
   it("simulates real child process crash during indexing and verifies recovery", async () => {

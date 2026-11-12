@@ -163,16 +163,22 @@ export class SnapshotWriter {
         shouldPromote = true;
       } else if (finalStatus === "PARTIAL") {
         const currentActive = scanStore.getActiveScan(repositoryId);
-        if (!currentActive) {
-          shouldPromote = true;
-        } else if (currentActive.status !== "COMPLETE") {
-          shouldPromote = true;
-        } else if (input.allowPartialPromotion === true) {
-          shouldPromote = true;
-        } else {
+        if (currentActive && currentActive.status === "COMPLETE") {
+          // Safety policy: PARTIAL snapshots must not replace an existing COMPLETE active snapshot
           shouldPromote = false;
           diagnostics.push(
             `Partial scan completed but existing active COMPLETE scan (id: ${currentActive.id}) was preserved.`,
+          );
+        } else if (input.allowPartialPromotion === true) {
+          // Safety policy: Promoting a partial snapshot requires explicit opt-in
+          shouldPromote = true;
+          diagnostics.push(
+            "Partial scan promoted to active scan via explicit allowPartialPromotion opt-in.",
+          );
+        } else {
+          shouldPromote = false;
+          diagnostics.push(
+            "Partial scan completed but was not promoted. Promoting a partial snapshot requires explicit allowPartialPromotion=true.",
           );
         }
       }
