@@ -7,6 +7,27 @@ export interface TsConfigPaths {
   [pattern: string]: string[];
 }
 
+export type TsConfigStatus =
+  | "missing"
+  | "valid"
+  | "invalid_json"
+  | "invalid_options"
+  | "unresolvable_extends"
+  | "inheritance_cycle";
+
+export interface TsConfigDiagnostic {
+  message: string;
+  code?: number;
+  category?: "error" | "warning";
+}
+
+export interface TsConfigResult {
+  status: TsConfigStatus;
+  compilerOptions: any;
+  diagnostics: TsConfigDiagnostic[];
+  configFilePath?: string;
+}
+
 export interface TsConfigOptions {
   compilerOptions?: any;
 }
@@ -23,11 +44,13 @@ export interface ModuleResolutionResult {
   originalSpecifier: string;
   importingFile: string;
   resolvedCanonicalPath: string | null;
-  status: "resolved" | "unresolved";
+  status: "resolved" | "unresolved" | "degraded";
   resolutionMethod: "ts_resolve_module_name";
   classification: EvidenceClassification;
   isConfirmed: boolean;
   isExternal: boolean;
+  configStatus?: TsConfigStatus;
+  configDiagnostics?: TsConfigDiagnostic[];
 }
 
 const NODE_BUILTINS = new Set<string>([
@@ -88,25 +111,40 @@ const NODE_BUILTINS = new Set<string>([
 
 /**
  * Loads and parses tsconfig.json from workspace root or specified custom path.
- * Uses bundled TypeScript compiler config parser to correctly resolve 'extends',
- * baseUrl, paths, and compiler options.
+ *
+ * Distinguishes:
+ * 1. missing: no tsconfig.json found (uses documented default Bundler options)
+ * 2. valid: valid configuration parsed successfully
+ * 3. invalid_json: JSON syntax error in config
+ * 4. invalid_options: invalid compiler options
+ * 5. unresolvable_extends: extended base config file not found
+ * 6. inheritance_cycle: circularity detected in extends chain
  */
 export function loadTsConfig(
   workspaceRoot: string,
   customPath?: string,
   parser?: ParserApi,
-): any | undefined {
+): TsConfigResult {
   const normRoot = path.resolve(workspaceRoot);
   const tsconfigPath = customPath
     ? path.resolve(normRoot, customPath)
     : path.join(normRoot, "tsconfig.json");
 
+  const p = parser || loadParserSync();
+  const defaultOptions = {
+    moduleResolution: p.ModuleResolutionKind.Bundler ?? 99,
+    target: p.ScriptTarget.ESNext ?? 99,
+  };
+
   if (!fs.existsSync(tsconfigPath)) {
-    return undefined;
+    return {
+      status: "missing",
+      compilerOptions: defaultOptions,
+      diagnostics: [],
+    };
   }
 
   try {
-    const p = parser || loadParserSync();
     const configFile = p.readConfigFile(tsconfigPath, (filePath: string) => {
       try {
         return fs.readFileSync(filePath, "utf8");
@@ -115,8 +153,29 @@ export function loadTsConfig(
       }
     });
 
-    if (configFile.error || !configFile.config) {
-      return undefined;
+    if (configFile.error) {
+      const err = configFile.error;
+      const msg =
+        typeof err.messageText === "string"
+          ? err.messageText
+          : err.messageText?.messageText || "JSON syntax error in config";
+      return {
+        status: "invalid_json",
+        compilerOptions: defaultOptions,
+        diagnostics: [{ message: msg, code: err.code, category: "error" }],
+        configFilePath: tsconfigPath,
+      };
+    }
+
+    if (!configFile.config || typeof configFile.config !== "object") {
+      return {
+        status: "invalid_json",
+        compilerOptions: defaultOptions,
+        diagnostics: [
+          { message: "Config file did not contain a valid JSON object", category: "error" },
+        ],
+        configFilePath: tsconfigPath,
+      };
     }
 
     const parseConfigHost = {
@@ -146,9 +205,56 @@ export function loadTsConfig(
       tsconfigPath,
     );
 
-    return parsed.options || {};
-  } catch {
-    return undefined;
+    // Code 18003 is "No inputs were found in config file", which is expected for our headless host
+    const rawErrors = (parsed.errors || []).filter((e: any) => e.code !== 18003);
+
+    if (rawErrors.length > 0) {
+      const diagnostics: TsConfigDiagnostic[] = rawErrors.map((e: any) => ({
+        message:
+          typeof e.messageText === "string"
+            ? e.messageText
+            : e.messageText?.messageText || "Config error",
+        code: e.code,
+        category: "error" as const,
+      }));
+
+      let status: TsConfigStatus = "invalid_options";
+      for (const diag of diagnostics) {
+        if (diag.code === 18000 || /circularity/i.test(diag.message)) {
+          status = "inheritance_cycle";
+          break;
+        }
+        if (
+          diag.code === 5083 ||
+          /cannot read file/i.test(diag.message) ||
+          /not found/i.test(diag.message)
+        ) {
+          status = "unresolvable_extends";
+          break;
+        }
+      }
+
+      return {
+        status,
+        compilerOptions: { ...defaultOptions, ...(parsed.options || {}) },
+        diagnostics,
+        configFilePath: tsconfigPath,
+      };
+    }
+
+    return {
+      status: "valid",
+      compilerOptions: parsed.options || defaultOptions,
+      diagnostics: [],
+      configFilePath: tsconfigPath,
+    };
+  } catch (err: any) {
+    return {
+      status: "invalid_json",
+      compilerOptions: defaultOptions,
+      diagnostics: [{ message: err?.message || String(err), category: "error" }],
+      configFilePath: tsconfigPath,
+    };
   }
 }
 
@@ -242,14 +348,19 @@ export function resolveModuleSpecifier(
       classification: "external_or_missing",
       isConfirmed: false,
       isExternal: true,
+      configStatus: "valid",
+      configDiagnostics: [],
     };
   }
 
   // 2. Resolve parser instance
   const parser = providedParser || optionsOrTsConfig?.parser || loadParserSync();
 
-  // 3. Extract compiler options
+  // 3. Extract compiler options and config status
   let compilerOptions: any;
+  let configStatus: TsConfigStatus = "valid";
+  let configDiagnostics: TsConfigDiagnostic[] = [];
+
   if (optionsOrTsConfig?.compilerOptions) {
     compilerOptions = { ...optionsOrTsConfig.compilerOptions };
   } else if (
@@ -258,7 +369,10 @@ export function resolveModuleSpecifier(
   ) {
     compilerOptions = { ...optionsOrTsConfig };
   } else {
-    compilerOptions = loadTsConfig(normWorkspace, optionsOrTsConfig?.tsconfigPath, parser) || {};
+    const configResult = loadTsConfig(normWorkspace, optionsOrTsConfig?.tsconfigPath, parser);
+    compilerOptions = configResult.compilerOptions;
+    configStatus = configResult.status;
+    configDiagnostics = configResult.diagnostics;
   }
 
   // Ensure default module resolution if not specified
@@ -288,6 +402,7 @@ export function resolveModuleSpecifier(
   }
 
   const isRelative = specifier.startsWith("./") || specifier.startsWith("../");
+  const isConfigInvalid = configStatus !== "valid" && configStatus !== "missing";
 
   if (!resolutionResult || !resolutionResult.resolvedModule) {
     return {
@@ -295,11 +410,13 @@ export function resolveModuleSpecifier(
       originalSpecifier: specifier,
       importingFile: fromCanonicalPath,
       resolvedCanonicalPath: null,
-      status: "unresolved",
+      status: isConfigInvalid ? "degraded" : "unresolved",
       resolutionMethod: "ts_resolve_module_name",
       classification: "external_or_missing",
       isConfirmed: false,
       isExternal: !isRelative,
+      configStatus,
+      configDiagnostics,
     };
   }
 
@@ -320,6 +437,8 @@ export function resolveModuleSpecifier(
       classification: "external_or_missing",
       isConfirmed: false,
       isExternal: true,
+      configStatus,
+      configDiagnostics,
     };
   }
 
@@ -338,11 +457,30 @@ export function resolveModuleSpecifier(
       classification: "external_or_missing",
       isConfirmed: false,
       isExternal: true,
+      configStatus,
+      configDiagnostics,
     };
   }
 
-  // 8. Confirmed internal workspace module
+  // 8. Internal workspace module resolution
   const canonicalPath = rel.replace(/\\/g, "/");
+
+  // If configuration was invalid, never claim a confirmed resolution based on silently discarded errors
+  if (isConfigInvalid) {
+    return {
+      specifier,
+      originalSpecifier: specifier,
+      importingFile: fromCanonicalPath,
+      resolvedCanonicalPath: canonicalPath,
+      status: "degraded",
+      resolutionMethod: "ts_resolve_module_name",
+      classification: "external_or_missing",
+      isConfirmed: false,
+      isExternal: false,
+      configStatus,
+      configDiagnostics,
+    };
+  }
 
   return {
     specifier,
@@ -354,5 +492,7 @@ export function resolveModuleSpecifier(
     classification: "syntactic_ast",
     isConfirmed: true,
     isExternal: false,
+    configStatus,
+    configDiagnostics,
   };
 }

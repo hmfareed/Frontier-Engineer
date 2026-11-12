@@ -160,9 +160,19 @@ export async function extractFileSymbols(
   }
 
   // 7. Load tsconfig if workspaceRoot is provided
-  const tsconfig = options.workspaceRoot
+  const tsconfigResult = options.workspaceRoot
     ? loadTsConfig(options.workspaceRoot, options.tsconfigPath, parser)
     : undefined;
+
+  if (tsconfigResult && tsconfigResult.diagnostics.length > 0) {
+    status = "PARTIAL";
+    for (const d of tsconfigResult.diagnostics) {
+      diagnostics.push({
+        severity: "warning",
+        message: `tsconfig error (${tsconfigResult.status}): ${redactSecrets(d.message)}`,
+      });
+    }
+  }
 
   // 8. Visit AST and extract raw findings
   const findings = visitSourceFile(sourceFile, canonicalPath, parser);
@@ -174,11 +184,11 @@ export async function extractFileSymbols(
         imp.specifier,
         canonicalPath,
         options.workspaceRoot,
-        tsconfig,
+        tsconfigResult,
         parser,
       );
       imp.resolvedPath = res.resolvedCanonicalPath;
-      if (res.status === "unresolved" || res.isExternal) {
+      if (res.status === "unresolved" || res.status === "degraded" || res.isExternal) {
         imp.evidenceClassification = res.classification;
       }
     }

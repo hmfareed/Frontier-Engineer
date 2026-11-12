@@ -269,29 +269,70 @@ describe("extractor-module-resolution (TypeScript Module Resolution Logic & Comp
     }
   });
 
-  it("13. gracefully handles malformed package.json and invalid tsconfig files", () => {
-    fs.mkdirSync(path.join(tmpWorkspace, "packages", "bad-pkg"), { recursive: true });
-    fs.writeFileSync(
-      path.join(tmpWorkspace, "packages", "bad-pkg", "package.json"),
-      "MALFORMED JSON {{{",
-    );
-
-    // Malformed package.json does not throw
-    const resBadPkg = resolveModuleSpecifier("../packages/bad-pkg", "src/main.ts", tmpWorkspace);
-    expect(resBadPkg.status).toBe("unresolved");
-    expect(resBadPkg.resolvedCanonicalPath).toBe(null);
-
-    // Invalid tsconfig does not throw and falls back cleanly
-    fs.writeFileSync(path.join(tmpWorkspace, "tsconfig.json"), "{ INVALID TSCONFIG ");
-    const loadedConfig = loadTsConfig(tmpWorkspace);
-    expect(loadedConfig).toBeUndefined();
-
-    // Resolver falls back to default compiler options
+  it("13. distinguishes invalid JSON, invalid options, unresolvable extends, and inheritance cycles in tsconfig", () => {
     fs.mkdirSync(path.join(tmpWorkspace, "src"), { recursive: true });
     fs.writeFileSync(path.join(tmpWorkspace, "src", "util.ts"), "export const ok = 1;");
-    const resFallback = resolveModuleSpecifier("./util", "src/main.ts", tmpWorkspace);
-    expect(resFallback.status).toBe("resolved");
-    expect(resFallback.resolvedCanonicalPath).toBe("src/util.ts");
+
+    // Case 1: Missing tsconfig uses documented defaults and confirms resolution
+    const missingConfig = loadTsConfig(tmpWorkspace);
+    expect(missingConfig.status).toBe("missing");
+    expect(missingConfig.diagnostics).toHaveLength(0);
+    const resMissing = resolveModuleSpecifier("./util", "src/main.ts", tmpWorkspace);
+    expect(resMissing.status).toBe("resolved");
+    expect(resMissing.isConfirmed).toBe(true);
+
+    // Case 2: Invalid JSON preserves diagnostics and marks resolution degraded / unconfirmed
+    fs.writeFileSync(path.join(tmpWorkspace, "tsconfig.json"), "{ INVALID TSCONFIG ");
+    const jsonErrConfig = loadTsConfig(tmpWorkspace);
+    expect(jsonErrConfig.status).toBe("invalid_json");
+    expect(jsonErrConfig.diagnostics.length).toBeGreaterThan(0);
+    const resJsonErr = resolveModuleSpecifier("./util", "src/main.ts", tmpWorkspace);
+    expect(resJsonErr.status).toBe("degraded");
+    expect(resJsonErr.isConfirmed).toBe(false);
+    expect(resJsonErr.configStatus).toBe("invalid_json");
+
+    // Case 3: Invalid compiler options preserves diagnostics
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "tsconfig.json"),
+      JSON.stringify({ compilerOptions: { moduleResolution: "INVALID_RESOLVER_MODE" } }),
+    );
+    const optErrConfig = loadTsConfig(tmpWorkspace);
+    expect(optErrConfig.status).toBe("invalid_options");
+    expect(optErrConfig.diagnostics.length).toBeGreaterThan(0);
+    const resOptErr = resolveModuleSpecifier("./util", "src/main.ts", tmpWorkspace);
+    expect(resOptErr.status).toBe("degraded");
+    expect(resOptErr.isConfirmed).toBe(false);
+    expect(resOptErr.configStatus).toBe("invalid_options");
+
+    // Case 4: Unresolvable extends reference
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "tsconfig.json"),
+      JSON.stringify({ extends: "./non-existent-base.json" }),
+    );
+    const unresConfig = loadTsConfig(tmpWorkspace);
+    expect(unresConfig.status).toBe("unresolvable_extends");
+    expect(unresConfig.diagnostics.length).toBeGreaterThan(0);
+    const resUnres = resolveModuleSpecifier("./util", "src/main.ts", tmpWorkspace);
+    expect(resUnres.status).toBe("degraded");
+    expect(resUnres.isConfirmed).toBe(false);
+    expect(resUnres.configStatus).toBe("unresolvable_extends");
+
+    // Case 5: Inheritance cycle
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "tsconfig.json"),
+      JSON.stringify({ extends: "./tsconfig.cycle.json" }),
+    );
+    fs.writeFileSync(
+      path.join(tmpWorkspace, "tsconfig.cycle.json"),
+      JSON.stringify({ extends: "./tsconfig.json" }),
+    );
+    const cycleConfig = loadTsConfig(tmpWorkspace);
+    expect(cycleConfig.status).toBe("inheritance_cycle");
+    expect(cycleConfig.diagnostics.length).toBeGreaterThan(0);
+    const resCycle = resolveModuleSpecifier("./util", "src/main.ts", tmpWorkspace);
+    expect(resCycle.status).toBe("degraded");
+    expect(resCycle.isConfirmed).toBe(false);
+    expect(resCycle.configStatus).toBe("inheritance_cycle");
   });
 
   it("14. classifies built-in and external modules as unresolved / external", () => {

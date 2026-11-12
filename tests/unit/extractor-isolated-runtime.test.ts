@@ -7,17 +7,30 @@ import { describe, expect, it } from "vitest";
 import { repoRoot } from "../../scripts/lib/paths.ts";
 
 describe("extractor-isolated-runtime (AC-7201 Isolated Environment Execution & Packaging)", () => {
-  it("executes complete extraction pipeline in an isolated environment without node_modules and empty NODE_PATH", async () => {
+  it("executes complete extraction pipeline from the copied distributable plugin without node_modules and empty NODE_PATH", async () => {
     const root = repoRoot();
-    const extractorIndexPath = path.join(root, "scripts", "extractor", "index.ts");
-    const extractorUrl = pathToFileURL(extractorIndexPath).href;
 
     // Create an isolated temp directory that definitely has no node_modules
-    const isolatedDir = fs.mkdtempSync(path.join(os.tmpdir(), "fe-isolated-parser-"));
+    const isolatedDir = fs.mkdtempSync(path.join(os.tmpdir(), "fe-isolated-dist-"));
 
     try {
-      // Create two fixture files in the isolated workspace
-      const fixtureRoot = path.join(isolatedDir, "repo");
+      // 1. Copy distributable runtime plugin components into isolatedDir/dist-plugin
+      const distPluginDir = path.join(isolatedDir, "dist-plugin");
+      fs.mkdirSync(path.join(distPluginDir, "scripts"), { recursive: true });
+
+      fs.cpSync(path.join(root, "dist"), path.join(distPluginDir, "dist"), { recursive: true });
+      fs.cpSync(
+        path.join(root, "scripts", "extractor"),
+        path.join(distPluginDir, "scripts", "extractor"),
+        { recursive: true },
+      );
+      fs.copyFileSync(path.join(root, "plugin.json"), path.join(distPluginDir, "plugin.json"));
+
+      // Assert that no node_modules exists in the distributable plugin copy
+      expect(fs.existsSync(path.join(distPluginDir, "node_modules"))).toBe(false);
+
+      // 2. Create fixture in isolated workspace
+      const fixtureRoot = path.join(isolatedDir, "fixture-repo");
       fs.mkdirSync(path.join(fixtureRoot, "src"), { recursive: true });
 
       const modBContent = `export function helper(val: number): number { return val * 2; }`;
@@ -31,7 +44,11 @@ describe("extractor-isolated-runtime (AC-7201 Isolated Environment Execution & P
       `;
       fs.writeFileSync(path.join(fixtureRoot, "src", "main.ts"), modAContent, "utf8");
 
-      // Runner script imported in isolated environment
+      // 3. Load extraction entry point from the copied distribution
+      const extractorIndexPath = path.join(distPluginDir, "scripts", "extractor", "index.ts");
+      const extractorUrl = pathToFileURL(extractorIndexPath).href;
+
+      // Runner script executed in isolated environment
       const runnerScript = `
         import { extractFileSymbols, loadParser } from "${extractorUrl}";
 
@@ -63,12 +80,17 @@ describe("extractor-isolated-runtime (AC-7201 Isolated Environment Execution & P
           }
 
           const imp = result.imports[0];
-          if (!imp.sourceEvidence || imp.sourceEvidence.lineStart < 1) {
-            console.error("FAIL: missing import source evidence");
+          if (imp.resolvedPath !== "src/helper.ts") {
+            console.error("FAIL: module resolution mismatch:", imp.resolvedPath);
             process.exit(14);
           }
 
-          process.stdout.write("ISOLATED_EXTRACTION_SUCCESS");
+          if (!imp.sourceEvidence || imp.sourceEvidence.lineStart < 1) {
+            console.error("FAIL: missing import source evidence");
+            process.exit(15);
+          }
+
+          process.stdout.write("DISTRIBUTABLE_EXTRACTION_SUCCESS");
         }
 
         run().catch((err) => {
@@ -77,22 +99,22 @@ describe("extractor-isolated-runtime (AC-7201 Isolated Environment Execution & P
         });
       `;
 
-      const testScriptPath = path.join(isolatedDir, "test-runner.mjs");
+      const testScriptPath = path.join(fixtureRoot, "test-runner.mjs");
       fs.writeFileSync(testScriptPath, runnerScript, "utf8");
 
-      // Spawn node in isolatedDir with wiped NODE_PATH
+      // Spawn node in fixtureRoot with wiped NODE_PATH
       const env = { ...process.env };
       delete env.NODE_PATH;
 
       const result = cp.spawnSync("node", [testScriptPath], {
-        cwd: isolatedDir,
+        cwd: fixtureRoot,
         env,
         encoding: "utf8",
-        timeout: 15000,
+        timeout: 30000,
       });
 
       expect(result.status, `Subprocess failed with stderr: ${result.stderr}`).toBe(0);
-      expect(result.stdout).toContain("ISOLATED_EXTRACTION_SUCCESS");
+      expect(result.stdout).toContain("DISTRIBUTABLE_EXTRACTION_SUCCESS");
     } finally {
       fs.rmSync(isolatedDir, { recursive: true, force: true });
     }
