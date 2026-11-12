@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -106,7 +106,26 @@ describe("query-freshness (Index Freshness & Staleness Assessment)", () => {
     const freshness = FreshnessEvaluator.evaluate(db, 1, ws);
     expect(freshness.status).toBe("FAILED");
     expect(freshness.isStale).toBe(true);
-    expect(freshness.staleReason).toContain("does not exist or is inaccessible");
+    expect(freshness.staleReason).toContain("does not exist");
+  });
+
+  it("distinguishes an inaccessible workspace root from a missing root", async () => {
+    const ws = createTempWorkspace();
+    const memCm = new ConnectionManager({ workspaceRoot: process.cwd(), inMemory: true });
+    await memCm.initialize();
+    const db = memCm.getDatabase();
+
+    const accessSpy = vi.spyOn(fs, "accessSync").mockImplementationOnce(() => {
+      throw new Error("EACCES: permission denied");
+    });
+
+    const freshness = FreshnessEvaluator.evaluate(db, 1, ws);
+    accessSpy.mockRestore();
+
+    expect(freshness.status).toBe("FAILED");
+    expect(freshness.isStale).toBe(true);
+    expect(freshness.staleReason).toContain("is inaccessible");
+    expect(freshness.staleReason).toContain("EACCES");
   });
 
   it("reports FRESH when scan succeeded without drift", async () => {
@@ -361,5 +380,126 @@ describe("query-freshness (Index Freshness & Staleness Assessment)", () => {
     expect(freshness.status).toBe("STALE");
     expect(freshness.isStale).toBe(true);
     expect(freshness.staleReason).toContain("OutOfMemory during extraction");
+  });
+
+  it("discloses metadata limitations when same-size content is modified with preserved timestamp under INVENTORY_METADATA", async () => {
+    const ws = createTempWorkspace();
+    fs.writeFileSync(path.join(ws, "package.json"), "{}", "utf8");
+
+    connectionManager = new ConnectionManager({ workspaceRoot: ws });
+    storageManager = new StorageManager(connectionManager);
+    await storageManager.initialize();
+
+    const inventory = createMockInventory(ws, ["src/data.ts"]);
+    await storageManager.persistSnapshot({
+      repositoryIdentity: connectionManager.getRepository().identity,
+      rootPath: ws,
+      displayName: "metadata-disclosure-test",
+      inventory,
+      extractions: new Map(),
+      scannerVersion: "0.6.3",
+      extractorVersion: "0.6.3",
+    });
+
+    const fullPath = path.join(ws, "src/data.ts");
+    const originalContent = fs.readFileSync(fullPath, "utf8");
+    const modifiedContent = "C" + originalContent.slice(1);
+    expect(Buffer.byteLength(modifiedContent)).toBe(Buffer.byteLength(originalContent));
+    fs.writeFileSync(fullPath, modifiedContent, "utf8");
+
+    const t = new Date(1700000000000);
+    fs.utimesSync(fullPath, t, t);
+
+    const db = connectionManager.getDatabase();
+    const repo = connectionManager.getRepository();
+
+    const freshness = FreshnessEvaluator.evaluate(db, repo.id, ws);
+    expect(freshness.isStale).toBe(false);
+    expect(freshness.strategy).toBe("INVENTORY_METADATA");
+    expect(freshness.disclosures).toBeDefined();
+    expect(freshness.disclosures![0]).toContain("Metadata-only evaluation");
+    expect(freshness.disclosures![0]).toContain(
+      "preserve file size and modification timestamps within tolerance cannot be detected without content hash verification",
+    );
+  });
+
+  it("detects staleness when same-size content is modified with preserved timestamp under CONTENT_HASH strategy", async () => {
+    const ws = createTempWorkspace();
+    fs.writeFileSync(path.join(ws, "package.json"), "{}", "utf8");
+
+    connectionManager = new ConnectionManager({ workspaceRoot: ws });
+    storageManager = new StorageManager(connectionManager);
+    await storageManager.initialize();
+
+    const inventory = createMockInventory(ws, ["src/data.ts"]);
+    await storageManager.persistSnapshot({
+      repositoryIdentity: connectionManager.getRepository().identity,
+      rootPath: ws,
+      displayName: "content-hash-test",
+      inventory,
+      extractions: new Map(),
+      scannerVersion: "0.6.3",
+      extractorVersion: "0.6.3",
+    });
+
+    const fullPath = path.join(ws, "src/data.ts");
+    const originalContent = fs.readFileSync(fullPath, "utf8");
+    const modifiedContent = "X" + originalContent.slice(1);
+    expect(Buffer.byteLength(modifiedContent)).toBe(Buffer.byteLength(originalContent));
+    fs.writeFileSync(fullPath, modifiedContent, "utf8");
+
+    const t = new Date(1700000000000);
+    fs.utimesSync(fullPath, t, t);
+
+    const db = connectionManager.getDatabase();
+    const repo = connectionManager.getRepository();
+
+    const freshness = FreshnessEvaluator.evaluate(db, repo.id, ws, { verifyContentHashes: true });
+    expect(freshness.status).toBe("STALE");
+    expect(freshness.isStale).toBe(true);
+    expect(freshness.strategy).toBe("CONTENT_HASH");
+    expect(freshness.staleReason).toContain("content hash mismatch");
+  });
+
+  it("evaluates source modification inside 1000ms timestamp tolerance window", async () => {
+    const ws = createTempWorkspace();
+    fs.writeFileSync(path.join(ws, "package.json"), "{}", "utf8");
+
+    connectionManager = new ConnectionManager({ workspaceRoot: ws });
+    storageManager = new StorageManager(connectionManager);
+    await storageManager.initialize();
+
+    const inventory = createMockInventory(ws, ["src/service.ts"]);
+    await storageManager.persistSnapshot({
+      repositoryIdentity: connectionManager.getRepository().identity,
+      rootPath: ws,
+      displayName: "tolerance-test",
+      inventory,
+      extractions: new Map(),
+      scannerVersion: "0.6.3",
+      extractorVersion: "0.6.3",
+    });
+
+    const fullPath = path.join(ws, "src/service.ts");
+    const toleranceTime = new Date(1700000000500);
+    fs.utimesSync(fullPath, toleranceTime, toleranceTime);
+
+    const db = connectionManager.getDatabase();
+    const repo = connectionManager.getRepository();
+
+    const freshnessMeta = FreshnessEvaluator.evaluate(db, repo.id, ws);
+    expect(freshnessMeta.isStale).toBe(false);
+    expect(freshnessMeta.strategy).toBe("INVENTORY_METADATA");
+    expect(freshnessMeta.disclosures![0]).toContain(
+      "preserve file size and modification timestamps within tolerance cannot be detected",
+    );
+
+    const beyondToleranceTime = new Date(1700000002000);
+    fs.utimesSync(fullPath, beyondToleranceTime, beyondToleranceTime);
+
+    const freshnessBeyond = FreshnessEvaluator.evaluate(db, repo.id, ws);
+    expect(freshnessBeyond.status).toBe("STALE");
+    expect(freshnessBeyond.isStale).toBe(true);
+    expect(freshnessBeyond.staleReason).toContain("modified after indexing");
   });
 });

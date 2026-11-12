@@ -39,24 +39,29 @@ export class FreshnessEvaluator {
         : (explicitScanIdOrOptions ?? {});
 
     // 1. Condition 9: Verify repository root existence and accessibility
-    let rootAccessible = false;
-    try {
-      if (fs.existsSync(rootPath)) {
-        fs.accessSync(rootPath, fs.constants.R_OK);
-        rootAccessible = true;
-      }
-    } catch {
-      rootAccessible = false;
-    }
-
-    if (!rootAccessible) {
+    if (!fs.existsSync(rootPath)) {
       return {
         status: "FAILED",
         lastIndexedAt: null,
         isStale: true,
-        staleReason: `Repository root path does not exist or is inaccessible: ${rootPath}`,
+        staleReason: `Repository root path does not exist: ${rootPath}`,
         activeScanId: null,
         isPartial: false,
+        disclosures: ["Repository root was not found on the filesystem."],
+      };
+    }
+
+    try {
+      fs.accessSync(rootPath, fs.constants.R_OK);
+    } catch (err) {
+      return {
+        status: "FAILED",
+        lastIndexedAt: null,
+        isStale: true,
+        staleReason: `Repository root path exists but is inaccessible: ${rootPath} (${err instanceof Error ? err.message : String(err)})`,
+        activeScanId: null,
+        isPartial: false,
+        disclosures: ["Repository root exists but access was denied."],
       };
     }
 
@@ -200,6 +205,16 @@ export class FreshnessEvaluator {
     }[];
 
     const indexedPathsSet = new Set<string>();
+    let contentVerifiedCount = 0;
+    let unverifiedFilesCount = 0;
+    const disclosures: string[] = [];
+    const limitations: string[] = [];
+
+    if (!options.verifyContentHashes) {
+      disclosures.push(
+        "Metadata-only evaluation: File existence, sizes, and timestamps were verified. Content modifications that preserve file size and modification timestamps within tolerance cannot be detected without content hash verification (--verify-content).",
+      );
+    }
 
     for (const f of dbFiles) {
       indexedPathsSet.add(f.normalizedPath);
@@ -249,23 +264,46 @@ export class FreshnessEvaluator {
           };
         }
 
-        // 5b. Content-hash verification when requested or practical
-        if (options.verifyContentHashes && f.contentHash && f.sensitivityStatus === "SAFE") {
-          const hashRes = stableReadFileAndHash(fullPath);
-          if (hashRes.contentHash && hashRes.contentHash !== f.contentHash) {
-            return {
-              status: "STALE",
-              lastIndexedAt: scanRow.completedAt ?? scanRow.startedAt,
-              isStale: true,
-              staleReason: `File '${f.normalizedPath}' content changed while modification timestamp was preserved (content hash mismatch).`,
-              activeScanId: scanRow.id,
-              isPartial,
-              strategy: "CONTENT_HASH",
-            };
+        // 5b. Content-hash verification when requested
+        if (options.verifyContentHashes) {
+          if (f.contentHash && f.sensitivityStatus === "SAFE") {
+            const hashRes = stableReadFileAndHash(fullPath);
+            if (hashRes.contentHash) {
+              if (hashRes.contentHash !== f.contentHash) {
+                return {
+                  status: "STALE",
+                  lastIndexedAt: scanRow.completedAt ?? scanRow.startedAt,
+                  isStale: true,
+                  staleReason: `File '${f.normalizedPath}' content changed while modification timestamp was preserved (content hash mismatch).`,
+                  activeScanId: scanRow.id,
+                  isPartial,
+                  strategy: "CONTENT_HASH",
+                  checkedFilesCount: dbFiles.length,
+                };
+              }
+              contentVerifiedCount++;
+            } else {
+              unverifiedFilesCount++;
+            }
+          } else {
+            // Sensitive or unhashed file skipped from content hash check
+            unverifiedFilesCount++;
           }
         }
       } catch {
-        // Non-fatal if single file stat fails
+        unverifiedFilesCount++;
+      }
+    }
+
+    if (options.verifyContentHashes) {
+      if (unverifiedFilesCount > 0) {
+        limitations.push(
+          `Content verification incomplete: ${unverifiedFilesCount} of ${dbFiles.length} files could not be hash-verified (skipped sensitive files or unreadable paths).`,
+        );
+      } else {
+        disclosures.push(
+          `Complete content verification: All ${contentVerifiedCount} indexed files verified against SHA-256 content hashes.`,
+        );
       }
     }
 
@@ -307,6 +345,8 @@ export class FreshnessEvaluator {
       isPartial,
       checkedFilesCount: dbFiles.length,
       strategy: options.verifyContentHashes ? "CONTENT_HASH" : "INVENTORY_METADATA",
+      disclosures: disclosures.length > 0 ? disclosures : undefined,
+      limitations: limitations.length > 0 ? limitations : undefined,
     };
   }
 

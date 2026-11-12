@@ -17,6 +17,8 @@ import type { StronglyConnectedComponent } from "../architecture/cycle-analyzer.
 export type SnapshotFreshnessStatus =
   "FRESH" | "COMPLETE" | "PARTIAL" | "STALE" | "FAILED" | "NONE";
 
+export type ConfidenceTier = "CONFIRMED" | "INFERRED" | "CANDIDATE" | "UNRESOLVED";
+
 export interface FreshnessAssessment {
   status: SnapshotFreshnessStatus;
   lastIndexedAt: string | null;
@@ -26,6 +28,8 @@ export interface FreshnessAssessment {
   isPartial: boolean;
   checkedFilesCount?: number;
   strategy?: "INVENTORY_METADATA" | "CONTENT_HASH";
+  disclosures?: string[];
+  limitations?: string[];
 }
 
 export interface FreshnessEvaluationOptions {
@@ -61,7 +65,8 @@ export interface QueryResult<T> {
   };
   data: T;
   evidence: QueryEvidence[];
-  confidence: "CONFIRMED" | "INFERRED" | "CANDIDATE" | "MIXED";
+  confidence: ConfidenceTier;
+  isMixedConfidence?: boolean;
   warnings: string[];
   limitsApplied: QueryLimitsApplied;
   generatedAt: string;

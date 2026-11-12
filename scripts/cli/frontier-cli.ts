@@ -32,6 +32,7 @@ export async function runCli(argv: string[]): Promise<number> {
   let limit: number | undefined;
   let depth: number | undefined;
   let scanId: number | undefined;
+  let verifyContent = false;
 
   // Manual argument parsing without external dependencies
   const positional: string[] = [];
@@ -94,6 +95,8 @@ export async function runCli(argv: string[]): Promise<number> {
         outputError("Invalid scan-id option: must be a positive integer.", 2, format);
         return 2;
       }
+    } else if (arg === "--verify-content") {
+      verifyContent = true;
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       return 0;
@@ -276,7 +279,10 @@ export async function runCli(argv: string[]): Promise<number> {
         break;
 
       case "freshness":
-        result = await engine.getFreshness(queryOpts);
+        result = await engine.getFreshness({
+          ...queryOpts,
+          verifyContentHashes: verifyContent,
+        });
         break;
 
       case "query":
@@ -366,12 +372,13 @@ Usage:
   node scripts/cli/frontier-cli.ts [intelligence] <command> [options]
 
 Commands:
+  # Primary Architecture Commands (15)
   status                     Show repository identity, database, and index freshness status
   overview                   Provide concise, evidence-backed architectural overview
+  freshness                  Evaluate non-destructive index freshness against filesystem
   components                 List detected architectural components and boundaries
   component <name>           Inspect a component's files, symbols, dependencies, and tests
   entrypoints                Discover and list verified application entrypoints
-  deps <target>              Inspect direct and transitive dependencies (alias: dependencies)
   dependencies <target>      Inspect direct and transitive dependencies of a file or component
   dependents <target>        Inspect what files or components depend on a given target
   cycles                     Detect circular dependency loops and strongly connected components
@@ -380,8 +387,10 @@ Commands:
   tests [target]             Query test associations for a module or list all test coverage
   decisions                  List discovered Architecture Decision Records (ADRs)
   decision <id>              Inspect an ADR and its governed components
-  freshness                  Evaluate non-destructive index freshness against filesystem
   query "<expression>"       Deterministic natural query expression
+
+  # Command Aliases (1)
+  deps <target>              Alias for 'dependencies <target>'
 
 Options:
   --format <text|json>       Output format (default: text)
@@ -389,6 +398,7 @@ Options:
   --depth <n>                Maximum traversal depth for dependency queries (default: 3, max: 10)
   --limit <n>                Maximum number of results to display (default: 50)
   --scan-id <id>             Explicit historical scan ID to inspect (default: active scan)
+  --verify-content           Perform full SHA-256 cryptographic content hash verification
   --help, -h                 Display this help message
 
 Exit codes:

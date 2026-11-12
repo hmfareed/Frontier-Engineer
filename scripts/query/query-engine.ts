@@ -31,7 +31,9 @@ import type {
   DecisionListData,
   DecisionDetailData,
   FreshnessAssessment,
+  FreshnessEvaluationOptions,
   SnapshotFreshnessStatus,
+  ConfidenceTier,
   QueryEvidence,
   QueryLimitsApplied,
 } from "./types.ts";
@@ -72,12 +74,20 @@ export class ArchitectureQueryEngine {
       }
       return { scanId: explicitScanId, isHistorical: true };
     }
-    if (!this.repository.activeScanId) {
+
+    // Authoritative lookup from database repositories table
+    const repoRow = this.db
+      .prepare("SELECT active_scan_id FROM repositories WHERE id = ?")
+      .get(this.repository.id) as { active_scan_id: number | null } | undefined;
+
+    const activeScanId = repoRow?.active_scan_id ?? this.repository.activeScanId;
+
+    if (!activeScanId) {
       throw new Error(
         `No active scan index available for repository '${this.repository.identity}'. Run a scan to index.`,
       );
     }
-    return { scanId: this.repository.activeScanId, isHistorical: false };
+    return { scanId: activeScanId, isHistorical: false };
   }
 
   private buildBaseResult<T>(params: {
@@ -87,7 +97,8 @@ export class ArchitectureQueryEngine {
     scanId: number;
     data: T;
     evidence?: QueryEvidence[];
-    confidence?: "CONFIRMED" | "INFERRED" | "CANDIDATE" | "MIXED";
+    confidence?: ConfidenceTier;
+    isMixedConfidence?: boolean;
     warnings?: string[];
     limits?: QueryLimitsApplied;
   }): QueryResult<T> {
@@ -138,6 +149,7 @@ export class ArchitectureQueryEngine {
       data: params.data,
       evidence: params.evidence ?? [],
       confidence: params.confidence ?? "CONFIRMED",
+      isMixedConfidence: params.isMixedConfidence ?? false,
       warnings,
       limitsApplied: params.limits ?? { truncated: false },
       generatedAt: new Date().toISOString(),
@@ -379,7 +391,8 @@ export class ArchitectureQueryEngine {
         totalCount,
       },
       evidence,
-      confidence: items.every((i) => i.status === "CONFIRMED") ? "CONFIRMED" : "MIXED",
+      confidence: items.every((i) => i.status === "CONFIRMED") ? "CONFIRMED" : "INFERRED",
+      isMixedConfidence: !items.every((i) => i.status === "CONFIRMED"),
       limits: {
         resultLimit: limit,
         truncated,
@@ -590,7 +603,8 @@ export class ArchitectureQueryEngine {
         totalCount: entrypoints.length,
       },
       evidence,
-      confidence: paged.every((e) => e.status === "CONFIRMED") ? "CONFIRMED" : "MIXED",
+      confidence: paged.every((e) => e.status === "CONFIRMED") ? "CONFIRMED" : "INFERRED",
+      isMixedConfidence: !paged.every((e) => e.status === "CONFIRMED"),
       limits: {
         resultLimit: limit,
         truncated,
@@ -945,7 +959,8 @@ export class ArchitectureQueryEngine {
       scanId,
       data,
       evidence,
-      confidence: direct.every((d) => d.status === "CONFIRMED") ? "CONFIRMED" : "MIXED",
+      confidence: direct.every((d) => d.status === "CONFIRMED") ? "CONFIRMED" : "INFERRED",
+      isMixedConfidence: !direct.every((d) => d.status === "CONFIRMED"),
       limits: {
         depthLimit: depth,
         resultLimit: limit,
@@ -1051,7 +1066,10 @@ export class ArchitectureQueryEngine {
       scanId,
       data,
       evidence,
-      confidence: paged.every((a) => a.associationStatus === "CONFIRMED") ? "CONFIRMED" : "MIXED",
+      confidence: paged.every((a) => a.associationStatus === "CONFIRMED")
+        ? "CONFIRMED"
+        : "INFERRED",
+      isMixedConfidence: !paged.every((a) => a.associationStatus === "CONFIRMED"),
       limits: {
         resultLimit: limit,
         truncated,
@@ -1148,14 +1166,14 @@ export class ArchitectureQueryEngine {
   }
 
   // 14. Freshness Assessment
-  public async getFreshness(options: QueryOptions = {}): Promise<QueryResult<FreshnessAssessment>> {
-    const { scanId } = this.resolveScanId(options.scanId);
-    const freshness = FreshnessEvaluator.evaluate(
-      this.db,
-      this.repository.id,
-      this.rootPath,
-      scanId,
-    );
+  public async getFreshness(
+    options: QueryOptions & FreshnessEvaluationOptions = {},
+  ): Promise<QueryResult<FreshnessAssessment>> {
+    const { scanId } = this.resolveScanId(options.scanId ?? options.explicitScanId);
+    const freshness = FreshnessEvaluator.evaluate(this.db, this.repository.id, this.rootPath, {
+      explicitScanId: scanId,
+      verifyContentHashes: options.verifyContentHashes,
+    });
 
     return this.buildBaseResult({
       category: "freshness",

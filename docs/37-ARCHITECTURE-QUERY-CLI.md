@@ -35,7 +35,9 @@ The query engine and architecture analyzer assign one of four confidence ratings
 1. **`CONFIRMED` (1.00 / 0.90+):** Verified by direct AST nodes, schema files, or explicit manifest declarations.
 2. **`INFERRED` (0.70 – 0.85):** Supported by indirect structural signals, package imports without handler implementations, or standard naming conventions.
 3. **`CANDIDATE` (0.50 – 0.65):** Tentative evidence such as loose folder naming without matching symbols or configuration.
-4. **`MIXED`:** Aggregated results spanning multiple evidence tiers.
+4. **`UNRESOLVED` (0.00 – 0.49):** Explicitly unresolvable targets, broken references, or unconfirmed syntactic calls.
+
+Multi-signal variance across collections is tracked separately via `isMixedConfidence: boolean` on `QueryResult<T>` rather than being conflated into a confidence tier.
 
 #### Relationship Evidence Integrity
 
@@ -125,7 +127,8 @@ export interface QueryResult<T> {
   };
   data: T;
   evidence: QueryEvidence[];
-  confidence: "CONFIRMED" | "INFERRED" | "CANDIDATE" | "MIXED";
+  confidence: "CONFIRMED" | "INFERRED" | "CANDIDATE" | "UNRESOLVED";
+  isMixedConfidence?: boolean;
   warnings: string[];
   limitsApplied: {
     depthLimit?: number;
@@ -144,35 +147,42 @@ The `FreshnessEvaluator` (`scripts/query/freshness-evaluator.ts`) verifies repos
 - **`COMPLETE`:** Legacy alias for fresh active scan.
 - **`PARTIAL`:** Active scan was promoted under partial opt-in mode. Emits prominent `[PARTIAL SNAPSHOT]` warning banner.
 - **`STALE`:** Drift detected between workspace disk files and active snapshot metadata.
-- **`FAILED`:** Latest scan failed, superseding older active snapshots until re-indexed.
-- **`NONE`:** No active scan run exists or repository root is missing/inaccessible.
+- **`FAILED`:** Latest scan failed, superseding older active snapshots until re-indexed; or repository root missing/inaccessible.
+- **`NONE`:** No active scan run exists for the repository.
 
-#### Mandatory Evaluated Conditions
+#### Metadata-Verified vs. Content-Verified Distinction
 
-The evaluator checks nine discrete conditions:
+Freshness verification operates under an explicit two-tier strategy:
 
-1. **Source Modification:** Any indexed source file has `stat.mtimeMs > scanStartedAt + 1000ms`.
-2. **Source Deletion:** Any indexed file no longer exists on disk.
-3. **Source Addition:** Unindexed source files discovered in the workspace (honoring `.gitignore`).
-4. **Manifest Modification:** Key project manifests (`package.json`, `tsconfig.json`, `pnpm-lock.yaml`, etc.) modified after scan.
-5. **Preserved Timestamps with Changed Content:** File size mismatch with preserved timestamp, or optional content hash drift.
-6. **Partial Snapshot:** Snapshot marked with partial status.
-7. **Failed Latest Scan:** Latest scan failed, preventing silent fallback to outdated snapshots.
-8. **Missing Active Scan:** Database contains no active scan.
-9. **Missing / Inaccessible Root:** Workspace directory does not exist or cannot be read.
+1. **`INVENTORY_METADATA` (Default):**
+   - Checks inventory membership, file existence, file sizes, and filesystem timestamps.
+   - Bounded cost: avoids re-parsing ASTs or hashing entire repository trees during standard queries.
+   - **Explicit Disclosure:** Metadata evaluation discloses that same-size content changes with preserved timestamps within tolerance cannot be detected without content hashing.
+2. **`CONTENT_HASH` (Explicit via `--verify-content`):**
+   - Computes cryptographic SHA-256 digests of workspace files and compares against indexed `content_hash` records.
+   - Reports complete content verification only when all applicable indexed files are hash-verified.
+   - Discloses limitations if sensitive files are excluded (to prevent secret leaks) or if any unreadable paths were skipped.
 
-#### Performance and Verification Strategy
+#### Timestamp Tolerance Rationale
 
-Freshness checking employs a two-tier strategy:
+The evaluator applies a **1,000 ms tolerance window** when comparing filesystem `mtimeMs` against indexed modification timestamps:
 
-- **`INVENTORY_METADATA` (Default):** Bounded filesystem stat and directory walk against indexed inventory. Avoids expensive re-parsing of ASTs or re-extraction.
-- **`CONTENT_HASH` (Explicit):** Performs SHA-256 content hash comparison for files when byte verification is explicitly requested.
+- **Filesystem Granularity Differences:** FAT32 filesystems enforce 2-second timestamp precision; older UNIX ext2/ext3 and HFS+ filesystems enforce 1-second precision.
+- **Tooling Jitter:** ZIP archives, `tar` extractions, and Git checkouts frequently truncate sub-second components, rounding timestamps to the nearest second.
+- **Scan Ingestion Window:** Files touched during the start second of a scan run could otherwise appear slightly ahead of `scan_runs.started_at`.
+- **Integrity Rule:** Changes occurring within the 1,000 ms window with unchanged sizes are recognized as undetected by metadata checks and are disclosed in `disclosures[]`. When cryptographic assurance is required, `--verify-content` detects them via SHA-256 mismatch.
 
-### 2.4 Snapshot Isolation and Historical Scans
+#### Missing vs. Inaccessible Root Distinction
 
-All queries target the active snapshot by default. Historical snapshots can be explicitly inspected using `--scan-id <id>` or `options.scanId`.
+- **Missing Root:** When the directory does not exist (`!fs.existsSync(rootPath)`), returns `FAILED` with `staleReason: Repository root path does not exist: <path>`.
+- **Inaccessible Root:** When the directory exists but read access is denied (`fs.accessSync(..., R_OK)` throws EACCES), returns `FAILED` with `staleReason: Repository root path exists but is inaccessible: <path>`.
 
-- **Safe Rejection:** If a requested historical scan ID does not exist in `scan_runs`, the engine throws a clear error and rejects the request; it never silently substitutes an arbitrary snapshot.
+### 2.4 Authoritative Active Snapshot Contract & Historical Scans
+
+- **Source of Truth:** The authoritative active snapshot pointer is `repositories.active_scan_id`. `scan_runs.is_active` is maintained in atomic synchronization by `promoteScan()`.
+- **Unindexed State:** When `repositories.active_scan_id` is null, commands requiring an index return exit code 3 (`Repository index is unavailable`).
+- **Failure Preservation:** If a subsequent scan run fails, `repositories.active_scan_id` remains unchanged (preserving the older stable snapshot), but the `FreshnessEvaluator` marks the index `STALE` with notice of the failed latest scan.
+- **Historical Query Isolation:** Explicit `--scan-id <id>` queries inspect historical snapshots without modifying `repositories.active_scan_id`. Requesting an unrecorded scan ID safely rejects with exit code 4.
 - **Snapshot Diffs:** Historical snapshot comparisons and diffing (`getSnapshotDiff`) are not part of Phase 7.4 and are reserved for Phase 7.5.
 
 ### 2.5 Evidence Integrity & Secret Safety
@@ -198,7 +208,9 @@ _(Note: `frontier` is an npm script in `package.json`, not a globally installed 
 
 ### 3.1 Command Reference
 
-The CLI supports 14 architecture intelligence commands:
+The CLI supports **15 primary architecture intelligence commands** and **1 command alias** (16 command invocations total):
+
+#### Primary Commands (15)
 
 ```bash
 npm run frontier -- status [--format text|json]
@@ -208,7 +220,6 @@ npm run frontier -- components [--format text|json] [--limit 50]
 npm run frontier -- component <name> [--format text|json]
 npm run frontier -- entrypoints [--format text|json]
 npm run frontier -- dependencies <target> [--depth 3] [--limit 50] [--format text|json]
-npm run frontier -- deps <target> [--depth 3] [--limit 50] [--format text|json]  # alias for dependencies
 npm run frontier -- dependents <target> [--depth 3] [--limit 50] [--format text|json]
 npm run frontier -- cycles [--format text|json]
 npm run frontier -- file <path> [--format text|json]
@@ -217,6 +228,12 @@ npm run frontier -- tests [target] [--format text|json]
 npm run frontier -- decisions [--format text|json]
 npm run frontier -- decision <id> [--format text|json]
 npm run frontier -- query "<expression>" [--format text|json]
+```
+
+#### Command Aliases (1)
+
+```bash
+npm run frontier -- deps <target> [--depth 3] [--limit 50] [--format text|json]  # alias for dependencies
 ```
 
 All commands accept `--scan-id <id>` to target an explicit historical scan.
@@ -280,8 +297,8 @@ The `QueryGrammar` parser translates English-like questions into structured quer
 ### 6.1 Test Environment Disclosures
 
 - **Host Environment:** Windows 11 x64, Intel Core i7, Node.js v22.14.0, SQLite (via `node:sqlite`).
-- **Cross-Platform Compatibility:** Internally, path handling and query normalizers enforce canonical POSIX paths (`/`). Actual automated tests run on the host environment; full cross-platform CI verification (Linux / macOS) is performed in containerized environments.
-- **Scope Limitation:** Benchmark fixtures represent synthetic repositories of 50, 200, and 600 files. 600 files represents a synthetic scaling test sample, not a claim of universal suitability for multi-million-line monorepos. No universal 100ms SLA is claimed or guaranteed across arbitrary host hardware.
+- **Cross-Platform Qualifications:** Internally, path handling and query normalizers enforce canonical POSIX paths (`/`). Actual automated tests were executed exclusively on the verified Windows 11 host environment. Platform compatibility for Linux or macOS is limited to path normalization logic; host-level execution on other platforms is subject to platform-specific CI pipelines.
+- **Scope Limitation:** Benchmark fixtures represent synthetic repositories of 50, 200, and 600 files. 600 files represents a synthetic scaling test sample, not a claim of universal suitability for multi-million-line monorepos. Measured results under synthetic fixtures do not constitute a contractual SLA across arbitrary host hardware.
 
 ### 6.2 Measured Benchmark Results
 

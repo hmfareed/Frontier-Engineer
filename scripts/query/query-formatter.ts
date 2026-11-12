@@ -33,7 +33,7 @@ export class QueryFormatter {
       `=== FRONTIER INTELLIGENCE: ${result.query.category.toUpperCase()}${result.query.target ? ` [${result.query.target}]` : ""} ===`,
     );
     lines.push(
-      `Repository: ${result.repositoryIdentity} | Snapshot: ${result.scanId} (${result.snapshotStatus}) | Confidence: ${result.confidence}`,
+      `Repository: ${result.repositoryIdentity} | Snapshot: ${result.scanId} (${result.snapshotStatus}) | Confidence: ${result.confidence}${result.isMixedConfidence ? " (Mixed)" : ""}`,
     );
 
     if (result.freshness.isStale && result.freshness.staleReason) {
@@ -452,6 +452,18 @@ export class QueryFormatter {
     }
     if (fresh.staleReason) {
       lines.push(`  Staleness Reason : ${fresh.staleReason}`);
+    }
+    if (fresh.disclosures && fresh.disclosures.length > 0) {
+      lines.push("  Disclosures      :");
+      for (const disc of fresh.disclosures) {
+        lines.push(`    - ${disc}`);
+      }
+    }
+    if (fresh.limitations && fresh.limitations.length > 0) {
+      lines.push("  Limitations      :");
+      for (const lim of fresh.limitations) {
+        lines.push(`    - ${lim}`);
+      }
     }
   }
 }

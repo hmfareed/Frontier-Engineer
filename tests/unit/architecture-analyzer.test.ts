@@ -398,4 +398,49 @@ describe("architecture-analyzer (Deterministic Architecture Intelligence)", () =
 
     await sm.close();
   });
+
+  it("enforces four-tier confidence contract and tracks mixed confidence aggregation", async () => {
+    const ws = createTempWorkspace();
+    fs.writeFileSync(path.join(ws, "package.json"), "{}", "utf8");
+
+    const cm = new ConnectionManager({ workspaceRoot: ws });
+    const sm = new StorageManager(cm);
+    await sm.initialize();
+
+    const inventory = createMockInventory([
+      // CONFIRMED component (has .tsx)
+      { path: "src/components/Button.tsx", size: 200 },
+      // INFERRED component (directory convention only, no .tsx or framework imports)
+      { path: "src/ui/layout.js", size: 200 },
+    ]);
+
+    await sm.persistSnapshot({
+      repositoryIdentity: cm.getRepository().identity,
+      rootPath: ws,
+      displayName: "confidence-tier-test",
+      inventory,
+      extractions: new Map(),
+      scannerVersion: "0.6.3",
+      extractorVersion: "0.6.3",
+    });
+
+    const { ArchitectureQueryEngine } = await import("../../scripts/query/query-engine.ts");
+    const engine = new ArchitectureQueryEngine(cm);
+    const result = await engine.listComponents();
+
+    expect(result.data.components.length).toBeGreaterThanOrEqual(2);
+    const confirmedComp = result.data.components.find((c) => c.status === "CONFIRMED");
+    const inferredComp = result.data.components.find((c) => c.status === "INFERRED");
+
+    expect(confirmedComp).toBeDefined();
+    expect(inferredComp).toBeDefined();
+
+    // QueryResult.confidence adheres to four-tier ConfidenceTier (CONFIRMED | INFERRED | CANDIDATE | UNRESOLVED)
+    expect(["CONFIRMED", "INFERRED", "CANDIDATE", "UNRESOLVED"]).toContain(result.confidence);
+    expect(result.confidence).toBe("INFERRED");
+    // Multi-signal variance is explicitly modeled by isMixedConfidence: true
+    expect(result.isMixedConfidence).toBe(true);
+
+    await sm.close();
+  });
 });
