@@ -288,4 +288,81 @@ describe("storage-migrations (Database Foundation & Schema Integrity)", () => {
     expect(check.ok).toBe(true);
     expect(check.message).toBe("ok");
   });
+
+  it("reopening database after failed migration does not mark it successful and preserves recoverable state", () => {
+    runMigrations(db.rawDb);
+    expect(getCurrentSchemaVersion(db.rawDb)).toBe(1);
+
+    // Simulate failed migration 2
+    try {
+      db.rawDb.exec("BEGIN IMMEDIATE;");
+      db.rawDb.exec("CREATE TABLE should_not_exist (id INT); INVALID SQL;");
+      db.rawDb.exec("COMMIT;");
+    } catch {
+      try {
+        db.rawDb.exec("ROLLBACK;");
+      } catch {
+        // ignore
+      }
+    }
+
+    // Reopen / re-run migrations
+    const res = runMigrations(db.rawDb);
+    expect(res.applied).toBe(0);
+    expect(res.currentVersion).toBe(1);
+    expect(getCurrentSchemaVersion(db.rawDb)).toBe(1);
+
+    const checkTable = db.rawDb
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'should_not_exist'")
+      .get();
+    expect(checkTable).toBeUndefined();
+  });
+
+  it("verifies PRAGMA foreign_key_check detects valid relationships and reports violations", () => {
+    runMigrations(db.rawDb);
+    const now = new Date().toISOString();
+
+    // Populate valid repository, scan, file, symbol, node, edge
+    const repoRes = db.rawDb
+      .prepare(
+        "INSERT INTO repositories (identity, root_path, display_name, created_at, updated_at, schema_version) VALUES (?, ?, ?, ?, ?, ?)",
+      )
+      .run("fk_valid_repo", "/repo", "FKValid", now, now, 1);
+    const repoId = Number(repoRes.lastInsertRowid);
+
+    const scanRes = db.rawDb
+      .prepare(
+        "INSERT INTO scan_runs (repository_id, started_at, status, scanner_version, extractor_version) VALUES (?, ?, 'RUNNING', '0.6.3', '0.6.3')",
+      )
+      .run(repoId, now);
+    const scanId = Number(scanRes.lastInsertRowid);
+
+    const fileRes = db.rawDb
+      .prepare(
+        "INSERT INTO files (repository_id, scan_id, relative_path, normalized_path, extension, language, classification, size_bytes, modified_at, sensitivity_status, index_status, indexed_at) VALUES (?, ?, 'src/index.ts', 'src/index.ts', '.ts', 'typescript', 'source', 50, 1700000000, 'SAFE', 'INDEXED', ?)",
+      )
+      .run(repoId, scanId, now);
+    const fileId = Number(fileRes.lastInsertRowid);
+
+    // Run PRAGMA foreign_key_check on valid populated database
+    const initialCheck = db.rawDb.prepare("PRAGMA foreign_key_check;").all();
+    expect(initialCheck).toHaveLength(0);
+
+    // Disable foreign keys temporarily to deliberately inject an orphaned record
+    db.rawDb.exec("PRAGMA foreign_keys = OFF;");
+    db.rawDb
+      .prepare(
+        "INSERT INTO files (repository_id, scan_id, relative_path, normalized_path, extension, language, classification, size_bytes, modified_at, sensitivity_status, index_status, indexed_at) VALUES (?, ?, 'src/orphan.ts', 'src/orphan.ts', '.ts', 'typescript', 'source', 50, 1700000000, 'SAFE', 'INDEXED', ?)",
+      )
+      .run(99999, 88888, now); // Invalid repoId and scanId
+
+    // PRAGMA foreign_key_check immediately catches the invalid foreign key!
+    const violationCheck = db.rawDb.prepare("PRAGMA foreign_key_check;").all();
+    expect(violationCheck.length).toBeGreaterThan(0);
+    const issue = violationCheck[0] as { table?: string };
+    expect(issue.table).toBe("files");
+
+    // Clean up
+    db.rawDb.exec("PRAGMA foreign_keys = ON;");
+  });
 });

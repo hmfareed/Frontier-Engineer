@@ -36,7 +36,6 @@ describe("storage-security (Filesystem Boundaries, Symlinks & Secret Hygiene)", 
 
     const dotFrontier = path.join(ws, ".frontier");
 
-    // Attempt to create symlink / junction on Windows
     let symlinkCreated = false;
     try {
       fs.symlinkSync(externalDir, dotFrontier, "junction");
@@ -52,6 +51,81 @@ describe("storage-security (Filesystem Boundaries, Symlinks & Secret Hygiene)", 
 
     const cm = new ConnectionManager({ workspaceRoot: ws });
     await expect(cm.initialize()).rejects.toThrow(/Filesystem boundary violation/);
+  });
+
+  it("detects and blocks escaping intelligence directory junction", async () => {
+    const ws = createTempDir("ws-intel-sec-");
+    const externalDir = createTempDir("outside-intel-");
+
+    const dotFrontier = path.join(ws, ".frontier");
+    fs.mkdirSync(dotFrontier, { recursive: true });
+    const intelligenceDir = path.join(dotFrontier, "intelligence");
+
+    let junctionCreated = false;
+    try {
+      fs.symlinkSync(externalDir, intelligenceDir, "junction");
+      junctionCreated = true;
+    } catch {
+      // Junction failed
+    }
+
+    if (!junctionCreated) {
+      console.log("[SKIPPED: Junction creation not permitted]");
+      return;
+    }
+
+    const cm = new ConnectionManager({ workspaceRoot: ws });
+    await expect(cm.initialize()).rejects.toThrow(/Filesystem boundary violation/);
+  });
+
+  it("strictly rejects SQLite WAL and SHM sidecars from being symlinks", async () => {
+    const ws = createTempDir("ws-sidecar-sec-");
+    const intelDir = path.join(ws, ".frontier", "intelligence");
+    fs.mkdirSync(intelDir, { recursive: true });
+
+    const walPath = path.join(intelDir, "index.sqlite-wal");
+    const shmPath = path.join(intelDir, "index.sqlite-shm");
+    const dummyTarget = path.join(ws, "dummy.txt");
+    fs.writeFileSync(dummyTarget, "dummy", "utf8");
+
+    let walSymlinkCreated = false;
+    try {
+      fs.symlinkSync(dummyTarget, walPath, "file");
+      walSymlinkCreated = true;
+    } catch {
+      // File symlinks on Windows without developer mode
+    }
+
+    if (walSymlinkCreated) {
+      const cm = new ConnectionManager({ workspaceRoot: ws });
+      await expect(cm.initialize()).rejects.toThrow(/SQLite sidecar '.*' cannot be a symlink/);
+      fs.unlinkSync(walPath);
+    }
+
+    let shmSymlinkCreated = false;
+    try {
+      fs.symlinkSync(dummyTarget, shmPath, "file");
+      shmSymlinkCreated = true;
+    } catch {
+      // File symlinks on Windows without developer mode
+    }
+
+    if (shmSymlinkCreated) {
+      const cm = new ConnectionManager({ workspaceRoot: ws });
+      await expect(cm.initialize()).rejects.toThrow(/SQLite sidecar '.*' cannot be a symlink/);
+      fs.unlinkSync(shmPath);
+    }
+  });
+
+  it("verifies clean first initialization when database and metadata do not exist yet", async () => {
+    const ws = createTempDir("ws-first-init-");
+    const cm = new ConnectionManager({ workspaceRoot: ws });
+    await cm.initialize();
+
+    expect(cm.getRepository()).toBeDefined();
+    expect(fs.existsSync(path.join(ws, ".frontier", "intelligence", "index.sqlite"))).toBe(true);
+    expect(fs.existsSync(path.join(ws, ".frontier", "intelligence", "metadata.json"))).toBe(true);
+    cm.close();
   });
 
   it("detects corrupted SQLite database and reports explicit diagnostic without overwriting", async () => {

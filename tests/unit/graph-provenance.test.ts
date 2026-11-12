@@ -267,5 +267,44 @@ describe("graph-provenance (Edge Aggregation, Evidence Tracing & Unresolved Impo
       (e) => e.relationshipType === "IMPORTS" && e.targetNodeIdentity.startsWith("mod:"),
     );
     expect(unresEdge?.relationshipStatus).toBe("UNRESOLVED");
+
+    // Foreign key integrity check on populated database
+    const fkCheck = db.rawDb.prepare("PRAGMA foreign_key_check;").all();
+    expect(fkCheck).toHaveLength(0);
+  });
+
+  it("strictly prohibits graph edges from referencing nodes belonging to another scan via composite foreign keys", () => {
+    const now = new Date().toISOString();
+    // Create Scan 2
+    const scan2 = scanStore.createScanRun({
+      repositoryId: repoId,
+      scannerVersion: "0.6.3",
+      extractorVersion: "0.6.3",
+    });
+
+    // Create a node in scan 1
+    const n1Res = db.rawDb
+      .prepare(
+        "INSERT INTO graph_nodes (repository_id, scan_id, node_identity, category, name) VALUES (?, ?, 'file:node1.ts', 'file', 'node1.ts')",
+      )
+      .run(repoId, scanId);
+    const n1Id = Number(n1Res.lastInsertRowid);
+
+    // Create a node in scan 2
+    const n2Res = db.rawDb
+      .prepare(
+        "INSERT INTO graph_nodes (repository_id, scan_id, node_identity, category, name) VALUES (?, ?, 'file:node2.ts', 'file', 'node2.ts')",
+      )
+      .run(repoId, scan2.id);
+    const n2Id = Number(n2Res.lastInsertRowid);
+
+    // Attempt to insert edge in scan 2 referencing node1 (which belongs to scan 1)
+    expect(() => {
+      db.rawDb
+        .prepare(
+          "INSERT INTO graph_edges (repository_id, scan_id, edge_identity, source_node_id, target_node_id, relationship_type, confidence, relationship_status, created_at) VALUES (?, ?, 'cross-scan-edge', ?, ?, 'IMPORTS', 1.0, 'CONFIRMED', ?)",
+        )
+        .run(repoId, scan2.id, n1Id, n2Id, now);
+    }).toThrow(/FOREIGN KEY constraint failed/);
   });
 });

@@ -6,7 +6,7 @@
   "description": "Foundation tooling for the Frontier Engineer Antigravity plugin.",
   "license": "MIT",
   "engines": {
-    "node": ">=22.6.0"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",

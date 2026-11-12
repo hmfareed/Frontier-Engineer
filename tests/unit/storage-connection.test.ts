@@ -80,7 +80,7 @@ describe("storage-connection (Connection Manager & Workspace Lifecycle)", () => 
     expect(repo1.rootPath).toBe(path.resolve(ws1));
     manager1.close();
 
-    // Now copy the database to a new workspace path
+    // Now move the database to a new workspace path
     const ws2 = createTempWorkspace();
     const frontierDir2 = path.join(ws2, ".frontier", "intelligence");
     fs.mkdirSync(frontierDir2, { recursive: true });
@@ -92,6 +92,8 @@ describe("storage-connection (Connection Manager & Workspace Lifecycle)", () => 
       path.join(ws1, ".frontier", "intelligence", "metadata.json"),
       path.join(frontierDir2, "metadata.json"),
     );
+    // Remove old workspace to represent genuine relocation
+    fs.rmSync(ws1, { recursive: true, force: true });
 
     const manager2 = new ConnectionManager({
       workspaceRoot: ws2,
