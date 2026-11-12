@@ -19,7 +19,11 @@ import type {
 } from "./types.ts";
 
 export class ArchitectureAnalyzer implements ArchitectureIntelligenceInterface {
-  constructor(private db: SqliteDatabase) {}
+  private db: SqliteDatabase;
+
+  constructor(db: SqliteDatabase) {
+    this.db = db;
+  }
 
   private resolveScanIdAndRoot(
     repositoryId: number,
@@ -182,9 +186,10 @@ export class ArchitectureAnalyzer implements ArchitectureIntelligenceInterface {
   public async getDependencies(
     repositoryId: number,
     scanId?: number,
+    options?: { fanoutThreshold?: number },
   ): Promise<ArchitectureDependencyReport> {
     const { resolvedScanId } = this.resolveScanIdAndRoot(repositoryId, scanId);
-    return DependencyAnalyzer.analyze(this.db, repositoryId, resolvedScanId);
+    return DependencyAnalyzer.analyze(this.db, repositoryId, resolvedScanId, options);
   }
 
   public async getTestAssociations(

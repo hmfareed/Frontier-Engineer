@@ -8,7 +8,11 @@ import type { GraphNodeRecord, GraphEdgeRecord } from "../storage/types.ts";
 import type { GraphNode, GraphEdge } from "./types.ts";
 
 export class GraphStore {
-  constructor(private db: SqliteDatabase) {}
+  private db: SqliteDatabase;
+
+  constructor(db: SqliteDatabase) {
+    this.db = db;
+  }
 
   public insertGraph(params: {
     repositoryId: number;

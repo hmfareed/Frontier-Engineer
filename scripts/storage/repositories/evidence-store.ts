@@ -8,7 +8,11 @@ import type { SourceEvidence } from "../../extractor/types.ts";
 import type { SourceEvidenceRecord } from "../types.ts";
 
 export class EvidenceStore {
-  constructor(private db: SqliteDatabase) {}
+  private db: SqliteDatabase;
+
+  constructor(db: SqliteDatabase) {
+    this.db = db;
+  }
 
   public insertEvidence(params: {
     repositoryId: number;

@@ -247,4 +247,45 @@ describe("storage-migrations (Database Foundation & Schema Integrity)", () => {
         );
     }).toThrow(/CHECK constraint failed/);
   });
+
+  it("rolls back failed migrations atomically and leaves schema_migrations unchanged", () => {
+    runMigrations(db.rawDb);
+    expect(getCurrentSchemaVersion(db.rawDb)).toBe(1);
+
+    // Simulate an invalid migration that fails halfway through
+    const badMigrationSql = `
+      CREATE TABLE test_migration_table (id INTEGER PRIMARY KEY);
+      THIS IS INTENTIONALLY INVALID SQL SYNTAX;
+    `;
+
+    expect(() => {
+      db.rawDb.exec("BEGIN IMMEDIATE;");
+      try {
+        db.rawDb.exec(badMigrationSql);
+        db.rawDb
+          .prepare("INSERT INTO schema_migrations (version, name, applied_at) VALUES (?, ?, ?)")
+          .run(2, "002-bad-migration", new Date().toISOString());
+        db.rawDb.exec("COMMIT;");
+      } catch (err) {
+        db.rawDb.exec("ROLLBACK;");
+        throw err;
+      }
+    }).toThrow();
+
+    // Invariant: Version remains 1, and test_migration_table was rolled back!
+    expect(getCurrentSchemaVersion(db.rawDb)).toBe(1);
+    const tableCheck = db.rawDb
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'test_migration_table'",
+      )
+      .get();
+    expect(tableCheck).toBeUndefined();
+  });
+
+  it("verifies database integrity via integrityCheck() and detects valid state", () => {
+    runMigrations(db.rawDb);
+    const check = db.integrityCheck();
+    expect(check.ok).toBe(true);
+    expect(check.message).toBe("ok");
+  });
 });

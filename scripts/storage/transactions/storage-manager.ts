@@ -19,10 +19,13 @@ import type {
 } from "../types.ts";
 
 export class StorageManager implements IntelligenceStorage {
+  private connectionManager: ConnectionManager;
   private scanStore: ScanStore | null = null;
   private graphStore: GraphStore | null = null;
 
-  constructor(private connectionManager: ConnectionManager) {}
+  constructor(connectionManager: ConnectionManager) {
+    this.connectionManager = connectionManager;
+  }
 
   public async initialize(): Promise<void> {
     await this.connectionManager.initialize();

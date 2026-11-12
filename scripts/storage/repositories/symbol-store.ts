@@ -9,7 +9,11 @@ import type { SymbolRecord } from "../types.ts";
 import type { EvidenceStore } from "./evidence-store.ts";
 
 export class SymbolStore {
-  constructor(private db: SqliteDatabase) {}
+  private db: SqliteDatabase;
+
+  constructor(db: SqliteDatabase) {
+    this.db = db;
+  }
 
   public insertSymbols(params: {
     repositoryId: number;

@@ -102,4 +102,12 @@ export class SqliteDatabase {
       this.db.close();
     }
   }
+
+  public integrityCheck(): { ok: boolean; message: string } {
+    this.ensureOpen();
+    const row = this.db.prepare("PRAGMA integrity_check;").get() as
+      { integrity_check?: string } | undefined;
+    const status = row?.integrity_check ?? "unknown";
+    return { ok: status === "ok", message: status };
+  }
 }

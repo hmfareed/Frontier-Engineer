@@ -86,6 +86,10 @@ export interface ArchitectureIntelligenceInterface {
   analyze(repositoryId: number, scanId?: number): Promise<ArchitectureAnalysisResult>;
   getComponents(repositoryId: number, scanId?: number): Promise<ArchitectureComponent[]>;
   getEntrypoints(repositoryId: number, scanId?: number): Promise<EntrypointFinding[]>;
-  getDependencies(repositoryId: number, scanId?: number): Promise<ArchitectureDependencyReport>;
+  getDependencies(
+    repositoryId: number,
+    scanId?: number,
+    options?: { fanoutThreshold?: number },
+  ): Promise<ArchitectureDependencyReport>;
   getTestAssociations(repositoryId: number, scanId?: number): Promise<TestAssociation[]>;
 }

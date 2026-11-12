@@ -8,7 +8,11 @@ import type { ScannedFileRecord } from "../../scanner/types.ts";
 import type { FileRecord } from "../types.ts";
 
 export class FileStore {
-  constructor(private db: SqliteDatabase) {}
+  private db: SqliteDatabase;
+
+  constructor(db: SqliteDatabase) {
+    this.db = db;
+  }
 
   public insertFiles(
     repositoryId: number,

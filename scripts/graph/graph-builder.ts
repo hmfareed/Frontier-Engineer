@@ -162,15 +162,36 @@ export class GraphBuilder {
         if (imp.resolvedPath) {
           const targetFileNodeId = `file:${imp.resolvedPath}`;
           const importEdgeId = `${fileNodeId}->IMPORTS->${targetFileNodeId}`;
-          edgesMap.set(importEdgeId, {
-            edgeIdentity: importEdgeId,
-            sourceNodeIdentity: fileNodeId,
-            targetNodeIdentity: targetFileNodeId,
-            relationshipType: "IMPORTS",
-            confidence: 1.0,
-            relationshipStatus: "CONFIRMED",
-            createdAt: now,
-          });
+
+          const declInfo = {
+            lineStart: imp.sourceEvidence?.lineStart ?? 1,
+            lineEnd: imp.sourceEvidence?.lineEnd ?? 1,
+            importedSymbols: imp.importedSymbols,
+            isTypeOnly: imp.isTypeOnly,
+            isDynamic: imp.isDynamic,
+          };
+
+          const existingEdge = edgesMap.get(importEdgeId);
+          if (existingEdge) {
+            const meta = existingEdge.metadata ?? { declarationCount: 1, declarations: [] };
+            meta.declarationCount = ((meta.declarationCount as number) || 1) + 1;
+            (meta.declarations as any[]).push(declInfo);
+            existingEdge.metadata = meta;
+          } else {
+            edgesMap.set(importEdgeId, {
+              edgeIdentity: importEdgeId,
+              sourceNodeIdentity: fileNodeId,
+              targetNodeIdentity: targetFileNodeId,
+              relationshipType: "IMPORTS",
+              confidence: 1.0,
+              relationshipStatus: "CONFIRMED",
+              createdAt: now,
+              metadata: {
+                declarationCount: 1,
+                declarations: [declInfo],
+              },
+            });
+          }
 
           // Also test association: if this file is a test file, it TESTS target
           if (

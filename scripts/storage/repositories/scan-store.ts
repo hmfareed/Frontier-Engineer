@@ -7,7 +7,11 @@ import type { SqliteDatabase } from "../database.ts";
 import type { ScanRecord, ScanRunStatus } from "../types.ts";
 
 export class ScanStore {
-  constructor(private db: SqliteDatabase) {}
+  private db: SqliteDatabase;
+
+  constructor(db: SqliteDatabase) {
+    this.db = db;
+  }
 
   public createScanRun(params: {
     repositoryId: number;
@@ -101,6 +105,15 @@ export class ScanStore {
         "UPDATE scan_runs SET status = 'FAILED', completed_at = ?, failure_reason = ? WHERE id = ?",
       )
       .run(now, failureReason, scanId);
+  }
+
+  public cancelScan(scanId: number, cancelReason: string): void {
+    const now = new Date().toISOString();
+    this.db
+      .prepare(
+        "UPDATE scan_runs SET status = 'CANCELLED', completed_at = ?, failure_reason = ? WHERE id = ?",
+      )
+      .run(now, cancelReason, scanId);
   }
 
   public getScanById(scanId: number): ScanRecord | null {

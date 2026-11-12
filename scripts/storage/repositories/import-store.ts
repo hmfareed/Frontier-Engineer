@@ -9,7 +9,11 @@ import type { ImportRecord } from "../types.ts";
 import type { EvidenceStore } from "./evidence-store.ts";
 
 export class ImportStore {
-  constructor(private db: SqliteDatabase) {}
+  private db: SqliteDatabase;
+
+  constructor(db: SqliteDatabase) {
+    this.db = db;
+  }
 
   public insertImports(params: {
     repositoryId: number;

@@ -177,7 +177,7 @@ export class EntrypointDetector {
           exportCount: 0,
         });
       }
-      // Root or src Index library / module
+      // Root or src Index library / module (convention-only: marked INFERRED, never CONFIRMED without manifest declaration)
       else if (
         p === "src/index.ts" ||
         p === "src/index.js" ||
@@ -190,9 +190,9 @@ export class EntrypointDetector {
           entrypointId: `entry:${p}`,
           filePath: p,
           type: "library",
-          status: exportCount > 0 ? "CONFIRMED" : "INFERRED",
-          confidence: exportCount > 0 ? 0.9 : 0.75,
-          evidence: `Standard module index with ${exportCount} exported symbols`,
+          status: "INFERRED",
+          confidence: exportCount > 0 ? 0.75 : 0.5,
+          evidence: `Standard module index convention with ${exportCount} exported symbols (undeclared in package.json)`,
           exportCount,
         });
       }

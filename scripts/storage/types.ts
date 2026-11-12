@@ -225,6 +225,8 @@ export interface SnapshotInput {
   extractions: Map<string, ExtractionResult>;
   scannerVersion: string;
   extractorVersion: string;
+  signal?: AbortSignal;
+  allowPartialPromotion?: boolean;
 }
 
 export interface SnapshotResult {

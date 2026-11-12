@@ -17,10 +17,13 @@ import type {
 import type { SourceEvidenceRecord } from "../storage/types.ts";
 
 export class GraphEngine implements GraphEngineInterface {
-  constructor(
-    private db: SqliteDatabase,
-    private graphStore: GraphStore,
-  ) {}
+  private db: SqliteDatabase;
+  private graphStore: GraphStore;
+
+  constructor(db: SqliteDatabase, graphStore: GraphStore) {
+    this.db = db;
+    this.graphStore = graphStore;
+  }
 
   private resolveScanId(repositoryId: number, scanId?: number): number {
     if (scanId !== undefined) return scanId;
@@ -168,6 +171,28 @@ export class GraphEngine implements GraphEngineInterface {
         )
         .get(edgeRow.evidenceId) as unknown as SourceEvidenceRecord | undefined;
       evidence = evRow ?? null;
+    } else if (edgeRow.relationshipType === "IMPORTS") {
+      // Resolve evidence from underlying imports declaration
+      const sourceNode = this.graphStore.getNodeById(edgeRow.sourceNodeId);
+      const targetNode = this.graphStore.getNodeById(edgeRow.targetNodeId);
+      if (sourceNode?.fileId && targetNode?.fileId) {
+        const evRow = this.db
+          .prepare(
+            `SELECT
+              se.id, se.repository_id AS repositoryId, se.scan_id AS scanId,
+              se.file_id AS fileId, se.symbol_id AS symbolId, se.evidence_type AS evidenceType,
+              se.start_line AS startLine, se.end_line AS endLine,
+              se.start_column AS startColumn, se.end_column AS endColumn,
+              se.confidence, se.evidence_description AS evidenceDescription
+            FROM imports i
+            JOIN source_evidence se ON se.id = i.evidence_id
+            WHERE i.scan_id = ? AND i.source_file_id = ? AND i.resolved_file_id = ?
+            LIMIT 1`,
+          )
+          .get(resolvedScanId, sourceNode.fileId, targetNode.fileId) as unknown as
+          SourceEvidenceRecord | undefined;
+        evidence = evRow ?? null;
+      }
     }
 
     const sourceNode = this.graphStore.getNodeById(edgeRow.sourceNodeId);

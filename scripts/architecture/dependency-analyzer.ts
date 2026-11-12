@@ -11,6 +11,7 @@ export class DependencyAnalyzer {
     db: SqliteDatabase,
     repositoryId: number,
     scanId: number,
+    options?: { fanoutThreshold?: number },
   ): ArchitectureDependencyReport {
     // 1. Query import counts
     const counts = db
@@ -62,9 +63,10 @@ export class DependencyAnalyzer {
       fanoutCounts.set(edge.sourcePath, (fanoutCounts.get(edge.sourcePath) ?? 0) + 1);
     }
 
-    // Identify High Fan-out Modules (e.g. top modules importing 5+ dependencies)
+    // Identify High Fan-out Modules (informational heuristic, not an architectural defect)
+    const threshold = options?.fanoutThreshold ?? 5;
     const highFanoutModules = Array.from(fanoutCounts.entries())
-      .filter(([_, count]) => count >= 5)
+      .filter(([_, count]) => count >= threshold)
       .map(([filePath, dependencyCount]) => ({ filePath, dependencyCount }))
       .sort((a, b) => b.dependencyCount - a.dependencyCount);
 

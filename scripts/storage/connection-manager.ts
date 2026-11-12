@@ -83,11 +83,16 @@ export class ConnectionManager {
     }
 
     if (!this.inMemory) {
+      this.verifyFilesystemBoundaries();
+
       const frontierDir = path.dirname(this.dbPath);
       const backupsDir = path.join(frontierDir, "backups");
       if (!fs.existsSync(backupsDir)) {
         fs.mkdirSync(backupsDir, { recursive: true });
       }
+
+      // Re-verify after directory creation to prevent TOCTOU symlink injection
+      this.verifyFilesystemBoundaries();
     }
 
     // Initialize database wrapper
@@ -96,11 +101,42 @@ export class ConnectionManager {
       enableWal: !this.inMemory,
     });
 
+    // Check database integrity before running migrations
+    const integrity = this.db.integrityCheck();
+    if (!integrity.ok) {
+      throw new Error(`Corrupt database detected at ${this.dbPath}: ${integrity.message}`);
+    }
+
     // Run database migrations
     runMigrations(this.db.rawDb);
 
     // Verify and synchronize repository identity
     this.repositoryRecord = this.resolveAndSyncRepository(options);
+  }
+
+  private verifyFilesystemBoundaries(): void {
+    if (this.inMemory) return;
+
+    const realWs = fs.realpathSync(this.workspaceRoot);
+
+    const dotFrontier = path.join(this.workspaceRoot, ".frontier");
+    const intelligenceDir = path.join(dotFrontier, "intelligence");
+    const targets = [dotFrontier, intelligenceDir, this.dbPath, this.metadataPath];
+
+    for (const targetPath of targets) {
+      if (fs.existsSync(targetPath)) {
+        const lstat = fs.lstatSync(targetPath);
+        if (lstat.isSymbolicLink()) {
+          const realTarget = fs.realpathSync(targetPath);
+          const rel = path.relative(realWs, realTarget);
+          if (rel.startsWith("..") || path.isAbsolute(rel)) {
+            throw new Error(
+              `Filesystem boundary violation: symlink '${targetPath}' resolves outside workspace root to '${realTarget}'.`,
+            );
+          }
+        }
+      }
+    }
   }
 
   private resolveAndSyncRepository(options: {
@@ -120,13 +156,23 @@ export class ConnectionManager {
         try {
           const raw = fs.readFileSync(this.metadataPath, "utf8");
           const parsed = JSON.parse(raw) as WorkspaceMetadata;
-          if (parsed && typeof parsed.repositoryIdentity === "string") {
+          if (
+            parsed &&
+            typeof parsed.repositoryIdentity === "string" &&
+            /^[a-zA-Z0-9_\-]+$/.test(parsed.repositoryIdentity) &&
+            typeof parsed.rootPath === "string" &&
+            !Object.prototype.hasOwnProperty.call(parsed, "__proto__")
+          ) {
             this.metadata = parsed;
             if (!identity) {
               identity = parsed.repositoryIdentity;
             }
-            if (!options.overrideDisplayName && parsed.displayName) {
-              displayName = parsed.displayName;
+            if (
+              !options.overrideDisplayName &&
+              typeof parsed.displayName === "string" &&
+              parsed.displayName.trim().length > 0
+            ) {
+              displayName = parsed.displayName.trim();
             }
           }
         } catch {

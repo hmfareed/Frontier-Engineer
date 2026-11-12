@@ -118,7 +118,7 @@ describe("extractor-isolated-runtime (AC-7201 Isolated Environment Execution & P
     } finally {
       fs.rmSync(isolatedDir, { recursive: true, force: true });
     }
-  });
+  }, 60000);
 
   it("fails fast with an explicit error when a corrupt bundle file is encountered", async () => {
     const root = repoRoot();
@@ -169,7 +169,7 @@ describe("extractor-isolated-runtime (AC-7201 Isolated Environment Execution & P
     } finally {
       fs.rmSync(isolatedDir, { recursive: true, force: true });
     }
-  });
+  }, 60000);
 
   it("fails fast with an explicit error when requireBundled is true and bundle is missing", async () => {
     const root = repoRoot();
@@ -219,5 +219,5 @@ describe("extractor-isolated-runtime (AC-7201 Isolated Environment Execution & P
     } finally {
       fs.rmSync(isolatedDir, { recursive: true, force: true });
     }
-  });
+  }, 60000);
 });

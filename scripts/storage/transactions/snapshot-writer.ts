@@ -13,7 +13,7 @@ import { EvidenceStore } from "../repositories/evidence-store.ts";
 import { GraphBuilder } from "../../graph/graph-builder.ts";
 import { GraphStore } from "../../graph/graph-store.ts";
 import { GraphValidator } from "../../graph/graph-validator.ts";
-import type { SnapshotInput, SnapshotResult } from "../types.ts";
+import type { SnapshotInput, SnapshotResult, ScanRunStatus } from "../types.ts";
 
 export class SnapshotWriter {
   public static async persist(
@@ -39,6 +39,25 @@ export class SnapshotWriter {
       extractorVersion: input.extractorVersion,
     });
     const scanId = scanRecord.id;
+
+    // Check cancellation prior to staging writes
+    if (input.signal?.aborted) {
+      scanStore.cancelScan(scanId, "Scan was cancelled prior to ingestion");
+      return {
+        scanId,
+        repositoryId,
+        status: "CANCELLED",
+        filesIndexed: 0,
+        symbolsIndexed: 0,
+        importsIndexed: 0,
+        exportsIndexed: 0,
+        nodesCreated: 0,
+        edgesCreated: 0,
+        promoted: false,
+        durationMs: Date.now() - startTime,
+        diagnostics: ["Scan was cancelled prior to ingestion"],
+      };
+    }
 
     try {
       // 2. Persist File Inventory
@@ -135,11 +154,34 @@ export class SnapshotWriter {
       }
 
       // 7. Complete Scan Record
-      const finalStatus = input.inventory.scanStatus === "COMPLETE" ? "COMPLETE" : "PARTIAL";
+      const finalStatus: ScanRunStatus =
+        input.inventory.scanStatus === "COMPLETE" ? "COMPLETE" : "PARTIAL";
+
+      // 8. Explicit Promotion Decision
+      let shouldPromote = false;
+      if (finalStatus === "COMPLETE") {
+        shouldPromote = true;
+      } else if (finalStatus === "PARTIAL") {
+        const currentActive = scanStore.getActiveScan(repositoryId);
+        if (!currentActive) {
+          shouldPromote = true;
+        } else if (currentActive.status !== "COMPLETE") {
+          shouldPromote = true;
+        } else if (input.allowPartialPromotion === true) {
+          shouldPromote = true;
+        } else {
+          shouldPromote = false;
+          diagnostics.push(
+            `Partial scan completed but existing active COMPLETE scan (id: ${currentActive.id}) was preserved.`,
+          );
+        }
+      }
+
       scanStore.completeScan(scanId, finalStatus);
 
-      // 8. Atomic Promotion: Update active_scan_id
-      scanStore.promoteScan(repositoryId, scanId);
+      if (shouldPromote) {
+        scanStore.promoteScan(repositoryId, scanId);
+      }
 
       return {
         scanId,
@@ -151,13 +193,43 @@ export class SnapshotWriter {
         exportsIndexed: exportsIndexedCount,
         nodesCreated: nodesCount,
         edgesCreated: edgesCount,
-        promoted: true,
+        promoted: shouldPromote,
         durationMs: Date.now() - startTime,
         diagnostics,
       };
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : String(err);
       diagnostics.push(errorMsg);
+
+      // Roll back incomplete staging writes: delete half-written records under scanId
+      try {
+        db.transaction(() => {
+          db.prepare("DELETE FROM files WHERE scan_id = ?").run(scanId);
+          db.prepare("DELETE FROM graph_nodes WHERE scan_id = ?").run(scanId);
+          db.prepare("DELETE FROM architecture_components WHERE scan_id = ?").run(scanId);
+        });
+      } catch {
+        // Suppress cleanup secondary errors
+      }
+
+      if (errorMsg === "OPERATION_CANCELLED" || input.signal?.aborted) {
+        scanStore.cancelScan(scanId, "Operation cancelled during persistence");
+        return {
+          scanId,
+          repositoryId,
+          status: "CANCELLED",
+          filesIndexed: 0,
+          symbolsIndexed: 0,
+          importsIndexed: 0,
+          exportsIndexed: 0,
+          nodesCreated: 0,
+          edgesCreated: 0,
+          promoted: false,
+          durationMs: Date.now() - startTime,
+          diagnostics,
+        };
+      }
+
       // Mark scan run as FAILED; existing active_scan_id is preserved
       scanStore.failScan(scanId, errorMsg);
 

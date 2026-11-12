@@ -34,6 +34,7 @@ export interface GraphEdge {
   confidence: number;
   relationshipStatus: RelationshipStatus;
   createdAt: string;
+  metadata?: Record<string, unknown>;
 }
 
 export interface RepositoryGraph {

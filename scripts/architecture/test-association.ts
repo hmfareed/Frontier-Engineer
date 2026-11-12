@@ -85,9 +85,9 @@ export class TestAssociationEngine {
               testFilePath: tf.path,
               sourceFilePath: sp,
               associationStatus: "INFERRED",
-              confidence: 0.8,
+              confidence: 0.75,
               evidenceType: "naming_convention",
-              evidenceDescription: `Test filename matches source module base name '${cleanBase}'`,
+              evidenceDescription: `Test filename matches source module base name '${cleanBase}' (inferred heuristic)`,
             });
           }
         }

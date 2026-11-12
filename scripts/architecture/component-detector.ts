@@ -206,6 +206,13 @@ export class ComponentDetector {
         continue;
       }
 
+      // Guard: If all files in the directory are documentation, do not classify as backend or api
+      const isPureDocs = files.every(
+        (f) =>
+          f.classification === "documentation" || f.extension === ".md" || f.extension === ".txt",
+      );
+      const hasSourceFiles = files.some((f) => f.classification === "source");
+
       // Backend / API Subsystem
       const hasServerImports =
         collectedImports.has("express") ||
@@ -215,21 +222,29 @@ export class ComponentDetector {
         collectedImports.has("http");
 
       if (
-        baseName === "api" ||
-        baseName === "server" ||
-        baseName === "controllers" ||
-        baseName === "routes" ||
-        baseName === "backend" ||
-        hasServerImports
+        !isPureDocs &&
+        hasSourceFiles &&
+        (baseName === "api" ||
+          baseName === "server" ||
+          baseName === "controllers" ||
+          baseName === "routes" ||
+          baseName === "backend" ||
+          hasServerImports)
       ) {
         const isConfirmed = hasServerImports;
+        const status: ComponentStatus = isConfirmed
+          ? "CONFIRMED"
+          : baseName === "api"
+            ? "CANDIDATE"
+            : "INFERRED";
+        const confidence = isConfirmed ? 0.95 : baseName === "api" ? 0.45 : 0.65;
         components.push({
           componentIdentity: `comp:${dir}`,
           name: dir,
           category: "backend",
           rootPath: dir,
-          status: isConfirmed ? "CONFIRMED" : "INFERRED",
-          confidence: isConfirmed ? 0.95 : 0.65,
+          status,
+          confidence,
           detectionMethod: isConfirmed ? "server_framework_imports" : "naming_convention",
           evidenceDescription: isConfirmed
             ? `Contains server route handlers or HTTP framework imports (${Array.from(
