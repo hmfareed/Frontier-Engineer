@@ -1,5 +1,5 @@
 /**
- * Phase 7.3 — Architecture Analyzer Engine
+ * Phase 7.3 & 7.4 — Architecture Analyzer Engine
  * Orchestrates deterministic, evidence-backed architecture intelligence and persistable classifications.
  */
 
@@ -8,6 +8,8 @@ import { EntrypointDetector } from "./entrypoint-detector.ts";
 import { ComponentDetector } from "./component-detector.ts";
 import { DependencyAnalyzer } from "./dependency-analyzer.ts";
 import { TestAssociationEngine } from "./test-association.ts";
+import { AdrDetector } from "./adr-detector.ts";
+import { CycleAnalyzer } from "./cycle-analyzer.ts";
 import type {
   ArchitectureIntelligenceInterface,
   ArchitectureAnalysisResult,
@@ -16,6 +18,8 @@ import type {
   ArchitectureDependencyReport,
   TestAssociation,
   ArchitectureFinding,
+  AdrFinding,
+  CircularDependencyCandidate,
 } from "./types.ts";
 
 export class ArchitectureAnalyzer implements ArchitectureIntelligenceInterface {
@@ -65,7 +69,10 @@ export class ArchitectureAnalyzer implements ArchitectureIntelligenceInterface {
     // 4. Associate Tests
     const testAssociations = TestAssociationEngine.associate(this.db, repositoryId, resolvedScanId);
 
-    // 5. Build Standard Findings conforming to Section 10 contract
+    // 5. Detect ADRs
+    const decisions = AdrDetector.detect(this.db, repositoryId, resolvedScanId, rootPath);
+
+    // 6. Build Standard Findings conforming to contract
     const findings: ArchitectureFinding[] = [];
 
     for (const ep of entrypoints) {
@@ -107,7 +114,7 @@ export class ArchitectureAnalyzer implements ArchitectureIntelligenceInterface {
         subjectEntity: cycle.cycle[0],
         status: "CONFIRMED",
         confidence: 1.0,
-        detectionMethod: "cycle_detection_dfs",
+        detectionMethod: "cycle_detection_tarjan_scc",
         evidenceDescription: `Circular import cycle detected: ${cycle.cycle.join(" -> ")}`,
         relevantFilePaths: cycle.cycle,
       });
@@ -128,6 +135,21 @@ export class ArchitectureAnalyzer implements ArchitectureIntelligenceInterface {
       });
     }
 
+    for (const adr of decisions) {
+      findings.push({
+        findingId: `adr:${adr.adrId}`,
+        repositoryId,
+        scanId: resolvedScanId,
+        category: "architecture_decision",
+        subjectEntity: adr.adrId,
+        status: "CONFIRMED",
+        confidence: adr.confidence,
+        detectionMethod: "adr_markdown_provenance",
+        evidenceDescription: adr.evidenceDescription,
+        relevantFilePaths: [adr.filePath],
+      });
+    }
+
     return {
       repositoryId,
       scanId: resolvedScanId,
@@ -136,6 +158,7 @@ export class ArchitectureAnalyzer implements ArchitectureIntelligenceInterface {
       entrypoints,
       dependencyReport,
       testAssociations,
+      decisions,
       findings,
     };
   }
@@ -198,5 +221,19 @@ export class ArchitectureAnalyzer implements ArchitectureIntelligenceInterface {
   ): Promise<TestAssociation[]> {
     const { resolvedScanId } = this.resolveScanIdAndRoot(repositoryId, scanId);
     return TestAssociationEngine.associate(this.db, repositoryId, resolvedScanId);
+  }
+
+  public async getDecisions(repositoryId: number, scanId?: number): Promise<AdrFinding[]> {
+    const { resolvedScanId, rootPath } = this.resolveScanIdAndRoot(repositoryId, scanId);
+    return AdrDetector.detect(this.db, repositoryId, resolvedScanId, rootPath);
+  }
+
+  public async getCycles(
+    repositoryId: number,
+    scanId?: number,
+  ): Promise<CircularDependencyCandidate[]> {
+    const { resolvedScanId } = this.resolveScanIdAndRoot(repositoryId, scanId);
+    const result = CycleAnalyzer.analyze(this.db, repositoryId, resolvedScanId);
+    return result.circularCandidates;
   }
 }

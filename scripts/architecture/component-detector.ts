@@ -1,5 +1,5 @@
 /**
- * Phase 7.3 — Component Detector
+ * Phase 7.3 & 7.4 — Component Detector
  * Multi-evidence deterministic detection of architectural components and boundaries.
  */
 
@@ -40,6 +40,8 @@ export class ComponentDetector {
           groupKey = `packages/${parts[1]}`;
         } else if (parts[0] === "src" && parts.length > 2) {
           groupKey = `src/${parts[1]}`;
+        } else if (parts[0] === "app" && parts.length > 2 && parts[1] === "api") {
+          groupKey = "app/api";
         } else {
           groupKey = parts[0];
         }
@@ -133,16 +135,22 @@ export class ComponentDetector {
         collectedImports.has("sqlite3") ||
         collectedImports.has("better-sqlite3") ||
         collectedImports.has("pg") ||
+        collectedImports.has("mysql2") ||
         collectedImports.has("prisma") ||
         collectedImports.has("@prisma/client") ||
         collectedImports.has("typeorm") ||
-        collectedImports.has("drizzle-orm");
+        collectedImports.has("drizzle-orm") ||
+        collectedImports.has("knex") ||
+        collectedImports.has("kysely") ||
+        collectedImports.has("mongoose") ||
+        collectedImports.has("ioredis");
 
       if (
         baseName === "db" ||
         baseName === "database" ||
         baseName === "schema" ||
         baseName === "migrations" ||
+        baseName === "prisma" ||
         hasSqlFiles ||
         hasDbImports
       ) {
@@ -160,8 +168,8 @@ export class ComponentDetector {
           evidenceDescription: isConfirmed
             ? `Contains database schemas, migrations, or driver imports (${
                 Array.from(collectedImports)
-                  .filter((i) => i.includes("sql") || i.includes("prisma"))
-                  .join(", ") || "SQL files"
+                  .filter((i) => i.includes("sql") || i.includes("prisma") || i.includes("orm"))
+                  .join(", ") || "SQL/Prisma files"
               })`
             : "Directory name indicates database layer without verified driver imports",
           filesCount: files.length,
@@ -219,7 +227,18 @@ export class ComponentDetector {
         collectedImports.has("fastify") ||
         collectedImports.has("koa") ||
         collectedImports.has("node:http") ||
-        collectedImports.has("http");
+        collectedImports.has("http") ||
+        collectedImports.has("hono") ||
+        collectedImports.has("@nestjs/core") ||
+        collectedImports.has("@nestjs/common");
+
+      const hasRouteHandlers = files.some(
+        (f) =>
+          f.normalizedPath.endsWith("/route.ts") ||
+          f.normalizedPath.endsWith("/route.js") ||
+          f.normalizedPath.startsWith("app/api/") ||
+          f.normalizedPath.startsWith("pages/api/"),
+      );
 
       if (
         !isPureDocs &&
@@ -229,9 +248,10 @@ export class ComponentDetector {
           baseName === "controllers" ||
           baseName === "routes" ||
           baseName === "backend" ||
-          hasServerImports)
+          hasServerImports ||
+          hasRouteHandlers)
       ) {
-        const isConfirmed = hasServerImports;
+        const isConfirmed = hasServerImports || hasRouteHandlers;
         const status: ComponentStatus = isConfirmed
           ? "CONFIRMED"
           : baseName === "api"
@@ -245,13 +265,25 @@ export class ComponentDetector {
           rootPath: dir,
           status,
           confidence,
-          detectionMethod: isConfirmed ? "server_framework_imports" : "naming_convention",
+          detectionMethod: isConfirmed
+            ? hasServerImports
+              ? "server_framework_imports"
+              : "route_handler_conventions"
+            : "naming_convention",
           evidenceDescription: isConfirmed
-            ? `Contains server route handlers or HTTP framework imports (${Array.from(
-                collectedImports,
-              )
-                .filter((i) => i.includes("express") || i.includes("http") || i.includes("fastify"))
-                .join(", ")})`
+            ? hasServerImports
+              ? `Contains server route handlers or HTTP framework imports (${Array.from(
+                  collectedImports,
+                )
+                  .filter(
+                    (i) =>
+                      i.includes("express") ||
+                      i.includes("http") ||
+                      i.includes("fastify") ||
+                      i.includes("hono"),
+                  )
+                  .join(", ")})`
+              : "Contains API route handlers matching framework routing conventions"
             : "Directory name suggests API/backend layer without confirmed server framework imports",
           filesCount: files.length,
           filePaths,
@@ -264,7 +296,10 @@ export class ComponentDetector {
         collectedImports.has("jsonwebtoken") ||
         collectedImports.has("bcrypt") ||
         collectedImports.has("passport") ||
-        collectedImports.has("next-auth");
+        collectedImports.has("next-auth") ||
+        collectedImports.has("@auth0/nextjs-auth0") ||
+        collectedImports.has("argon2") ||
+        collectedImports.has("lucia");
 
       if (baseName === "auth" || hasAuthImports) {
         const isConfirmed = hasAuthImports;

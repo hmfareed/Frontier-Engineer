@@ -1,6 +1,6 @@
 /**
- * Phase 7.3 — Architecture Intelligence Types and Contracts
- * Deterministic, evidence-backed architectural classifications and dependency reports.
+ * Phase 7.3 & 7.4 — Architecture Intelligence Types and Contracts
+ * Deterministic, evidence-backed architectural classifications, ADR findings, and dependency reports.
  */
 
 import type {
@@ -8,6 +8,7 @@ import type {
   ComponentStatus,
   ArchitectureComponentRecord,
 } from "../storage/types.ts";
+import type { StronglyConnectedComponent } from "./cycle-analyzer.ts";
 
 export type FindingStatus = "CONFIRMED" | "INFERRED" | "CANDIDATE" | "UNRESOLVED";
 
@@ -58,6 +59,7 @@ export interface ArchitectureDependencyReport {
   totalExternalDependencies: number;
   totalUnresolvedImports: number;
   circularDependencyCandidates: CircularDependencyCandidate[];
+  stronglyConnectedComponents: StronglyConnectedComponent[];
   highFanoutModules: { filePath: string; dependencyCount: number }[];
   externalPackages: string[];
 }
@@ -71,6 +73,20 @@ export interface TestAssociation {
   evidenceDescription: string;
 }
 
+export interface AdrFinding {
+  adrId: string;
+  number: number;
+  title: string;
+  status: string;
+  date?: string;
+  phase?: string;
+  filePath: string;
+  governedComponents: string[];
+  relatedDocuments: string[];
+  evidenceDescription: string;
+  confidence: number;
+}
+
 export interface ArchitectureAnalysisResult {
   repositoryId: number;
   scanId: number;
@@ -79,6 +95,7 @@ export interface ArchitectureAnalysisResult {
   entrypoints: EntrypointFinding[];
   dependencyReport: ArchitectureDependencyReport;
   testAssociations: TestAssociation[];
+  decisions: AdrFinding[];
   findings: ArchitectureFinding[];
 }
 
@@ -92,4 +109,6 @@ export interface ArchitectureIntelligenceInterface {
     options?: { fanoutThreshold?: number },
   ): Promise<ArchitectureDependencyReport>;
   getTestAssociations(repositoryId: number, scanId?: number): Promise<TestAssociation[]>;
+  getDecisions(repositoryId: number, scanId?: number): Promise<AdrFinding[]>;
+  getCycles(repositoryId: number, scanId?: number): Promise<CircularDependencyCandidate[]>;
 }

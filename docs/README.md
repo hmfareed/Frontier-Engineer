@@ -72,6 +72,7 @@ Product documentation for Frontier Engineer. The original 26-part specification 
 | 34   | [Storage architecture](34-STORAGE-ARCHITECTURE.md)           | SQLite relational storage, migrations, snapshot promotion |
 | 35   | [Graph engine architecture](35-GRAPH-ENGINE-ARCHITECTURE.md) | Deterministic engineering graph, cycle-safe traversals    |
 | 36   | [Architecture intelligence](36-ARCHITECTURE-INTELLIGENCE.md) | Evidence-based entrypoint, component, and test discovery  |
+| 37   | [Architecture query CLI](37-ARCHITECTURE-QUERY-CLI.md)       | Query engine, DTO contracts, CLI reference, exit codes    |
 
 ## Decision records
 

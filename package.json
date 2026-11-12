@@ -23,7 +23,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint:md": "markdownlint-cli2",
-    "verify": "npm run typecheck && npm run validate && npm run test && npm run format:check && npm run lint:md"
+    "verify": "npm run typecheck && npm run validate && npm run test && npm run format:check && npm run lint:md",
+    "frontier": "node scripts/cli/frontier-cli.ts"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

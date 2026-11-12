@@ -1,10 +1,11 @@
 /**
- * Phase 7.3 — Dependency Topology Analyzer
+ * Phase 7.3 & 7.4 — Dependency Topology Analyzer
  * Detects internal dependency structures, cycles, high-fanout modules, and package dependencies.
  */
 
 import type { SqliteDatabase } from "../storage/database.ts";
-import type { ArchitectureDependencyReport, CircularDependencyCandidate } from "./types.ts";
+import { CycleAnalyzer } from "./cycle-analyzer.ts";
+import type { ArchitectureDependencyReport } from "./types.ts";
 
 export class DependencyAnalyzer {
   public static analyze(
@@ -38,7 +39,7 @@ export class DependencyAnalyzer {
       )
       .all(scanId) as { pkg: string }[];
 
-    // 3. Query all resolved internal edges to build adjacency list for cycle & fanout analysis
+    // 3. Query all resolved internal edges to build adjacency list for fanout analysis
     const internalEdges = db
       .prepare(
         `SELECT
@@ -51,15 +52,9 @@ export class DependencyAnalyzer {
       )
       .all(scanId) as { sourcePath: string; targetPath: string }[];
 
-    const adj = new Map<string, Set<string>>();
     const fanoutCounts = new Map<string, number>();
 
     for (const edge of internalEdges) {
-      if (!adj.has(edge.sourcePath)) {
-        adj.set(edge.sourcePath, new Set());
-      }
-      adj.get(edge.sourcePath)!.add(edge.targetPath);
-
       fanoutCounts.set(edge.sourcePath, (fanoutCounts.get(edge.sourcePath) ?? 0) + 1);
     }
 
@@ -70,57 +65,15 @@ export class DependencyAnalyzer {
       .map(([filePath, dependencyCount]) => ({ filePath, dependencyCount }))
       .sort((a, b) => b.dependencyCount - a.dependencyCount);
 
-    // 4. Cycle Detection using DFS
-    const circularCandidates: CircularDependencyCandidate[] = [];
-    const visited = new Set<string>();
-    const recStack = new Set<string>();
-    const currentPath: string[] = [];
-    const seenCycles = new Set<string>();
-
-    function dfs(node: string) {
-      visited.add(node);
-      recStack.add(node);
-      currentPath.push(node);
-
-      const neighbors = adj.get(node);
-      if (neighbors) {
-        for (const neighbor of neighbors) {
-          if (!visited.has(neighbor)) {
-            dfs(neighbor);
-          } else if (recStack.has(neighbor)) {
-            // Cycle detected from neighbor to current node
-            const cycleStartIdx = currentPath.indexOf(neighbor);
-            if (cycleStartIdx !== -1) {
-              const cycleNodes = currentPath.slice(cycleStartIdx);
-              cycleNodes.push(neighbor); // Close cycle loop
-              const cycleSignature = [...cycleNodes].sort().join("|");
-              if (!seenCycles.has(cycleSignature)) {
-                seenCycles.add(cycleSignature);
-                circularCandidates.push({
-                  cycle: cycleNodes,
-                  length: cycleNodes.length - 1,
-                });
-              }
-            }
-          }
-        }
-      }
-
-      recStack.delete(node);
-      currentPath.pop();
-    }
-
-    for (const node of adj.keys()) {
-      if (!visited.has(node)) {
-        dfs(node);
-      }
-    }
+    // 4. Tarjan's SCC and Deterministic Cycle Analysis
+    const cycleResult = CycleAnalyzer.analyze(db, repositoryId, scanId);
 
     return {
       totalInternalEdges: counts.internalCount ?? 0,
       totalExternalDependencies: counts.externalCount ?? 0,
       totalUnresolvedImports: counts.unresolvedCount ?? 0,
-      circularDependencyCandidates: circularCandidates,
+      circularDependencyCandidates: cycleResult.circularCandidates,
+      stronglyConnectedComponents: cycleResult.stronglyConnectedComponents,
       highFanoutModules,
       externalPackages: extPackages.map((p) => p.pkg),
     };

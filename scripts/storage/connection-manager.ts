@@ -113,6 +113,16 @@ export class ConnectionManager {
     if (!this.repositoryRecord) {
       throw new Error("Repository record is not initialized.");
     }
+    if (this.db && this.db.isOpen()) {
+      const row = this.db
+        .prepare(
+          "SELECT id, identity, root_path AS rootPath, display_name AS displayName, created_at AS createdAt, updated_at AS updatedAt, schema_version AS schemaVersion, active_scan_id AS activeScanId FROM repositories WHERE id = ?",
+        )
+        .get(this.repositoryRecord.id) as RepositoryRecord | undefined;
+      if (row) {
+        this.repositoryRecord = row;
+      }
+    }
     return this.repositoryRecord;
   }
 
