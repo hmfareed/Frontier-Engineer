@@ -10,7 +10,11 @@ import type { SqliteDatabase } from "../database.ts";
 import type {
   EngineeringMemoryRecord,
   MemoryVersionRecord,
+  MemoryEvidenceRecord,
+  MemoryRelationshipRecord,
   CreateMemoryInput,
+  CreateMemoryEvidenceInput,
+  CreateMemoryRelationshipInput,
   TransitionLifecycleInput,
   MemoryFilterOptions,
 } from "../types.ts";
@@ -21,12 +25,36 @@ function sha256(content: string): string {
 
 export class MemoryStore {
   private db: DatabaseSync;
+  private sqliteDb?: SqliteDatabase;
+  private savepointSeq = 0;
 
   constructor(db: SqliteDatabase | DatabaseSync) {
     if ("rawDb" in db && typeof (db as SqliteDatabase).rawDb === "object") {
-      this.db = (db as SqliteDatabase).rawDb;
+      this.sqliteDb = db as SqliteDatabase;
+      this.db = this.sqliteDb.rawDb;
     } else {
       this.db = db as DatabaseSync;
+    }
+  }
+
+  private runAtomic<T>(fn: () => T): T {
+    if (this.sqliteDb) {
+      return this.sqliteDb.transaction(fn);
+    }
+    const spName = `sp_memory_store_${++this.savepointSeq}`;
+    this.db.exec(`SAVEPOINT ${spName};`);
+    try {
+      const result = fn();
+      this.db.exec(`RELEASE SAVEPOINT ${spName};`);
+      return result;
+    } catch (err) {
+      try {
+        this.db.exec(`ROLLBACK TO SAVEPOINT ${spName};`);
+        this.db.exec(`RELEASE SAVEPOINT ${spName};`);
+      } catch {
+        // Rollback suppressed if already aborted
+      }
+      throw err;
     }
   }
 
@@ -163,19 +191,19 @@ export class MemoryStore {
   }
 
   /**
-   * Transitions a memory's lifecycle state atomically inside an immediate transaction:
+   * Transitions a memory's lifecycle state atomically inside an immediate transaction (or nested savepoint):
    * 1. Reads current state and checks for no-op.
    * 2. Validates requested state transition and supersession rules.
    * 3. Captures prior state as an immutable record in memory_versions.
    * 4. Updates parent memory with new status, version, and timestamps.
-   * 5. Rolls back all changes if any step or database trigger fails.
+   * 5. Synchronizes SUPERSEDES relationship when transitioning to SUPERSEDED.
+   * 6. Rolls back all changes if any step or database trigger fails.
    */
   public transitionLifecycle(
     params: TransitionLifecycleInput,
     simulateFailure = false,
   ): EngineeringMemoryRecord {
-    this.db.exec("BEGIN IMMEDIATE;");
-    try {
+    return this.runAtomic(() => {
       const current = this.getMemory(params.repositoryId, params.memoryId);
       if (!current) {
         throw new Error(
@@ -192,7 +220,6 @@ export class MemoryStore {
         (params.newContent === undefined || params.newContent === current.content);
 
       if (isNoOp) {
-        this.db.exec("COMMIT;");
         return current;
       }
 
@@ -315,20 +342,337 @@ export class MemoryStore {
           current.id,
         );
 
-      this.db.exec("COMMIT;");
+      if (params.targetStatus === "SUPERSEDED" && supersededById !== null) {
+        this.db
+          .prepare(
+            `INSERT OR IGNORE INTO memory_relationships (
+              repository_id, source_memory_id, target_memory_id, relationship_type, created_at
+            ) VALUES (?, ?, ?, 'SUPERSEDES', ?)`,
+          )
+          .run(params.repositoryId, supersededById, current.id, now);
+      }
 
       const updated = this.getMemory(params.repositoryId, current.id);
       if (!updated) {
         throw new Error(`Failed to retrieve updated memory ${current.id}`);
       }
       return updated;
-    } catch (err) {
-      try {
-        this.db.exec("ROLLBACK;");
-      } catch {
-        // Rollback suppressed if already aborted
+    });
+  }
+
+  /**
+   * Advances last_seen_scan_id and last_verified_at for a verified non-terminal memory
+   * without incrementing version or writing a redundant memory_versions record.
+   */
+  public recordScanVerification(
+    repositoryId: number,
+    memoryId: number,
+    scanId: number,
+    verifiedAt?: string,
+  ): EngineeringMemoryRecord {
+    return this.runAtomic(() => {
+      const current = this.getMemory(repositoryId, memoryId);
+      if (!current) {
+        throw new Error(`Engineering memory ${memoryId} not found in repository ${repositoryId}`);
       }
-      throw err;
+      if (current.status === "SUPERSEDED" || current.status === "ARCHIVED") {
+        throw new Error(
+          `Cannot record scan verification on terminal memory ${memoryId} in status ${current.status}`,
+        );
+      }
+
+      const timestamp = verifiedAt ?? new Date().toISOString();
+      this.db
+        .prepare(
+          `UPDATE engineering_memories
+           SET last_seen_scan_id = ?, last_verified_at = ?, updated_at = ?
+           WHERE repository_id = ? AND id = ?`,
+        )
+        .run(scanId, timestamp, timestamp, repositoryId, memoryId);
+
+      const updated = this.getMemory(repositoryId, memoryId);
+      if (!updated) {
+        throw new Error(`Failed to retrieve verified memory ${memoryId}`);
+      }
+      return updated;
+    });
+  }
+
+  /**
+   * Attaches supporting or contradictory evidence to an engineering memory.
+   */
+  public addEvidence(params: CreateMemoryEvidenceInput): MemoryEvidenceRecord {
+    return this.runAtomic(() => {
+      const memory = this.getMemory(params.repositoryId, params.memoryId);
+      if (!memory) {
+        throw new Error(
+          `Engineering memory ${params.memoryId} not found in repository ${params.repositoryId}`,
+        );
+      }
+
+      const now = new Date().toISOString();
+      const isContradictoryInt = params.isContradictory ? 1 : 0;
+      const res = this.db
+        .prepare(
+          `INSERT INTO memory_evidence (
+            repository_id, memory_id, scan_id, evidence_type, source_path,
+            line_start, line_end, source_hash, symbol_identity,
+            graph_node_id, graph_edge_id, description, confidence,
+            is_contradictory, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          params.repositoryId,
+          params.memoryId,
+          params.scanId,
+          params.evidenceType,
+          params.sourcePath,
+          params.lineStart ?? null,
+          params.lineEnd ?? null,
+          params.sourceHash ?? null,
+          params.symbolIdentity ?? null,
+          params.graphNodeId ?? null,
+          params.graphEdgeId ?? null,
+          params.description,
+          params.confidence ?? 1.0,
+          isContradictoryInt,
+          now,
+        );
+
+      const evidenceId = Number(res.lastInsertRowid);
+      const row = this.db
+        .prepare(
+          `SELECT
+            id, repository_id AS repositoryId, memory_id AS memoryId, scan_id AS scanId,
+            evidence_type AS evidenceType, source_path AS sourcePath,
+            line_start AS lineStart, line_end AS lineEnd, source_hash AS sourceHash,
+            symbol_identity AS symbolIdentity, graph_node_id AS graphNodeId,
+            graph_edge_id AS graphEdgeId, description, confidence,
+            is_contradictory AS isContradictory, created_at AS createdAt
+          FROM memory_evidence
+          WHERE repository_id = ? AND id = ?`,
+        )
+        .get(params.repositoryId, evidenceId) as
+        (Omit<MemoryEvidenceRecord, "isContradictory"> & { isContradictory: number }) | undefined;
+
+      if (!row) {
+        throw new Error(`Failed to retrieve newly created memory evidence ${evidenceId}`);
+      }
+
+      return {
+        ...row,
+        isContradictory: Boolean(row.isContradictory),
+      };
+    });
+  }
+
+  /**
+   * Retrieves all evidence records attached to an engineering memory.
+   */
+  public getMemoryEvidence(repositoryId: number, memoryId: number): MemoryEvidenceRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT
+          id, repository_id AS repositoryId, memory_id AS memoryId, scan_id AS scanId,
+          evidence_type AS evidenceType, source_path AS sourcePath,
+          line_start AS lineStart, line_end AS lineEnd, source_hash AS sourceHash,
+          symbol_identity AS symbolIdentity, graph_node_id AS graphNodeId,
+          graph_edge_id AS graphEdgeId, description, confidence,
+          is_contradictory AS isContradictory, created_at AS createdAt
+        FROM memory_evidence
+        WHERE repository_id = ? AND memory_id = ?
+        ORDER BY id ASC`,
+      )
+      .all(repositoryId, memoryId) as unknown as (Omit<MemoryEvidenceRecord, "isContradictory"> & {
+      isContradictory: number;
+    })[];
+
+    return rows.map((row) => ({
+      ...row,
+      isContradictory: Boolean(row.isContradictory),
+    }));
+  }
+
+  /**
+   * Creates a typed relationship between two engineering memories in the same repository.
+   * Enforces same-repo membership, no self-loops, conflict guards, and acyclicity on
+   * hierarchical edge types (SUPERSEDES, DEPENDS_ON, IMPLEMENTS).
+   */
+  public createRelationship(params: CreateMemoryRelationshipInput): MemoryRelationshipRecord {
+    return this.runAtomic(() => {
+      if (params.sourceMemoryId === params.targetMemoryId) {
+        throw new Error("Self-referential memory relationship is prohibited");
+      }
+
+      const sourceMem = this.getMemory(params.repositoryId, params.sourceMemoryId);
+      const targetMem = this.getMemory(params.repositoryId, params.targetMemoryId);
+      if (!sourceMem || !targetMem) {
+        throw new Error(
+          `Cross-repository or non-existent memory in relationship (${params.sourceMemoryId} -> ${params.targetMemoryId})`,
+        );
+      }
+
+      // Conflict guards between CONTRADICTS and IMPLEMENTS / DOCUMENTS
+      if (params.relationshipType === "CONTRADICTS") {
+        const conflict = this.db
+          .prepare(
+            `SELECT COUNT(*) AS count FROM memory_relationships
+             WHERE repository_id = ?
+               AND relationship_type IN ('IMPLEMENTS', 'DOCUMENTS')
+               AND ((source_memory_id = ? AND target_memory_id = ?)
+                    OR (source_memory_id = ? AND target_memory_id = ?))`,
+          )
+          .get(
+            params.repositoryId,
+            params.sourceMemoryId,
+            params.targetMemoryId,
+            params.targetMemoryId,
+            params.sourceMemoryId,
+          ) as { count: number };
+        if (conflict.count > 0) {
+          throw new Error(
+            `Conflicting memory relationship between ${params.sourceMemoryId} and ${params.targetMemoryId}`,
+          );
+        }
+      } else if (
+        params.relationshipType === "IMPLEMENTS" ||
+        params.relationshipType === "DOCUMENTS"
+      ) {
+        const conflict = this.db
+          .prepare(
+            `SELECT COUNT(*) AS count FROM memory_relationships
+             WHERE repository_id = ?
+               AND relationship_type = 'CONTRADICTS'
+               AND ((source_memory_id = ? AND target_memory_id = ?)
+                    OR (source_memory_id = ? AND target_memory_id = ?))`,
+          )
+          .get(
+            params.repositoryId,
+            params.sourceMemoryId,
+            params.targetMemoryId,
+            params.targetMemoryId,
+            params.sourceMemoryId,
+          ) as { count: number };
+        if (conflict.count > 0) {
+          throw new Error(
+            `Conflicting memory relationship between ${params.sourceMemoryId} and ${params.targetMemoryId}`,
+          );
+        }
+      }
+
+      // Acyclicity check for directed hierarchy types
+      if (
+        params.relationshipType === "SUPERSEDES" ||
+        params.relationshipType === "DEPENDS_ON" ||
+        params.relationshipType === "IMPLEMENTS"
+      ) {
+        const MAX_DEPTH = 32;
+        const visited = new Set<number>();
+        const queue: { id: number; depth: number }[] = [{ id: params.targetMemoryId, depth: 0 }];
+        const nextStmt = this.db.prepare(
+          `SELECT target_memory_id AS targetMemoryId
+           FROM memory_relationships
+           WHERE repository_id = ? AND source_memory_id = ? AND relationship_type = ?
+           ORDER BY id ASC`,
+        );
+
+        while (queue.length > 0) {
+          const item = queue.shift()!;
+          if (item.id === params.sourceMemoryId) {
+            throw new Error(
+              `ERR_MEMORY_RELATIONSHIP_CYCLE: Cycle detected in ${params.relationshipType} relationship graph`,
+            );
+          }
+          if (visited.has(item.id) || item.depth >= MAX_DEPTH) {
+            continue;
+          }
+          visited.add(item.id);
+          const nextRows = nextStmt.all(
+            params.repositoryId,
+            item.id,
+            params.relationshipType,
+          ) as unknown as { targetMemoryId: number }[];
+          for (const nr of nextRows) {
+            if (nr.targetMemoryId === params.sourceMemoryId) {
+              throw new Error(
+                `ERR_MEMORY_RELATIONSHIP_CYCLE: Cycle detected in ${params.relationshipType} relationship graph`,
+              );
+            }
+            if (!visited.has(nr.targetMemoryId)) {
+              queue.push({ id: nr.targetMemoryId, depth: item.depth + 1 });
+            }
+          }
+        }
+      }
+
+      const now = new Date().toISOString();
+      this.db
+        .prepare(
+          `INSERT OR IGNORE INTO memory_relationships (
+            repository_id, source_memory_id, target_memory_id, relationship_type, created_at
+          ) VALUES (?, ?, ?, ?, ?)`,
+        )
+        .run(
+          params.repositoryId,
+          params.sourceMemoryId,
+          params.targetMemoryId,
+          params.relationshipType,
+          now,
+        );
+
+      const row = this.db
+        .prepare(
+          `SELECT
+            id, repository_id AS repositoryId, source_memory_id AS sourceMemoryId,
+            target_memory_id AS targetMemoryId, relationship_type AS relationshipType,
+            created_at AS createdAt
+          FROM memory_relationships
+          WHERE repository_id = ? AND source_memory_id = ? AND target_memory_id = ? AND relationship_type = ?`,
+        )
+        .get(
+          params.repositoryId,
+          params.sourceMemoryId,
+          params.targetMemoryId,
+          params.relationshipType,
+        ) as MemoryRelationshipRecord | undefined;
+
+      if (!row) {
+        throw new Error(
+          `Failed to retrieve memory relationship (${params.sourceMemoryId} -> ${params.targetMemoryId})`,
+        );
+      }
+      return row;
+    });
+  }
+
+  /**
+   * Lists relationships in a repository, optionally scoped to edges involving a specific memoryId.
+   */
+  public getRelationships(repositoryId: number, memoryId?: number): MemoryRelationshipRecord[] {
+    if (memoryId !== undefined) {
+      return this.db
+        .prepare(
+          `SELECT
+            id, repository_id AS repositoryId, source_memory_id AS sourceMemoryId,
+            target_memory_id AS targetMemoryId, relationship_type AS relationshipType,
+            created_at AS createdAt
+          FROM memory_relationships
+          WHERE repository_id = ? AND (source_memory_id = ? OR target_memory_id = ?)
+          ORDER BY id ASC`,
+        )
+        .all(repositoryId, memoryId, memoryId) as unknown as MemoryRelationshipRecord[];
     }
+
+    return this.db
+      .prepare(
+        `SELECT
+          id, repository_id AS repositoryId, source_memory_id AS sourceMemoryId,
+          target_memory_id AS targetMemoryId, relationship_type AS relationshipType,
+          created_at AS createdAt
+        FROM memory_relationships
+        WHERE repository_id = ?
+        ORDER BY id ASC`,
+      )
+      .all(repositoryId) as unknown as MemoryRelationshipRecord[];
   }
 }

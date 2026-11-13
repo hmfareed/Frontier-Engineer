@@ -411,3 +411,27 @@ export interface MemoryFilterOptions {
   status?: MemoryLifecycleStatus;
   confidenceTier?: MemoryConfidenceTier;
 }
+
+export interface CreateMemoryEvidenceInput {
+  repositoryId: number;
+  memoryId: number;
+  scanId: number;
+  evidenceType: MemoryEvidenceType;
+  sourcePath: string;
+  lineStart?: number | null;
+  lineEnd?: number | null;
+  sourceHash?: string | null;
+  symbolIdentity?: string | null;
+  graphNodeId?: number | null;
+  graphEdgeId?: number | null;
+  description: string;
+  confidence?: number;
+  isContradictory?: boolean;
+}
+
+export interface CreateMemoryRelationshipInput {
+  repositoryId: number;
+  sourceMemoryId: number;
+  targetMemoryId: number;
+  relationshipType: MemoryRelationshipType;
+}

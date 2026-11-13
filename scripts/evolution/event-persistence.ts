@@ -8,6 +8,27 @@ import type { EvolutionEventRecord } from "../storage/types.ts";
 import { SnapshotValidator } from "./snapshot-validator.ts";
 import type { SnapshotComparison } from "./types.ts";
 
+export const STAGE3_FACTUAL_EVENT_TYPES = [
+  "FILE_ADDED",
+  "FILE_MODIFIED",
+  "FILE_DELETED",
+  "FILE_RENAMED",
+  "SYMBOL_ADDED",
+  "SYMBOL_REMOVED",
+  "SYMBOL_MODIFIED",
+  "SYMBOL_RELOCATED",
+  "DEPENDENCY_ADDED",
+  "DEPENDENCY_REMOVED",
+  "DEPENDENCY_MODIFIED",
+  "DEPENDENCY_UNRESOLVED",
+  "COMPONENT_ADDED",
+  "COMPONENT_REMOVED",
+  "COMPONENT_MODIFIED",
+  "ADR_ADDED",
+  "ADR_REMOVED",
+  "ADR_MODIFIED",
+] as const;
+
 export class EventPersistenceBoundary {
   public static persist(
     db: SqliteDatabase,
@@ -26,9 +47,11 @@ export class EventPersistenceBoundary {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
 
+    const placeholders = STAGE3_FACTUAL_EVENT_TYPES.map(() => "?").join(", ");
     const deleteStmt = db.prepare(
       `DELETE FROM evolution_events
-       WHERE repository_id = ? AND base_scan_id = ? AND target_scan_id = ?`,
+       WHERE repository_id = ? AND base_scan_id = ? AND target_scan_id = ?
+         AND event_type IN (${placeholders})`,
     );
 
     const persistedEvents: EvolutionEventRecord[] = [];
@@ -69,7 +92,7 @@ export class EventPersistenceBoundary {
       }
 
       // 1. Idempotency: remove prior factual events for this exact comparison pair
-      deleteStmt.run(repositoryId, baseScanId, targetScanId);
+      deleteStmt.run(repositoryId, baseScanId, targetScanId, ...STAGE3_FACTUAL_EVENT_TYPES);
 
       // 2. Persist File Events (factual changes only)
       for (const f of comparison.files.changes) {

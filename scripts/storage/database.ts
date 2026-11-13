@@ -16,6 +16,7 @@ export class SqliteDatabase {
   private db: DatabaseSync;
   private closed = false;
   private readonly dbPath: string;
+  private transactionDepth = 0;
 
   constructor(options: DatabaseOptions = {}) {
     this.dbPath = options.path ?? ":memory:";
@@ -76,23 +77,47 @@ export class SqliteDatabase {
   }
 
   /**
-   * Executes a synchronous block inside an immediate transaction.
+   * Executes a synchronous block inside an immediate transaction (or nested savepoint).
    * Automatically rolls back on exception.
    */
   public transaction<T>(fn: () => T): T {
     this.ensureOpen();
-    this.db.exec("BEGIN IMMEDIATE;");
+    if (this.transactionDepth === 0) {
+      this.transactionDepth++;
+      this.db.exec("BEGIN IMMEDIATE;");
+      try {
+        const result = fn();
+        this.db.exec("COMMIT;");
+        return result;
+      } catch (err) {
+        try {
+          this.db.exec("ROLLBACK;");
+        } catch {
+          // Suppress rollback errors if transaction was already aborted
+        }
+        throw err;
+      } finally {
+        this.transactionDepth--;
+      }
+    }
+
+    const spName = `sp_nested_${this.transactionDepth}`;
+    this.transactionDepth++;
+    this.db.exec(`SAVEPOINT ${spName};`);
     try {
       const result = fn();
-      this.db.exec("COMMIT;");
+      this.db.exec(`RELEASE SAVEPOINT ${spName};`);
       return result;
     } catch (err) {
       try {
-        this.db.exec("ROLLBACK;");
+        this.db.exec(`ROLLBACK TO SAVEPOINT ${spName};`);
+        this.db.exec(`RELEASE SAVEPOINT ${spName};`);
       } catch {
         // Suppress rollback errors if transaction was already aborted
       }
       throw err;
+    } finally {
+      this.transactionDepth--;
     }
   }
 

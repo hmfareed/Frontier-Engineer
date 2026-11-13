@@ -1,7 +1,10 @@
 /**
- * Phase 7.5 Stage 3 — Snapshot Comparator & Deterministic Diff Engine Types
- * Strongly typed contracts for snapshot validation, multi-domain diffs, evidence, and comparisons.
+ * Phase 7.5 Stage 3 & 4 — Snapshot Comparator, Evolution Analyzer & Debt Intelligence Types
+ * Strongly typed contracts for snapshot validation, multi-domain diffs, drift, ADR correlation, debt, and comparisons.
  */
+
+import type { EvolutionSeverity } from "../storage/types.ts";
+import type { MemoryLifecycleSummary } from "../memory/types.ts";
 
 export type ComparisonStatus = "COMPLETE" | "PARTIAL";
 
@@ -244,4 +247,114 @@ export interface ComparatorOptions {
   maxRecordsPerDomain?: number;
   persistEvents?: boolean;
   workspaceRoot?: string;
+}
+
+// --- Phase 7.5 Stage 4: Evolution Analyzer, Drift, ADR Correlation & Debt Types ---
+
+export type DriftFindingType =
+  | "DRIFT_COMPONENT_ADDED"
+  | "DRIFT_COMPONENT_REMOVED"
+  | "DRIFT_COMPONENT_RECLASSIFIED"
+  | "DRIFT_COMPONENT_BOUNDARY_CREATED"
+  | "DRIFT_COMPONENT_BOUNDARY_REMOVED"
+  | "DRIFT_LAYER_VIOLATION_INTRODUCED"
+  | "DRIFT_CYCLE_INTRODUCED"
+  | "DRIFT_CYCLE_EXPANDED"
+  | "DRIFT_CYCLE_RESOLVED"
+  | "DRIFT_SCC_GROWTH"
+  | "DRIFT_COUPLING_HOTSPOT_INTRODUCED"
+  | "DRIFT_UNRESOLVED_IMPORT_SPIKE";
+
+export interface DriftFinding {
+  findingId: string;
+  driftType: DriftFindingType;
+  title: string;
+  description: string;
+  severity: EvolutionSeverity;
+  confidence: number;
+  confidenceTier: "CONFIRMED" | "INFERRED" | "CANDIDATE";
+  subjectEntity: string;
+  relevantPaths: string[];
+  details: Record<string, unknown>;
+  evidenceIds: string[];
+}
+
+export type AdrCorrelationType =
+  | "DECISION_GOVERNED_COMPONENT_REMOVED"
+  | "DECISION_GOVERNED_BOUNDARY_DRIFT"
+  | "DECISION_STATUS_SUPERSEDED_OR_DEPRECATED"
+  | "DECISION_UNLINKED_ARCHITECTURAL_CHANGE";
+
+export interface AdrCorrelationFinding {
+  findingId: string;
+  correlationType: AdrCorrelationType;
+  adrId?: string;
+  componentIdentity?: string;
+  title: string;
+  description: string;
+  severity: EvolutionSeverity;
+  confidence: number;
+  confidenceTier: "CONFIRMED" | "INFERRED" | "CANDIDATE";
+  relevantPaths: string[];
+  details: Record<string, unknown>;
+  evidenceIds: string[];
+}
+
+export type DebtCategory =
+  | "DEBT_CIRCULAR_DEPENDENCY"
+  | "DEBT_UNRESOLVED_IMPORTS"
+  | "DEBT_HIGH_FANOUT_HOTSPOT"
+  | "DEBT_LAYER_BOUNDARY_VIOLATION"
+  | "DEBT_UNTESTED_COMPONENT_GROWTH"
+  | "DEBT_STALE_OR_DISPUTED_MEMORY";
+
+export type DebtLifecycleState = "INTRODUCED" | "WORSENED" | "PERSISTING" | "RESOLVED";
+
+export interface DebtFinding {
+  findingId: string;
+  category: DebtCategory;
+  state: DebtLifecycleState;
+  title: string;
+  description: string;
+  severity: EvolutionSeverity;
+  confidence: number;
+  confidenceTier: "CONFIRMED" | "INFERRED" | "CANDIDATE";
+  subjectEntity: string;
+  baseMetric?: number;
+  targetMetric?: number;
+  relevantPaths: string[];
+  details: Record<string, unknown>;
+}
+
+export interface EvolutionAnalyzerOptions extends ComparatorOptions {
+  applyLifecycle?: boolean;
+  fanoutHotspotThreshold?: number;
+  simulateFailure?: boolean;
+}
+
+export interface EvolutionAnalysisResult {
+  analysisId: string;
+  repositoryId: number;
+  repositoryIdentity: string;
+  baseSnapshot: SnapshotHeader;
+  targetSnapshot: SnapshotHeader;
+  analyzedAt: string;
+  status: ComparisonStatus;
+  comparison: SnapshotComparison;
+  drift: {
+    totalFindings: number;
+    findings: DriftFinding[];
+  };
+  decisions: {
+    totalCorrelations: number;
+    correlations: AdrCorrelationFinding[];
+  };
+  debt: {
+    introducedCount: number;
+    worsenedCount: number;
+    persistingCount: number;
+    resolvedCount: number;
+    items: DebtFinding[];
+  };
+  memoryLifecycle: MemoryLifecycleSummary;
 }

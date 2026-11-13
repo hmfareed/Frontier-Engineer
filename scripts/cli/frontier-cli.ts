@@ -15,6 +15,8 @@ import path from "node:path";
 import fs from "node:fs";
 import { pathToFileURL } from "node:url";
 import { ConnectionManager } from "../storage/connection-manager.ts";
+import { MemoryStore } from "../storage/repositories/memory-store.ts";
+import { MemoryLifecycleEvaluator } from "../memory/memory-lifecycle-evaluator.ts";
 import { ArchitectureQueryEngine } from "../query/query-engine.ts";
 import { QueryGrammar } from "../query/query-grammar.ts";
 import { QueryFormatter } from "../query/query-formatter.ts";
@@ -23,6 +25,8 @@ import {
   SnapshotComparator,
   SnapshotComparisonError,
   ComparisonSerializer,
+  EvolutionAnalyzer,
+  EvolutionSerializer,
   type SnapshotComparison,
 } from "../evolution/index.ts";
 
@@ -41,6 +45,7 @@ export async function runCli(argv: string[]): Promise<number> {
   let verifyContent = false;
   let persistEvents = false;
   let allowPartial = false;
+  let applyLifecycle = false;
 
   // Manual argument parsing without external dependencies
   const positional: string[] = [];
@@ -109,6 +114,8 @@ export async function runCli(argv: string[]): Promise<number> {
       persistEvents = true;
     } else if (arg === "--allow-partial") {
       allowPartial = true;
+    } else if (arg === "--apply-lifecycle") {
+      applyLifecycle = true;
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       return 0;
@@ -154,6 +161,11 @@ export async function runCli(argv: string[]): Promise<number> {
     "freshness",
     "query",
     "compare",
+    "evolution",
+    "drift",
+    "debt",
+    "memories",
+    "memory",
   ]);
 
   if (!KNOWN_COMMANDS.has(subcommand)) {
@@ -165,9 +177,18 @@ export async function runCli(argv: string[]): Promise<number> {
     return 2;
   }
 
-  if (subcommand === "compare") {
+  if (
+    subcommand === "compare" ||
+    subcommand === "evolution" ||
+    subcommand === "drift" ||
+    subcommand === "debt"
+  ) {
     if (positional.length < 3) {
-      outputError("Missing required arguments: compare <base_scan_id> <target_scan_id>", 2, format);
+      outputError(
+        `Missing required arguments: ${subcommand} <base_scan_id> <target_scan_id>`,
+        2,
+        format,
+      );
       return 2;
     }
   }
@@ -181,6 +202,7 @@ export async function runCli(argv: string[]): Promise<number> {
     symbol: "<symbol_name>",
     decision: "<decision_id>",
     query: "<query_expression>",
+    memory: "<memory_key_or_id>",
   };
 
   if (REQUIRES_TARGET[subcommand] && !target) {
@@ -205,7 +227,12 @@ export async function runCli(argv: string[]): Promise<number> {
       scanId === undefined &&
       subcommand !== "status" &&
       subcommand !== "freshness" &&
-      subcommand !== "compare"
+      subcommand !== "compare" &&
+      subcommand !== "evolution" &&
+      subcommand !== "drift" &&
+      subcommand !== "debt" &&
+      subcommand !== "memories" &&
+      subcommand !== "memory"
     ) {
       outputError(
         `Repository index is unavailable: no active scan exists for '${repo.identity}'. Run repository scan to generate an index.`,
@@ -340,6 +367,137 @@ export async function runCli(argv: string[]): Promise<number> {
         return 0;
       }
 
+      case "evolution":
+      case "drift":
+      case "debt": {
+        const baseScanId = parseInt(positional[1], 10);
+        const targetScanId = parseInt(positional[2], 10);
+        if (isNaN(baseScanId) || baseScanId < 1 || isNaN(targetScanId) || targetScanId < 1) {
+          outputError(
+            "Invalid scan ID: base_scan_id and target_scan_id must be positive integers.",
+            2,
+            format,
+          );
+          return 2;
+        }
+        const analyzer = new EvolutionAnalyzer(connectionManager.getDatabase());
+        const analysis = analyzer.analyze(baseScanId, targetScanId, {
+          persistEvents,
+          applyLifecycle,
+          allowPartial,
+          workspaceRoot,
+          maxRecordsPerDomain: limit,
+        });
+
+        if (subcommand === "evolution") {
+          if (format === "json") {
+            process.stdout.write(EvolutionSerializer.serialize(analysis, true) + "\n");
+          } else {
+            process.stdout.write(EvolutionSerializer.formatTerminal(analysis) + "\n");
+          }
+          return 0;
+        }
+
+        if (subcommand === "drift") {
+          const payload = {
+            analysisId: analysis.analysisId,
+            repositoryId: analysis.repositoryId,
+            repositoryIdentity: analysis.repositoryIdentity,
+            baseSnapshot: analysis.baseSnapshot,
+            targetSnapshot: analysis.targetSnapshot,
+            status: analysis.status,
+            drift: analysis.drift,
+            decisions: analysis.decisions,
+          };
+          if (format === "json") {
+            process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
+          } else {
+            process.stdout.write(formatTerminalDrift(payload) + "\n");
+          }
+          return 0;
+        }
+
+        const debtPayload = {
+          analysisId: analysis.analysisId,
+          repositoryId: analysis.repositoryId,
+          repositoryIdentity: analysis.repositoryIdentity,
+          baseSnapshot: analysis.baseSnapshot,
+          targetSnapshot: analysis.targetSnapshot,
+          status: analysis.status,
+          debt: analysis.debt,
+        };
+        if (format === "json") {
+          process.stdout.write(JSON.stringify(debtPayload, null, 2) + "\n");
+        } else {
+          process.stdout.write(formatTerminalDebt(debtPayload) + "\n");
+        }
+        return 0;
+      }
+
+      case "memories": {
+        const db = connectionManager.getDatabase();
+        const memStore = new MemoryStore(db);
+        const allMemories = memStore.listMemories(repo.id);
+        const memories = limit !== undefined ? allMemories.slice(0, limit) : allMemories;
+        const lifecycleEvaluation =
+          scanId !== undefined
+            ? MemoryLifecycleEvaluator.evaluateRepository(db, repo.id, scanId, undefined, {
+                applyLifecycle,
+                workspaceRoot,
+              })
+            : null;
+        const payload = {
+          repositoryId: repo.id,
+          repositoryIdentity: repo.identity,
+          totalCount: allMemories.length,
+          memories,
+          lifecycleEvaluation,
+        };
+        if (format === "json") {
+          process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
+        } else {
+          process.stdout.write(formatTerminalMemories(payload) + "\n");
+        }
+        return 0;
+      }
+
+      case "memory": {
+        if (!target) {
+          outputError("Missing required argument: <memory_key_or_id>", 2, format);
+          return 2;
+        }
+        const db = connectionManager.getDatabase();
+        const memStore = new MemoryStore(db);
+        const memory = /^\d+$/.test(target)
+          ? memStore.getMemory(repo.id, parseInt(target, 10))
+          : memStore.getMemoryByKey(repo.id, target);
+        if (!memory) {
+          outputError(
+            `Engineering memory '${target}' not found in repository ${repo.id}.`,
+            4,
+            format,
+          );
+          return 4;
+        }
+        const versions = memStore.getMemoryVersions(memory.id);
+        const evidence = memStore.getMemoryEvidence(repo.id, memory.id);
+        const relationships = memStore.getRelationships(repo.id, memory.id);
+        const payload = {
+          repositoryId: repo.id,
+          repositoryIdentity: repo.identity,
+          memory,
+          versions,
+          evidence,
+          relationships,
+        };
+        if (format === "json") {
+          process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
+        } else {
+          process.stdout.write(formatTerminalMemoryDetail(payload) + "\n");
+        }
+        return 0;
+      }
+
       default:
         outputError(
           `Unknown subcommand: "${subcommand}". Use --help for available intelligence commands.`,
@@ -461,6 +619,137 @@ function formatTerminalComparison(c: SnapshotComparison): string {
   return lines.join("\n");
 }
 
+function formatTerminalDrift(payload: {
+  analysisId: string;
+  repositoryIdentity: string;
+  drift: {
+    totalFindings: number;
+    findings: { severity: string; confidenceTier: string; driftType: string; title: string }[];
+  };
+  decisions: {
+    totalCorrelations: number;
+    correlations: {
+      severity: string;
+      confidenceTier: string;
+      correlationType: string;
+      title: string;
+    }[];
+  };
+}): string {
+  const lines: string[] = [];
+  lines.push(`Frontier Engineer — Architectural Drift (${payload.analysisId})`);
+  lines.push(`Repository: ${payload.repositoryIdentity}`);
+  lines.push(`Drift Findings: ${payload.drift.totalFindings}`);
+  for (const f of payload.drift.findings) {
+    lines.push(`  [${f.severity}] (${f.confidenceTier}) ${f.driftType}: ${f.title}`);
+  }
+  lines.push(`ADR Correlations: ${payload.decisions.totalCorrelations}`);
+  for (const c of payload.decisions.correlations) {
+    lines.push(`  [${c.severity}] (${c.confidenceTier}) ${c.correlationType}: ${c.title}`);
+  }
+  return lines.join("\n");
+}
+
+function formatTerminalDebt(payload: {
+  analysisId: string;
+  repositoryIdentity: string;
+  debt: {
+    introducedCount: number;
+    worsenedCount: number;
+    persistingCount: number;
+    resolvedCount: number;
+    items: {
+      state: string;
+      severity: string;
+      confidenceTier: string;
+      category: string;
+      title: string;
+    }[];
+  };
+}): string {
+  const lines: string[] = [];
+  lines.push(`Frontier Engineer — Engineering Debt (${payload.analysisId})`);
+  lines.push(`Repository: ${payload.repositoryIdentity}`);
+  lines.push(
+    `Totals: +${payload.debt.introducedCount} introduced, ~${payload.debt.worsenedCount} worsened, =${payload.debt.persistingCount} persisting, -${payload.debt.resolvedCount} resolved`,
+  );
+  for (const item of payload.debt.items) {
+    lines.push(
+      `  [${item.state}/${item.severity}] (${item.confidenceTier}) ${item.category}: ${item.title}`,
+    );
+  }
+  return lines.join("\n");
+}
+
+function formatTerminalMemories(payload: {
+  repositoryIdentity: string;
+  totalCount: number;
+  memories: {
+    id: number;
+    memoryKey: string;
+    category: string;
+    status: string;
+    version: number;
+    title: string;
+  }[];
+  lifecycleEvaluation: { totalEvaluated: number } | null;
+}): string {
+  const lines: string[] = [];
+  lines.push(`Frontier Engineer — Engineering Memories (${payload.repositoryIdentity})`);
+  lines.push(`Total Memories: ${payload.totalCount}`);
+  for (const m of payload.memories) {
+    lines.push(`  #${m.id} [${m.status}] v${m.version} (${m.category}) ${m.memoryKey}: ${m.title}`);
+  }
+  if (payload.lifecycleEvaluation) {
+    lines.push(`Evaluated against scan: ${payload.lifecycleEvaluation.totalEvaluated} memories`);
+  }
+  return lines.join("\n");
+}
+
+function formatTerminalMemoryDetail(payload: {
+  repositoryIdentity: string;
+  memory: {
+    id: number;
+    memoryKey: string;
+    category: string;
+    status: string;
+    version: number;
+    title: string;
+    content: string;
+    lastSeenScanId: number | null;
+    supersededById: number | null;
+  };
+  versions: { version: number; status: string; changeReason: string }[];
+  evidence: { evidenceType: string; sourcePath: string; isContradictory: boolean }[];
+  relationships: { relationshipType: string; sourceMemoryId: number; targetMemoryId: number }[];
+}): string {
+  const m = payload.memory;
+  const lines: string[] = [];
+  lines.push(`Frontier Engineer — Engineering Memory #${m.id} (${m.memoryKey})`);
+  lines.push(`Repository: ${payload.repositoryIdentity}`);
+  lines.push(`Title:      ${m.title}`);
+  lines.push(`Category:   ${m.category} | Status: ${m.status} | Version: ${m.version}`);
+  lines.push(
+    `Last Scan:  ${m.lastSeenScanId ?? "N/A"} | Superseded By: ${m.supersededById ?? "None"}`,
+  );
+  lines.push(`Content:    ${m.content}`);
+  lines.push(`Evidence (${payload.evidence.length}):`);
+  for (const ev of payload.evidence) {
+    lines.push(
+      `  - [${ev.isContradictory ? "CONTRADICTORY" : "SUPPORTING"}] ${ev.evidenceType}: ${ev.sourcePath}`,
+    );
+  }
+  lines.push(`Versions (${payload.versions.length}):`);
+  for (const v of payload.versions) {
+    lines.push(`  - v${v.version} (${v.status}): ${v.changeReason}`);
+  }
+  lines.push(`Relationships (${payload.relationships.length}):`);
+  for (const r of payload.relationships) {
+    lines.push(`  - ${r.sourceMemoryId} -[${r.relationshipType}]-> ${r.targetMemoryId}`);
+  }
+  return lines.join("\n");
+}
+
 function printHelp(): void {
   process.stdout.write(`
 Frontier Engineer — Architecture Intelligence Query CLI
@@ -490,8 +779,13 @@ Commands:
   # Command Aliases (1)
   deps <target>              Alias for 'dependencies <target>'
 
-  # Snapshot Comparison Commands (1)
-  compare <base-id> <target-id> Compare two snapshots deterministically across all architectural domains
+  # Snapshot Comparison & Evolution Intelligence Commands (6)
+  compare <base-id> <target-id>   Compare two snapshots deterministically across all architectural domains
+  evolution <base-id> <target-id> Run full evolution, drift, ADR correlation, debt, and memory lifecycle analysis
+  drift <base-id> <target-id>     Analyze architectural boundary drift and ADR governance correlations
+  debt <base-id> <target-id>      Analyze engineering debt (introduced, worsened, persisting, resolved)
+  memories                        List durable engineering memories (use --scan-id for lifecycle validation)
+  memory <key-or-id>              Inspect a single memory, its version history, evidence, and relationships
 
 Options:
   --format <text|json>       Output format (default: text)
@@ -500,7 +794,8 @@ Options:
   --limit <n>                Maximum number of results to display (default: 50)
   --scan-id <id>             Explicit historical scan ID to inspect (default: active scan)
   --verify-content           Perform full SHA-256 cryptographic content hash verification
-  --persist-events           Persist factual change events to evolution_events table
+  --persist-events           Persist factual/analytical change events to evolution_events table
+  --apply-lifecycle          Apply validated memory lifecycle transitions and scan verifications
   --allow-partial            Allow comparing PARTIAL snapshots (marks result PARTIAL)
   --help, -h                 Display this help message
 
