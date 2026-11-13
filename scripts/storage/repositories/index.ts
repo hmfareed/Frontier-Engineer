@@ -8,3 +8,4 @@ export * from "./symbol-store.ts";
 export * from "./import-store.ts";
 export * from "./export-store.ts";
 export * from "./evidence-store.ts";
+export * from "./memory-store.ts";

@@ -49,12 +49,14 @@ describe("storage-migration-003 (Engineering Memory & Evolution Data Model)", ()
 
     const triggers = db.rawDb
       .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_memory_versions_no_update', 'trg_memory_versions_no_direct_delete', 'trg_engineering_memories_status_transitions') ORDER BY name ASC",
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'trg_%' ORDER BY name ASC",
       )
       .all() as { name: string }[];
 
     expect(triggers.map((t) => t.name)).toEqual([
-      "trg_engineering_memories_status_transitions",
+      "trg_engineering_memories_insert_guard",
+      "trg_engineering_memories_no_delete_replacement",
+      "trg_engineering_memories_update_guard",
       "trg_memory_versions_no_direct_delete",
       "trg_memory_versions_no_update",
     ]);
@@ -310,14 +312,18 @@ describe("storage-migration-003 (Engineering Memory & Evolution Data Model)", ()
     // Adversarial: Self-supersession (mem1 superseded_by_id = mem1) -> REJECT
     expect(() => {
       db.rawDb
-        .prepare("UPDATE engineering_memories SET superseded_by_id = ? WHERE id = ?")
+        .prepare(
+          "UPDATE engineering_memories SET status = 'SUPERSEDED', superseded_by_id = ? WHERE id = ?",
+        )
         .run(mem1Id, mem1Id);
-    }).toThrow(/CHECK constraint failed: superseded_by_id IS NULL OR superseded_by_id != id/);
+    }).toThrow(/CHECK constraint failed|self-supersession is prohibited/);
 
     // Adversarial: Cross-repo supersession (mem1 in repo 1 superseded_by_id = mem2 in repo 2) -> REJECT
     expect(() => {
       db.rawDb
-        .prepare("UPDATE engineering_memories SET superseded_by_id = ? WHERE id = ?")
+        .prepare(
+          "UPDATE engineering_memories SET status = 'SUPERSEDED', superseded_by_id = ? WHERE id = ?",
+        )
         .run(mem2Id, mem1Id);
     }).toThrow(/FOREIGN KEY constraint failed/);
 
@@ -629,7 +635,7 @@ describe("storage-migration-003 (Engineering Memory & Evolution Data Model)", ()
     expect(afterFail.content).toBe("V2 Content");
   });
 
-  it("7. enforces engineering_memories lifecycle state transitions via trigger", () => {
+  it("7. enforces engineering_memories lifecycle state transitions and initial status via triggers", () => {
     runMigrations(db.rawDb);
 
     const r = db.rawDb
@@ -639,89 +645,187 @@ describe("storage-migration-003 (Engineering Memory & Evolution Data Model)", ()
       .run(now, now);
     const repoId = Number(r.lastInsertRowid);
 
-    function createMemory(status: string): number {
+    const r2 = db.rawDb
+      .prepare(
+        "INSERT INTO repositories (identity, root_path, display_name, created_at, updated_at, schema_version) VALUES ('repo_trans2', '/r2', 'R2', ?, ?, 3)",
+      )
+      .run(now, now);
+    const repo2Id = Number(r2.lastInsertRowid);
+
+    function createActiveMemory(rid = repoId): number {
       const res = db.rawDb
         .prepare(
           `INSERT INTO engineering_memories (
             repository_id, memory_key, category, title, content, confidence, confidence_tier,
             status, version, created_at, updated_at, last_verified_at
-          ) VALUES (?, ?, 'architectural_knowledge', 'Title', 'Content', 1.0, 'CONFIRMED', ?, 1, ?, ?, ?)`,
+          ) VALUES (?, ?, 'architectural_knowledge', 'Title', 'Content', 1.0, 'CONFIRMED', 'ACTIVE', 1, ?, ?, ?)`,
         )
-        .run(repoId, `key_${Math.random()}`, status, now, now, now);
+        .run(rid, `key_${Math.random()}`, now, now, now);
       return Number(res.lastInsertRowid);
     }
 
+    // 0. Direct SQL initial state enforcement tests
+    expect(() => {
+      db.rawDb
+        .prepare(
+          `INSERT INTO engineering_memories (
+            repository_id, memory_key, category, title, content, confidence, confidence_tier,
+            status, version, created_at, updated_at, last_verified_at
+          ) VALUES (?, 'k_init_sup', 'architectural_knowledge', 'Title', 'Content', 1.0, 'CONFIRMED', 'SUPERSEDED', 1, ?, ?, ?)`,
+        )
+        .run(repoId, now, now, now);
+    }).toThrow(/Illegal initial status: newly created memories must start in ACTIVE status/);
+
+    expect(() => {
+      db.rawDb
+        .prepare(
+          `INSERT INTO engineering_memories (
+            repository_id, memory_key, category, title, content, confidence, confidence_tier,
+            status, version, created_at, updated_at, last_verified_at
+          ) VALUES (?, 'k_init_arc', 'architectural_knowledge', 'Title', 'Content', 1.0, 'CONFIRMED', 'ARCHIVED', 1, ?, ?, ?)`,
+        )
+        .run(repoId, now, now, now);
+    }).toThrow(/Illegal initial status: newly created memories must start in ACTIVE status/);
+
+    expect(() => {
+      db.rawDb
+        .prepare(
+          `INSERT INTO engineering_memories (
+            repository_id, memory_key, category, title, content, confidence, confidence_tier,
+            status, version, created_at, updated_at, last_verified_at
+          ) VALUES (?, 'k_init_stl', 'architectural_knowledge', 'Title', 'Content', 1.0, 'CONFIRMED', 'STALE', 1, ?, ?, ?)`,
+        )
+        .run(repoId, now, now, now);
+    }).toThrow(/Illegal initial status: newly created memories must start in ACTIVE status/);
+
+    expect(() => {
+      db.rawDb
+        .prepare(
+          `INSERT INTO engineering_memories (
+            repository_id, memory_key, category, title, content, confidence, confidence_tier,
+            status, version, created_at, updated_at, last_verified_at
+          ) VALUES (?, 'k_init_dsp', 'architectural_knowledge', 'Title', 'Content', 1.0, 'CONFIRMED', 'DISPUTED', 1, ?, ?, ?)`,
+        )
+        .run(repoId, now, now, now);
+    }).toThrow(/Illegal initial status: newly created memories must start in ACTIVE status/);
+
+    expect(() => {
+      db.rawDb
+        .prepare(
+          `INSERT INTO engineering_memories (
+            repository_id, memory_key, category, title, content, confidence, confidence_tier,
+            status, version, superseded_by_id, created_at, updated_at, last_verified_at
+          ) VALUES (?, 'k_init_sup_id', 'architectural_knowledge', 'Title', 'Content', 1.0, 'CONFIRMED', 'ACTIVE', 1, 999, ?, ?, ?)`,
+        )
+        .run(repoId, now, now, now);
+    }).toThrow(/Illegal initial state: newly created memories cannot specify superseded_by_id/);
+
+    expect(() => {
+      db.rawDb
+        .prepare(
+          `INSERT INTO engineering_memories (
+            repository_id, memory_key, category, title, content, confidence, confidence_tier,
+            status, version, created_at, updated_at, last_verified_at
+          ) VALUES (?, 'k_init_ver2', 'architectural_knowledge', 'Title', 'Content', 1.0, 'CONFIRMED', 'ACTIVE', 2, ?, ?, ?)`,
+        )
+        .run(repoId, now, now, now);
+    }).toThrow(/Illegal initial version: newly created memories must start at version 1/);
+
     // 1. Valid transitions from ACTIVE
-    const a1 = createMemory("ACTIVE");
+    const a1 = createActiveMemory();
     expect(() =>
       db.rawDb.prepare("UPDATE engineering_memories SET status = 'STALE' WHERE id = ?").run(a1),
     ).not.toThrow();
 
-    const a2 = createMemory("ACTIVE");
+    const a2 = createActiveMemory();
     expect(() =>
       db.rawDb.prepare("UPDATE engineering_memories SET status = 'DISPUTED' WHERE id = ?").run(a2),
     ).not.toThrow();
 
-    const a3 = createMemory("ACTIVE");
+    const replacement1 = createActiveMemory();
+    const a3 = createActiveMemory();
     expect(() =>
       db.rawDb
-        .prepare("UPDATE engineering_memories SET status = 'SUPERSEDED' WHERE id = ?")
-        .run(a3),
+        .prepare(
+          "UPDATE engineering_memories SET status = 'SUPERSEDED', superseded_by_id = ? WHERE id = ?",
+        )
+        .run(replacement1, a3),
     ).not.toThrow();
 
-    const a4 = createMemory("ACTIVE");
+    const a4 = createActiveMemory();
     expect(() =>
       db.rawDb.prepare("UPDATE engineering_memories SET status = 'ARCHIVED' WHERE id = ?").run(a4),
     ).not.toThrow();
 
     // 2. Valid transitions from STALE
-    const s1 = createMemory("STALE");
+    const s1 = createActiveMemory();
+    db.rawDb.prepare("UPDATE engineering_memories SET status = 'STALE' WHERE id = ?").run(s1);
     expect(() =>
       db.rawDb.prepare("UPDATE engineering_memories SET status = 'ACTIVE' WHERE id = ?").run(s1),
     ).not.toThrow();
 
-    const s2 = createMemory("STALE");
+    const s2 = createActiveMemory();
+    db.rawDb.prepare("UPDATE engineering_memories SET status = 'STALE' WHERE id = ?").run(s2);
     expect(() =>
       db.rawDb.prepare("UPDATE engineering_memories SET status = 'DISPUTED' WHERE id = ?").run(s2),
     ).not.toThrow();
 
-    const s3 = createMemory("STALE");
+    const s3 = createActiveMemory();
+    db.rawDb.prepare("UPDATE engineering_memories SET status = 'STALE' WHERE id = ?").run(s3);
+    const replacement2 = createActiveMemory();
     expect(() =>
       db.rawDb
-        .prepare("UPDATE engineering_memories SET status = 'SUPERSEDED' WHERE id = ?")
-        .run(s3),
+        .prepare(
+          "UPDATE engineering_memories SET status = 'SUPERSEDED', superseded_by_id = ? WHERE id = ?",
+        )
+        .run(replacement2, s3),
     ).not.toThrow();
 
-    const s4 = createMemory("STALE");
+    const s4 = createActiveMemory();
+    db.rawDb.prepare("UPDATE engineering_memories SET status = 'STALE' WHERE id = ?").run(s4);
     expect(() =>
       db.rawDb.prepare("UPDATE engineering_memories SET status = 'ARCHIVED' WHERE id = ?").run(s4),
     ).not.toThrow();
 
     // 3. Valid transitions from DISPUTED
-    const d1 = createMemory("DISPUTED");
+    const d1 = createActiveMemory();
+    db.rawDb.prepare("UPDATE engineering_memories SET status = 'DISPUTED' WHERE id = ?").run(d1);
     expect(() =>
       db.rawDb.prepare("UPDATE engineering_memories SET status = 'ACTIVE' WHERE id = ?").run(d1),
     ).not.toThrow();
 
-    const d2 = createMemory("DISPUTED");
+    const d2 = createActiveMemory();
+    db.rawDb.prepare("UPDATE engineering_memories SET status = 'DISPUTED' WHERE id = ?").run(d2);
     expect(() =>
       db.rawDb.prepare("UPDATE engineering_memories SET status = 'STALE' WHERE id = ?").run(d2),
     ).not.toThrow();
 
-    const d3 = createMemory("DISPUTED");
+    const d3 = createActiveMemory();
+    db.rawDb.prepare("UPDATE engineering_memories SET status = 'DISPUTED' WHERE id = ?").run(d3);
     expect(() =>
       db.rawDb.prepare("UPDATE engineering_memories SET status = 'ARCHIVED' WHERE id = ?").run(d3),
     ).not.toThrow();
 
-    const d4 = createMemory("DISPUTED");
+    const d4 = createActiveMemory();
+    db.rawDb.prepare("UPDATE engineering_memories SET status = 'DISPUTED' WHERE id = ?").run(d4);
+    const replacement3 = createActiveMemory();
     expect(() =>
       db.rawDb
-        .prepare("UPDATE engineering_memories SET status = 'SUPERSEDED' WHERE id = ?")
-        .run(d4),
+        .prepare(
+          "UPDATE engineering_memories SET status = 'SUPERSEDED', superseded_by_id = ? WHERE id = ?",
+        )
+        .run(replacement3, d4),
     ).not.toThrow();
 
     // 4. Forbidden transitions from terminal state SUPERSEDED
-    const sup = createMemory("SUPERSEDED");
+    const supReplacement = createActiveMemory();
+    const sup = createActiveMemory();
+    db.rawDb
+      .prepare(
+        "UPDATE engineering_memories SET status = 'SUPERSEDED', superseded_by_id = ? WHERE id = ?",
+      )
+      .run(supReplacement, sup);
+
     expect(() =>
       db.rawDb.prepare("UPDATE engineering_memories SET status = 'ACTIVE' WHERE id = ?").run(sup),
     ).toThrow(
@@ -738,8 +842,27 @@ describe("storage-migration-003 (Engineering Memory & Evolution Data Model)", ()
       /Illegal status transition: SUPERSEDED is a terminal state and cannot be reactivated or changed/,
     );
 
+    // 4.1 Superseded memory cannot silently change or clear its replacement
+    const anotherActive = createActiveMemory();
+    expect(() =>
+      db.rawDb
+        .prepare("UPDATE engineering_memories SET superseded_by_id = ? WHERE id = ?")
+        .run(anotherActive, sup),
+    ).toThrow(
+      /Illegal supersession mutation: a SUPERSEDED memory cannot change or clear its replacement/,
+    );
+    expect(() =>
+      db.rawDb
+        .prepare("UPDATE engineering_memories SET superseded_by_id = NULL WHERE id = ?")
+        .run(sup),
+    ).toThrow(
+      /Illegal supersession mutation: a SUPERSEDED memory cannot change or clear its replacement/,
+    );
+
     // 5. Forbidden transitions from terminal state ARCHIVED
-    const arc = createMemory("ARCHIVED");
+    const arc = createActiveMemory();
+    db.rawDb.prepare("UPDATE engineering_memories SET status = 'ARCHIVED' WHERE id = ?").run(arc);
+
     expect(() =>
       db.rawDb.prepare("UPDATE engineering_memories SET status = 'ACTIVE' WHERE id = ?").run(arc),
     ).toThrow(
@@ -757,10 +880,94 @@ describe("storage-migration-003 (Engineering Memory & Evolution Data Model)", ()
     );
     expect(() =>
       db.rawDb
-        .prepare("UPDATE engineering_memories SET status = 'SUPERSEDED' WHERE id = ?")
-        .run(arc),
+        .prepare(
+          "UPDATE engineering_memories SET status = 'SUPERSEDED', superseded_by_id = ? WHERE id = ?",
+        )
+        .run(anotherActive, arc),
     ).toThrow(
       /Illegal status transition: ARCHIVED is a terminal state and cannot be reactivated or changed/,
+    );
+    expect(() =>
+      db.rawDb
+        .prepare("UPDATE engineering_memories SET superseded_by_id = ? WHERE id = ?")
+        .run(anotherActive, arc),
+    ).toThrow(/Illegal state: an ARCHIVED memory cannot specify superseded_by_id/);
+
+    // 6. Adversarial Supersession Tests
+    const targetMem = createActiveMemory();
+
+    // 6.1 Cannot enter SUPERSEDED without non-null superseded_by_id
+    expect(() =>
+      db.rawDb
+        .prepare("UPDATE engineering_memories SET status = 'SUPERSEDED' WHERE id = ?")
+        .run(targetMem),
+    ).toThrow(/Illegal supersession: a SUPERSEDED memory must have a non-null superseded_by_id/);
+
+    // 6.2 Self-supersession prohibited
+    expect(() =>
+      db.rawDb
+        .prepare(
+          "UPDATE engineering_memories SET status = 'SUPERSEDED', superseded_by_id = ? WHERE id = ?",
+        )
+        .run(targetMem, targetMem),
+    ).toThrow(/CHECK constraint failed|self-supersession is prohibited/);
+
+    // 6.3 Cross-repository replacement fails composite foreign key
+    const crossRepoMem = createActiveMemory(repo2Id);
+    expect(() =>
+      db.rawDb
+        .prepare(
+          "UPDATE engineering_memories SET status = 'SUPERSEDED', superseded_by_id = ? WHERE id = ?",
+        )
+        .run(crossRepoMem, targetMem),
+    ).toThrow(/FOREIGN KEY constraint failed/);
+
+    // 6.4 Replacement cannot be ARCHIVED
+    const archivedReplacement = createActiveMemory();
+    db.rawDb
+      .prepare("UPDATE engineering_memories SET status = 'ARCHIVED' WHERE id = ?")
+      .run(archivedReplacement);
+    expect(() =>
+      db.rawDb
+        .prepare(
+          "UPDATE engineering_memories SET status = 'SUPERSEDED', superseded_by_id = ? WHERE id = ?",
+        )
+        .run(archivedReplacement, targetMem),
+    ).toThrow(
+      /Illegal supersession: replacement memory cannot be in SUPERSEDED or ARCHIVED status/,
+    );
+
+    // 6.5 Replacement cannot be SUPERSEDED
+    expect(() =>
+      db.rawDb
+        .prepare(
+          "UPDATE engineering_memories SET status = 'SUPERSEDED', superseded_by_id = ? WHERE id = ?",
+        )
+        .run(sup, targetMem),
+    ).toThrow(
+      /Illegal supersession: replacement memory cannot be in SUPERSEDED or ARCHIVED status/,
+    );
+
+    // 6.6 Non-SUPERSEDED memories cannot have superseded_by_id
+    expect(() =>
+      db.rawDb
+        .prepare("UPDATE engineering_memories SET superseded_by_id = ? WHERE id = ?")
+        .run(anotherActive, targetMem),
+    ).toThrow(/Illegal state: only SUPERSEDED memories can specify superseded_by_id/);
+
+    // 6.7 Deleting a replacement is prevented by trigger
+    const validSup = createActiveMemory();
+    const validRepl = createActiveMemory();
+    db.rawDb
+      .prepare(
+        "UPDATE engineering_memories SET status = 'SUPERSEDED', superseded_by_id = ? WHERE id = ?",
+      )
+      .run(validRepl, validSup);
+
+    expect(() =>
+      db.rawDb.prepare("DELETE FROM engineering_memories WHERE id = ?").run(validRepl),
+    ).toThrow(
+      /Illegal operation: cannot delete a memory that is currently a replacement for superseded memories/,
     );
   });
 
@@ -1176,7 +1383,7 @@ describe("storage-migration-003 (Engineering Memory & Evolution Data Model)", ()
           "INSERT INTO engineering_memories (repository_id, memory_key, category, title, content, confidence, confidence_tier, status, version, created_at, updated_at, last_verified_at) VALUES (?, 'k_bad_stat', 'architectural_knowledge', 'T', 'C', 1.0, 'CONFIRMED', 'DELETED', 1, ?, ?, ?)",
         )
         .run(repoId, now, now, now);
-    }).toThrow(/CHECK constraint failed/);
+    }).toThrow(/CHECK constraint failed|newly created memories must start in ACTIVE status/);
 
     // Invalid confidence tier
     expect(() => {

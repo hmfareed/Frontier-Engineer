@@ -380,3 +380,34 @@ export interface MemoryVersionRecord {
   sourceScanId: number | null;
   createdAt: string;
 }
+
+export interface CreateMemoryInput {
+  repositoryId: number;
+  memoryKey: string;
+  category: MemoryCategory;
+  title: string;
+  content: string;
+  confidence?: number;
+  confidenceTier?: MemoryConfidenceTier;
+  firstSeenScanId?: number | null;
+  lastSeenScanId?: number | null;
+}
+
+export interface TransitionLifecycleInput {
+  repositoryId: number;
+  memoryId: number;
+  targetStatus: MemoryLifecycleStatus;
+  supersededById?: number | null;
+  changeReason: string;
+  sourceScanId?: number | null;
+  newTitle?: string;
+  newContent?: string;
+  newConfidence?: number;
+  newConfidenceTier?: MemoryConfidenceTier;
+}
+
+export interface MemoryFilterOptions {
+  category?: MemoryCategory;
+  status?: MemoryLifecycleStatus;
+  confidenceTier?: MemoryConfidenceTier;
+}

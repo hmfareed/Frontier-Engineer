@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS engineering_memories (
   UNIQUE(repository_id, memory_key),
   UNIQUE(repository_id, id),
   CHECK(superseded_by_id IS NULL OR superseded_by_id != id),
-  FOREIGN KEY(repository_id, superseded_by_id) REFERENCES engineering_memories(repository_id, id) ON DELETE RESTRICT,
+  FOREIGN KEY(repository_id, superseded_by_id) REFERENCES engineering_memories(repository_id, id) ON DELETE CASCADE,
   FOREIGN KEY(repository_id, first_seen_scan_id) REFERENCES scan_runs(repository_id, id) ON DELETE RESTRICT,
   FOREIGN KEY(repository_id, last_seen_scan_id) REFERENCES scan_runs(repository_id, id) ON DELETE RESTRICT
 );
@@ -160,23 +160,71 @@ BEGIN
   SELECT RAISE(ABORT, 'Direct deletion of memory_versions is prohibited; versions are immutable');
 END;
 
--- 7. Lifecycle Transition Guard on Engineering Memories
-CREATE TRIGGER IF NOT EXISTS trg_engineering_memories_status_transitions
-BEFORE UPDATE OF status ON engineering_memories
+-- 7. Initial State, Lifecycle Transitions, and Supersession Guards on Engineering Memories
+CREATE TRIGGER IF NOT EXISTS trg_engineering_memories_insert_guard
+BEFORE INSERT ON engineering_memories
 FOR EACH ROW
-WHEN OLD.status != NEW.status
 BEGIN
   SELECT CASE
-    WHEN OLD.status = 'SUPERSEDED' THEN
-      RAISE(ABORT, 'Illegal status transition: SUPERSEDED is a terminal state and cannot be reactivated or changed')
-    WHEN OLD.status = 'ARCHIVED' THEN
-      RAISE(ABORT, 'Illegal status transition: ARCHIVED is a terminal state and cannot be reactivated or changed')
-    WHEN OLD.status = 'ACTIVE' AND NEW.status NOT IN ('STALE', 'DISPUTED', 'SUPERSEDED', 'ARCHIVED') THEN
-      RAISE(ABORT, 'Illegal status transition from ACTIVE')
-    WHEN OLD.status = 'STALE' AND NEW.status NOT IN ('ACTIVE', 'DISPUTED', 'SUPERSEDED', 'ARCHIVED') THEN
-      RAISE(ABORT, 'Illegal status transition from STALE')
-    WHEN OLD.status = 'DISPUTED' AND NEW.status NOT IN ('ACTIVE', 'STALE', 'SUPERSEDED', 'ARCHIVED') THEN
-      RAISE(ABORT, 'Illegal status transition from DISPUTED')
-    ELSE NULL
+    WHEN NEW.status != 'ACTIVE' THEN
+      RAISE(ABORT, 'Illegal initial status: newly created memories must start in ACTIVE status')
+    WHEN NEW.superseded_by_id IS NOT NULL THEN
+      RAISE(ABORT, 'Illegal initial state: newly created memories cannot specify superseded_by_id')
+    WHEN NEW.version != 1 THEN
+      RAISE(ABORT, 'Illegal initial version: newly created memories must start at version 1')
   END;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_engineering_memories_update_guard
+BEFORE UPDATE ON engineering_memories
+FOR EACH ROW
+BEGIN
+  -- Terminal statuses & supersession immutability
+  SELECT CASE
+    WHEN OLD.status = 'SUPERSEDED' AND NEW.status != 'SUPERSEDED' THEN
+      RAISE(ABORT, 'Illegal status transition: SUPERSEDED is a terminal state and cannot be reactivated or changed')
+    WHEN OLD.status = 'SUPERSEDED' AND (NEW.superseded_by_id IS NULL OR NEW.superseded_by_id != OLD.superseded_by_id) THEN
+      RAISE(ABORT, 'Illegal supersession mutation: a SUPERSEDED memory cannot change or clear its replacement')
+    WHEN OLD.status = 'ARCHIVED' AND NEW.status != 'ARCHIVED' THEN
+      RAISE(ABORT, 'Illegal status transition: ARCHIVED is a terminal state and cannot be reactivated or changed')
+    WHEN OLD.status = 'ARCHIVED' AND NEW.superseded_by_id IS NOT NULL THEN
+      RAISE(ABORT, 'Illegal state: an ARCHIVED memory cannot specify superseded_by_id')
+  END;
+
+  -- Allowable transitions
+  SELECT CASE
+    WHEN OLD.status = 'ACTIVE' AND NEW.status NOT IN ('ACTIVE', 'STALE', 'DISPUTED', 'SUPERSEDED', 'ARCHIVED') THEN
+      RAISE(ABORT, 'Illegal status transition from ACTIVE')
+    WHEN OLD.status = 'STALE' AND NEW.status NOT IN ('STALE', 'ACTIVE', 'DISPUTED', 'SUPERSEDED', 'ARCHIVED') THEN
+      RAISE(ABORT, 'Illegal status transition from STALE')
+    WHEN OLD.status = 'DISPUTED' AND NEW.status NOT IN ('DISPUTED', 'ACTIVE', 'STALE', 'SUPERSEDED', 'ARCHIVED') THEN
+      RAISE(ABORT, 'Illegal status transition from DISPUTED')
+  END;
+
+  -- Non-SUPERSEDED memories cannot have superseded_by_id
+  SELECT CASE
+    WHEN NEW.status != 'SUPERSEDED' AND NEW.superseded_by_id IS NOT NULL THEN
+      RAISE(ABORT, 'Illegal state: only SUPERSEDED memories can specify superseded_by_id')
+  END;
+
+  -- SUPERSEDED requirements
+  SELECT CASE
+    WHEN NEW.status = 'SUPERSEDED' AND NEW.superseded_by_id IS NULL THEN
+      RAISE(ABORT, 'Illegal supersession: a SUPERSEDED memory must have a non-null superseded_by_id')
+    WHEN NEW.status = 'SUPERSEDED' AND NEW.superseded_by_id = NEW.id THEN
+      RAISE(ABORT, 'Illegal supersession: self-supersession is prohibited')
+    WHEN NEW.status = 'SUPERSEDED' AND (
+      SELECT status FROM engineering_memories
+      WHERE repository_id = NEW.repository_id AND id = NEW.superseded_by_id
+    ) IN ('SUPERSEDED', 'ARCHIVED') THEN
+      RAISE(ABORT, 'Illegal supersession: replacement memory cannot be in SUPERSEDED or ARCHIVED status')
+  END;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_engineering_memories_no_delete_replacement
+BEFORE DELETE ON engineering_memories
+WHEN (SELECT COUNT(*) FROM repositories WHERE id = OLD.repository_id) > 0
+  AND (SELECT COUNT(*) FROM engineering_memories WHERE superseded_by_id = OLD.id) > 0
+BEGIN
+  SELECT RAISE(ABORT, 'Illegal operation: cannot delete a memory that is currently a replacement for superseded memories');
 END;

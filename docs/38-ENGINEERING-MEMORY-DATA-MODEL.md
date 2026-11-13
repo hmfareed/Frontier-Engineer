@@ -68,7 +68,7 @@ CREATE TABLE IF NOT EXISTS engineering_memories (
   UNIQUE(repository_id, memory_key),
   UNIQUE(repository_id, id),
   CHECK(superseded_by_id IS NULL OR superseded_by_id != id),
-  FOREIGN KEY(repository_id, superseded_by_id) REFERENCES engineering_memories(repository_id, id) ON DELETE RESTRICT,
+  FOREIGN KEY(repository_id, superseded_by_id) REFERENCES engineering_memories(repository_id, id) ON DELETE CASCADE,
   FOREIGN KEY(repository_id, first_seen_scan_id) REFERENCES scan_runs(repository_id, id) ON DELETE RESTRICT,
   FOREIGN KEY(repository_id, last_seen_scan_id) REFERENCES scan_runs(repository_id, id) ON DELETE RESTRICT
 );
@@ -222,7 +222,7 @@ CREATE TABLE IF NOT EXISTS memory_versions (
 
 ### 2.6 Database Triggers
 
-Migration 003 installs three database triggers to enforce immutability and lifecycle transitions directly at the SQLite engine level:
+Migration 003 installs five database triggers to enforce immutability, initial lifecycle states, transition guards, and supersession integrity directly at the SQLite engine level:
 
 ```sql
 -- 1. Disallow direct UPDATE on existing memory versions
@@ -240,25 +240,75 @@ BEGIN
   SELECT RAISE(ABORT, 'Direct deletion of memory_versions is prohibited; versions are immutable');
 END;
 
--- 3. Enforce lifecycle transition state machine on engineering memories
-CREATE TRIGGER IF NOT EXISTS trg_engineering_memories_status_transitions
-BEFORE UPDATE OF status ON engineering_memories
+-- 3. Enforce valid initial state on newly created memories
+CREATE TRIGGER IF NOT EXISTS trg_engineering_memories_insert_guard
+BEFORE INSERT ON engineering_memories
 FOR EACH ROW
-WHEN OLD.status != NEW.status
 BEGIN
   SELECT CASE
-    WHEN OLD.status = 'SUPERSEDED' THEN
-      RAISE(ABORT, 'Illegal status transition: SUPERSEDED is a terminal state and cannot be reactivated or changed')
-    WHEN OLD.status = 'ARCHIVED' THEN
-      RAISE(ABORT, 'Illegal status transition: ARCHIVED is a terminal state and cannot be reactivated or changed')
-    WHEN OLD.status = 'ACTIVE' AND NEW.status NOT IN ('STALE', 'DISPUTED', 'SUPERSEDED', 'ARCHIVED') THEN
-      RAISE(ABORT, 'Illegal status transition from ACTIVE')
-    WHEN OLD.status = 'STALE' AND NEW.status NOT IN ('ACTIVE', 'DISPUTED', 'SUPERSEDED', 'ARCHIVED') THEN
-      RAISE(ABORT, 'Illegal status transition from STALE')
-    WHEN OLD.status = 'DISPUTED' AND NEW.status NOT IN ('ACTIVE', 'STALE', 'SUPERSEDED', 'ARCHIVED') THEN
-      RAISE(ABORT, 'Illegal status transition from DISPUTED')
-    ELSE NULL
+    WHEN NEW.status != 'ACTIVE' THEN
+      RAISE(ABORT, 'Illegal initial status: newly created memories must start in ACTIVE status')
+    WHEN NEW.superseded_by_id IS NOT NULL THEN
+      RAISE(ABORT, 'Illegal initial state: newly created memories cannot specify superseded_by_id')
+    WHEN NEW.version != 1 THEN
+      RAISE(ABORT, 'Illegal initial version: newly created memories must start at version 1')
   END;
+END;
+
+-- 4. Enforce lifecycle transitions, terminal states, and supersession invariants
+CREATE TRIGGER IF NOT EXISTS trg_engineering_memories_update_guard
+BEFORE UPDATE ON engineering_memories
+FOR EACH ROW
+BEGIN
+  -- Terminal statuses & supersession immutability
+  SELECT CASE
+    WHEN OLD.status = 'SUPERSEDED' AND NEW.status != 'SUPERSEDED' THEN
+      RAISE(ABORT, 'Illegal status transition: SUPERSEDED is a terminal state and cannot be reactivated or changed')
+    WHEN OLD.status = 'SUPERSEDED' AND (NEW.superseded_by_id IS NULL OR NEW.superseded_by_id != OLD.superseded_by_id) THEN
+      RAISE(ABORT, 'Illegal supersession mutation: a SUPERSEDED memory cannot change or clear its replacement')
+    WHEN OLD.status = 'ARCHIVED' AND NEW.status != 'ARCHIVED' THEN
+      RAISE(ABORT, 'Illegal status transition: ARCHIVED is a terminal state and cannot be reactivated or changed')
+    WHEN OLD.status = 'ARCHIVED' AND NEW.superseded_by_id IS NOT NULL THEN
+      RAISE(ABORT, 'Illegal state: an ARCHIVED memory cannot specify superseded_by_id')
+  END;
+
+  -- Allowable transitions
+  SELECT CASE
+    WHEN OLD.status = 'ACTIVE' AND NEW.status NOT IN ('ACTIVE', 'STALE', 'DISPUTED', 'SUPERSEDED', 'ARCHIVED') THEN
+      RAISE(ABORT, 'Illegal status transition from ACTIVE')
+    WHEN OLD.status = 'STALE' AND NEW.status NOT IN ('STALE', 'ACTIVE', 'DISPUTED', 'SUPERSEDED', 'ARCHIVED') THEN
+      RAISE(ABORT, 'Illegal status transition from STALE')
+    WHEN OLD.status = 'DISPUTED' AND NEW.status NOT IN ('DISPUTED', 'ACTIVE', 'STALE', 'SUPERSEDED', 'ARCHIVED') THEN
+      RAISE(ABORT, 'Illegal status transition from DISPUTED')
+  END;
+
+  -- Non-SUPERSEDED memories cannot have superseded_by_id
+  SELECT CASE
+    WHEN NEW.status != 'SUPERSEDED' AND NEW.superseded_by_id IS NOT NULL THEN
+      RAISE(ABORT, 'Illegal state: only SUPERSEDED memories can specify superseded_by_id')
+  END;
+
+  -- SUPERSEDED requirements
+  SELECT CASE
+    WHEN NEW.status = 'SUPERSEDED' AND NEW.superseded_by_id IS NULL THEN
+      RAISE(ABORT, 'Illegal supersession: a SUPERSEDED memory must have a non-null superseded_by_id')
+    WHEN NEW.status = 'SUPERSEDED' AND NEW.superseded_by_id = NEW.id THEN
+      RAISE(ABORT, 'Illegal supersession: self-supersession is prohibited')
+    WHEN NEW.status = 'SUPERSEDED' AND (
+      SELECT status FROM engineering_memories
+      WHERE repository_id = NEW.repository_id AND id = NEW.superseded_by_id
+    ) IN ('SUPERSEDED', 'ARCHIVED') THEN
+      RAISE(ABORT, 'Illegal supersession: replacement memory cannot be in SUPERSEDED or ARCHIVED status')
+  END;
+END;
+
+-- 5. Disallow deleting replacement memories directly while referenced
+CREATE TRIGGER IF NOT EXISTS trg_engineering_memories_no_delete_replacement
+BEFORE DELETE ON engineering_memories
+WHEN (SELECT COUNT(*) FROM repositories WHERE id = OLD.repository_id) > 0
+  AND (SELECT COUNT(*) FROM engineering_memories WHERE superseded_by_id = OLD.id) > 0
+BEGIN
+  SELECT RAISE(ABORT, 'Illegal operation: cannot delete a memory that is currently a replacement for superseded memories');
 END;
 ```
 
@@ -289,9 +339,10 @@ Frontier Engineer strictly enforces multi-tenant repository boundaries using com
 
 To prevent integrity crashes and maintain clean cascade trees:
 
-- Historical scan references (`first_seen_scan_id`, `last_seen_scan_id`, `source_scan_id`) and memory supersession (`superseded_by_id`) specify `ON DELETE RESTRICT`. Deleting an older scan run is prevented as long as an active memory or version record references it.
+- Historical scan references (`first_seen_scan_id`, `last_seen_scan_id`, `source_scan_id`) specify `ON DELETE RESTRICT`. Deleting an older scan run is prevented as long as an active memory or version record references it.
+- Supersession references (`superseded_by_id`) specify `FOREIGN KEY(repository_id, superseded_by_id) REFERENCES engineering_memories(repository_id, id) ON DELETE CASCADE`. Direct deletion of a replacement memory while referenced by active or superseded memories is prohibited by the trigger `trg_engineering_memories_no_delete_replacement`.
 - Grandchild entities (`memory_versions`, `memory_relationships`) cascade exclusively through their immediate parent (`engineering_memories`). Direct redundant foreign keys from `repositories` were eliminated, avoiding multi-path cascade collisions during repository deletion.
-- When a repository is deleted (`DELETE FROM repositories WHERE id = ?`), SQLite cascades down `repositories -> engineering_memories -> memory_versions`, cleanly pruning all descendants without trigger conflict.
+- When a repository is deleted (`DELETE FROM repositories WHERE id = ?`), SQLite cascades down `repositories -> engineering_memories -> memory_versions`, cleanly pruning all descendants without trigger conflict (because `trg_engineering_memories_no_delete_replacement` detects that the parent repository no longer exists).
 - Snapshot-scoped evidence (`memory_evidence`) specifies `ON DELETE CASCADE` from `scan_runs`. Deleting an unreferenced scan automatically prunes its evidence rows without corrupting the surviving `engineering_memories` records.
 
 ---
@@ -330,11 +381,37 @@ stateDiagram-v2
   DISPUTED --> ARCHIVED: Superseded / discarded
 ```
 
-- **ACTIVE**: Grounded by active snapshot evidence.
+- **ACTIVE**: Grounded by active snapshot evidence. Newly inserted memories must start in `ACTIVE` status.
 - **STALE**: Associated evidence files or symbols were modified or relocated. Stale memories are marked with honest freshness warnings and cannot be asserted as current facts without re-verification.
 - **DISPUTED**: Contradictory evidence exists (e.g. ADR claims a pattern, but AST analysis proves otherwise).
 - **SUPERSEDED**: Explicitly superseded by another memory record (`superseded_by_id`). Terminal state.
 - **ARCHIVED**: Historically preserved but inactive. Terminal state.
+
+### 4.3 Initial State & Supersession Integrity Rules
+
+1. **Initial State Enforcement**:
+   - New memories must start in `ACTIVE` status.
+   - `SUPERSEDED`, `ARCHIVED`, `STALE`, and `DISPUTED` cannot be initial statuses.
+   - New memories cannot specify `superseded_by_id` (must be `NULL`).
+   - New memories must start at `version = 1`.
+   - Enforced by database trigger `trg_engineering_memories_insert_guard`.
+
+2. **Supersession Integrity Invariants**:
+   - **Replacement Required**: A memory cannot enter `SUPERSEDED` status without a non-null `superseded_by_id`.
+   - **Repository Isolation**: The replacement memory must belong to the same repository (enforced by composite foreign key `(repository_id, superseded_by_id)`).
+   - **No Self-Supersession**: A memory cannot supersede itself (`CHECK(superseded_by_id IS NULL OR superseded_by_id != id)` and trigger).
+   - **Valid Replacement Status**: A replacement memory cannot be in `SUPERSEDED` or `ARCHIVED` status.
+   - **Immutability of Supersession**: Once superseded, a memory cannot change or clear its `superseded_by_id` reference.
+   - **Terminal Status**: A `SUPERSEDED` memory cannot be reactivated or transitioned to any other status.
+   - **Replacement Retention**: A memory acting as a replacement for superseded memories cannot be deleted directly while referenced (`trg_engineering_memories_no_delete_replacement`).
+
+3. **Atomic Historical Version History**:
+   - Direct SQL mutations that bypass the storage API do not create version records. All production lifecycle writes must route through `MemoryStore.transitionLifecycle()`.
+   - `MemoryStore.transitionLifecycle()` executes an immediate transaction:
+     1. Validates requested transition and checks for no-op requests.
+     2. Snapshots prior state into `memory_versions` with SHA-256 content hashes and change reason.
+     3. Applies new status, version increment (`version = version + 1`), and updated timestamps.
+     4. Commits atomically or rolls back all changes if any step or trigger fails.
 
 ---
 
@@ -342,21 +419,28 @@ stateDiagram-v2
 
 To maintain transparent architectural discipline, invariants are divided strictly by enforcement layer:
 
-| Invariant                             | Enforcement Mechanism                                                                      | Layer                     | Stage       |
-| :------------------------------------ | :----------------------------------------------------------------------------------------- | :------------------------ | :---------- |
-| **Repository Multi-Tenant Isolation** | Composite foreign keys `(repository_id, entity_id)`                                        | Database Engine (SQLite)  | Stage 2     |
-| **Snapshot Evidence Scope**           | Composite foreign keys `(repository_id, scan_id, entity_id)`                               | Database Engine (SQLite)  | Stage 2     |
-| **Memory Key Uniqueness**             | Table constraint `UNIQUE(repository_id, memory_key)`                                       | Database Engine (SQLite)  | Stage 2     |
-| **Non-Self-Supersession**             | Table constraint `CHECK(superseded_by_id IS NULL OR superseded_by_id != id)`               | Database Engine (SQLite)  | Stage 2     |
-| **Non-Self-Relationships**            | Table constraint `CHECK(source_memory_id != target_memory_id)`                             | Database Engine (SQLite)  | Stage 2     |
-| **Distinct Evolution Scan Pairs**     | Table constraint `CHECK(base_scan_id != target_scan_id)`                                   | Database Engine (SQLite)  | Stage 2     |
-| **Memory Version Immutability**       | Database triggers `trg_memory_versions_no_update` & `trg_memory_versions_no_direct_delete` | Database Engine (SQLite)  | Stage 2     |
-| **Lifecycle Transition Graph**        | Database trigger `trg_engineering_memories_status_transitions`                             | Database Engine (SQLite)  | Stage 2     |
-| **Historical Scan Retention**         | Composite foreign key `ON DELETE RESTRICT` on `first_seen_scan_id` & `source_scan_id`      | Database Engine (SQLite)  | Stage 2     |
-| **Atomic Version Creation**           | Immediate transaction writing version row and advancing memory counter                     | Storage / API Layer       | Stage 2 / 5 |
-| **Chronological Evolution Order**     | Validation that `targetScan.startedAt >= baseScan.startedAt` before event emission         | Snapshot Comparator Layer | Stage 3     |
-| **Rename Detection Heuristic**        | Structural hash matching and fingerprint correlation                                       | Snapshot Comparator Layer | Stage 3     |
-| **Architectural Drift Analysis**      | Correlating ADR decisions with observed dependency graph changes                           | Evolution Analyzer Layer  | Stage 4     |
+| Invariant                               | Enforcement Mechanism                                                                      | Layer                       | Stage     |
+| :-------------------------------------- | :----------------------------------------------------------------------------------------- | :-------------------------- | :-------- |
+| **Repository Multi-Tenant Isolation**   | Composite foreign keys `(repository_id, entity_id)`                                        | Database Engine (SQLite)    | Stage 2   |
+| **Snapshot Evidence Scope**             | Composite foreign keys `(repository_id, scan_id, entity_id)`                               | Database Engine (SQLite)    | Stage 2   |
+| **Memory Key Uniqueness**               | Table constraint `UNIQUE(repository_id, memory_key)`                                       | Database Engine (SQLite)    | Stage 2   |
+| **Initial Memory Status (ACTIVE)**      | Database trigger `trg_engineering_memories_insert_guard`                                   | Database Engine (SQLite)    | Stage 2   |
+| **Initial Version Sequence (1)**        | Database trigger `trg_engineering_memories_insert_guard`                                   | Database Engine (SQLite)    | Stage 2   |
+| **Non-Self-Supersession**               | Table constraint `CHECK(superseded_by_id IS NULL OR superseded_by_id != id)`               | Database Engine (SQLite)    | Stage 2   |
+| **Supersession Non-Null Replacement**   | Database trigger `trg_engineering_memories_update_guard`                                   | Database Engine (SQLite)    | Stage 2   |
+| **Supersession Replacement Validity**   | Database trigger `trg_engineering_memories_update_guard`                                   | Database Engine (SQLite)    | Stage 2   |
+| **Supersession Reference Immutability** | Database trigger `trg_engineering_memories_update_guard`                                   | Database Engine (SQLite)    | Stage 2   |
+| **Replacement Deletion Protection**     | Database trigger `trg_engineering_memories_no_delete_replacement`                          | Database Engine (SQLite)    | Stage 2   |
+| **Non-Self-Relationships**              | Table constraint `CHECK(source_memory_id != target_memory_id)`                             | Database Engine (SQLite)    | Stage 2   |
+| **Distinct Evolution Scan Pairs**       | Table constraint `CHECK(base_scan_id != target_scan_id)`                                   | Database Engine (SQLite)    | Stage 2   |
+| **Memory Version Immutability**         | Database triggers `trg_memory_versions_no_update` & `trg_memory_versions_no_direct_delete` | Database Engine (SQLite)    | Stage 2   |
+| **Lifecycle Transition Graph**          | Database trigger `trg_engineering_memories_update_guard`                                   | Database Engine (SQLite)    | Stage 2   |
+| **Historical Scan Retention**           | Composite foreign key `ON DELETE RESTRICT` on `first_seen_scan_id` & `source_scan_id`      | Database Engine (SQLite)    | Stage 2   |
+| **Atomic Version Creation**             | Immediate transaction writing version row and advancing memory counter                     | Storage API (`MemoryStore`) | Stage 2.2 |
+| **No-Op Status Redundancy Guard**       | Storage API idempotency check returning existing record without incrementing version       | Storage API (`MemoryStore`) | Stage 2.2 |
+| **Chronological Evolution Order**       | Validation that `targetScan.startedAt >= baseScan.startedAt` before event emission         | Snapshot Comparator Layer   | Stage 3   |
+| **Rename Detection Heuristic**          | Structural hash matching and fingerprint correlation                                       | Snapshot Comparator Layer   | Stage 3   |
+| **Architectural Drift Analysis**        | Correlating ADR decisions with observed dependency graph changes                           | Evolution Analyzer Layer    | Stage 4   |
 
 ---
 
@@ -371,11 +455,16 @@ Every memory and evidence row carries both a numeric score and an explicit confi
 
 ---
 
-## 7. Migration Procedure (Migration 003)
+## 7. Migration Procedure & Unreleased Migration Approach
 
 Migration `003-engineering-memory-evolution.sql` is registered in `scripts/storage/schema/migration-runner.ts` and advances `CURRENT_SCHEMA_VERSION` to `3`.
 
-### 7.1 Transactional Execution
+### 7.1 Unreleased Migration Scope
+
+Frontier Engineer is currently version `0.6.3`. Phase 7.5 is under pre-release development targeting release `0.7.0` upon Phase 7 completion and acceptance.
+Because Migration 003 is unreleased, incorporating trigger guards and foreign-key cascade adjustments directly into Migration 003 preserves forward-only discipline without cluttering the canonical schema history with interim, pre-release migrations, while maintaining `CURRENT_SCHEMA_VERSION = 3` as specified.
+
+### 7.2 Transactional Execution
 
 ```typescript
 db.exec("BEGIN IMMEDIATE;");
