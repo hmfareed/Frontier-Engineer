@@ -269,3 +269,114 @@ export interface IntelligenceStorage {
   recoverInterruptedScans(repositoryId: number): Promise<number>;
   close(): Promise<void>;
 }
+
+// --- Phase 7.5: Engineering Memory & Evolution Persistence Types ---
+
+export type MemoryCategory =
+  | "architectural_knowledge"
+  | "engineering_convention"
+  | "architectural_decision"
+  | "technical_debt"
+  | "project_context"
+  | "evolution_record";
+
+export type MemoryLifecycleStatus = "ACTIVE" | "STALE" | "SUPERSEDED" | "DISPUTED" | "ARCHIVED";
+
+export type MemoryConfidenceTier = "CONFIRMED" | "INFERRED" | "CANDIDATE" | "UNRESOLVED";
+
+export type MemoryEvidenceType =
+  | "source_file"
+  | "symbol"
+  | "import"
+  | "component"
+  | "adr"
+  | "graph_edge"
+  | "test"
+  | "diff"
+  | "manual";
+
+export type EvolutionCategory =
+  "file" | "symbol" | "dependency" | "architecture" | "decision" | "debt";
+
+export type EvolutionSeverity = "INFO" | "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+
+export type MemoryRelationshipType =
+  "IMPLEMENTS" | "SUPERSEDES" | "CONTRADICTS" | "RELATES_TO" | "DOCUMENTS" | "DEPENDS_ON";
+
+export interface EngineeringMemoryRecord {
+  id: number;
+  repositoryId: number;
+  memoryKey: string;
+  category: MemoryCategory;
+  title: string;
+  content: string;
+  confidence: number;
+  confidenceTier: MemoryConfidenceTier;
+  status: MemoryLifecycleStatus;
+  firstSeenScanId: number | null;
+  lastSeenScanId: number | null;
+  supersededById: number | null;
+  version: number;
+  createdAt: string;
+  updatedAt: string;
+  lastVerifiedAt: string;
+}
+
+export interface MemoryEvidenceRecord {
+  id: number;
+  repositoryId: number;
+  memoryId: number;
+  scanId: number;
+  evidenceType: MemoryEvidenceType;
+  sourcePath: string;
+  lineStart: number | null;
+  lineEnd: number | null;
+  sourceHash: string | null;
+  symbolIdentity: string | null;
+  graphNodeId: number | null;
+  graphEdgeId: number | null;
+  description: string;
+  confidence: number;
+  isContradictory: boolean;
+  createdAt: string;
+}
+
+export interface EvolutionEventRecord {
+  id: number;
+  repositoryId: number;
+  baseScanId: number;
+  targetScanId: number;
+  eventType: string;
+  category: EvolutionCategory;
+  title: string;
+  description: string;
+  severity: EvolutionSeverity;
+  confidence: number;
+  confidenceTier: "CONFIRMED" | "INFERRED" | "CANDIDATE";
+  detailsJson: string | null;
+  createdAt: string;
+}
+
+export interface MemoryRelationshipRecord {
+  id: number;
+  repositoryId: number;
+  sourceMemoryId: number;
+  targetMemoryId: number;
+  relationshipType: MemoryRelationshipType;
+  createdAt: string;
+}
+
+export interface MemoryVersionRecord {
+  id: number;
+  repositoryId: number;
+  memoryId: number;
+  version: number;
+  title: string;
+  content: string;
+  status: MemoryLifecycleStatus;
+  previousContentHash: string | null;
+  newContentHash: string;
+  changeReason: string;
+  sourceScanId: number | null;
+  createdAt: string;
+}
