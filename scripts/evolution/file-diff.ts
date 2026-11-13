@@ -41,10 +41,10 @@ export class FileDiffEngine {
           sensitivity_status AS sensitivityStatus, index_status AS indexStatus,
           indexed_at AS indexedAt
         FROM files
-        WHERE scan_id = ?
-        ORDER BY normalized_path ASC`,
+        WHERE repository_id = ? AND scan_id = ?
+        ORDER BY normalized_path ASC, id ASC`,
       )
-      .all(baseScanId) as unknown as FileRecord[];
+      .all(repositoryId, baseScanId) as unknown as FileRecord[];
 
     // Query target files
     const targetFiles = db
@@ -57,10 +57,10 @@ export class FileDiffEngine {
           sensitivity_status AS sensitivityStatus, index_status AS indexStatus,
           indexed_at AS indexedAt
         FROM files
-        WHERE scan_id = ?
-        ORDER BY normalized_path ASC`,
+        WHERE repository_id = ? AND scan_id = ?
+        ORDER BY normalized_path ASC, id ASC`,
       )
-      .all(targetScanId) as unknown as FileRecord[];
+      .all(repositoryId, targetScanId) as unknown as FileRecord[];
 
     const baseMap = new Map<string, FileRecord>();
     for (const f of baseFiles) {
@@ -80,6 +80,7 @@ export class FileDiffEngine {
     let modifiedCount = 0;
     let deletedCount = 0;
     let unchangedCount = 0;
+    let missingHashCount = 0;
 
     for (const p of sortedPaths) {
       const base = baseMap.get(p);
@@ -88,6 +89,7 @@ export class FileDiffEngine {
       if (!base && target) {
         // ADDED
         addedCount++;
+        const evidenceId = `ev:file:add:${target.scanId}:${p}`;
         const item: FileDiffItem = {
           path: p,
           changeType: "ADDED",
@@ -95,11 +97,12 @@ export class FileDiffEngine {
           targetHash: target.contentHash,
           targetClassification: target.classification,
           targetSizeBytes: target.sizeBytes,
+          evidenceId,
         };
         initialChanges.push(item);
 
         evidence.push({
-          evidenceId: `ev:file:add:${target.scanId}:${p}`,
+          evidenceId,
           repositoryId,
           snapshotId: target.scanId,
           sourcePath: p,
@@ -112,6 +115,7 @@ export class FileDiffEngine {
       } else if (base && !target) {
         // DELETED
         deletedCount++;
+        const evidenceId = `ev:file:del:${base.scanId}:${p}`;
         const item: FileDiffItem = {
           path: p,
           changeType: "DELETED",
@@ -119,11 +123,12 @@ export class FileDiffEngine {
           targetHash: null,
           baseClassification: base.classification,
           baseSizeBytes: base.sizeBytes,
+          evidenceId,
         };
         initialChanges.push(item);
 
         evidence.push({
-          evidenceId: `ev:file:del:${base.scanId}:${p}`,
+          evidenceId,
           repositoryId,
           snapshotId: base.scanId,
           sourcePath: p,
@@ -153,6 +158,7 @@ export class FileDiffEngine {
             base.sensitivityStatus !== target.sensitivityStatus
           ) {
             modifiedCount++;
+            const evidenceId = `ev:file:mod:${target.scanId}:${p}`;
             const item: FileDiffItem = {
               path: p,
               changeType: "MODIFIED",
@@ -162,10 +168,11 @@ export class FileDiffEngine {
               targetClassification: target.classification,
               baseSizeBytes: base.sizeBytes,
               targetSizeBytes: target.sizeBytes,
+              evidenceId,
             };
             initialChanges.push(item);
             evidence.push({
-              evidenceId: `ev:file:mod:${target.scanId}:${p}`,
+              evidenceId,
               repositoryId,
               snapshotId: target.scanId,
               sourcePath: p,
@@ -173,6 +180,7 @@ export class FileDiffEngine {
               entityIdentity: `file:${p}`,
               evidenceType: "sensitive_file_metadata_change",
               confidence: 0.9,
+              isInferred: true,
               supportedClassification: "MODIFIED",
             });
           } else {
@@ -195,7 +203,9 @@ export class FileDiffEngine {
           const baseHash = base.contentHash;
           const targetHash = target.contentHash;
 
-          if (baseHash && targetHash && baseHash === targetHash) {
+          if (!baseHash || !targetHash) {
+            missingHashCount++;
+          } else if (baseHash === targetHash) {
             // Unchanged: timestamp-only differences must NOT trigger MODIFIED
             unchangedCount++;
             if (includeUnchanged) {
@@ -213,6 +223,7 @@ export class FileDiffEngine {
           } else {
             // Content hash changed or was computed differently
             modifiedCount++;
+            const evidenceId = `ev:file:mod:${target.scanId}:${p}`;
             const item: FileDiffItem = {
               path: p,
               changeType: "MODIFIED",
@@ -222,10 +233,11 @@ export class FileDiffEngine {
               targetClassification: target.classification,
               baseSizeBytes: base.sizeBytes,
               targetSizeBytes: target.sizeBytes,
+              evidenceId,
             };
             initialChanges.push(item);
             evidence.push({
-              evidenceId: `ev:file:mod:${target.scanId}:${p}`,
+              evidenceId,
               repositoryId,
               snapshotId: target.scanId,
               sourcePath: p,
@@ -238,6 +250,16 @@ export class FileDiffEngine {
           }
         }
       }
+    }
+
+    if (missingHashCount > 0) {
+      limitations.push({
+        code: "LIM_FILE_MISSING_HISTORICAL_HASH",
+        description:
+          "One or more non-sensitive files lacked a historical content hash in the base or target snapshot; verified MODIFIED/UNCHANGED classification withheld.",
+        domain: "file",
+        affectedEntityCount: missingHashCount,
+      });
     }
 
     // 2. Strict Rename Detection
@@ -274,12 +296,14 @@ export class FileDiffEngine {
           const addedItem = adds[0];
           const deletedItem = dels[0];
 
+          const renameEvidenceId = `ev:file:rename:${targetScanId}:${addedItem.path}`;
           addedItem.isInferredRename = true;
           addedItem.renameSourcePath = deletedItem.path;
           addedItem.renameConfidence = 0.95;
+          addedItem.evidenceId = renameEvidenceId;
 
           evidence.push({
-            evidenceId: `ev:file:rename:${targetScanId}:${addedItem.path}`,
+            evidenceId: renameEvidenceId,
             repositoryId,
             snapshotId: targetScanId,
             sourcePath: addedItem.path,

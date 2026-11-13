@@ -60,6 +60,7 @@ export class ComponentDiffEngine {
       if (!base && target) {
         // ADDED
         addedCount++;
+        const evidenceId = `ev:comp:add:${targetScanId}:${id}`;
         changes.push({
           componentIdentity: id,
           name: target.name,
@@ -72,10 +73,11 @@ export class ComponentDiffEngine {
           removedMemberFiles: [],
           unchangedMemberFiles: [],
           evidenceDescription: target.evidenceDescription,
+          evidenceId,
         });
 
         evidence.push({
-          evidenceId: `ev:comp:add:${targetScanId}:${id}`,
+          evidenceId,
           repositoryId,
           snapshotId: targetScanId,
           sourcePath: target.rootPath,
@@ -89,6 +91,7 @@ export class ComponentDiffEngine {
       } else if (base && !target) {
         // REMOVED
         removedCount++;
+        const evidenceId = `ev:comp:rem:${baseScanId}:${id}`;
         changes.push({
           componentIdentity: id,
           name: base.name,
@@ -101,10 +104,11 @@ export class ComponentDiffEngine {
           removedMemberFiles: [...base.filePaths].sort(),
           unchangedMemberFiles: [],
           evidenceDescription: base.evidenceDescription,
+          evidenceId,
         });
 
         evidence.push({
-          evidenceId: `ev:comp:rem:${baseScanId}:${id}`,
+          evidenceId,
           repositoryId,
           snapshotId: baseScanId,
           sourcePath: base.rootPath,
@@ -134,10 +138,12 @@ export class ComponentDiffEngine {
           addedMemberFiles.length > 0 ||
           removedMemberFiles.length > 0 ||
           base.category !== target.category ||
-          base.name !== target.name;
+          base.name !== target.name ||
+          base.status !== target.status;
 
         if (isModified) {
           modifiedCount++;
+          const evidenceId = `ev:comp:mod:${targetScanId}:${id}`;
           changes.push({
             componentIdentity: id,
             name: target.name,
@@ -152,10 +158,11 @@ export class ComponentDiffEngine {
             removedMemberFiles,
             unchangedMemberFiles,
             evidenceDescription: target.evidenceDescription,
+            evidenceId,
           });
 
           evidence.push({
-            evidenceId: `ev:comp:mod:${targetScanId}:${id}`,
+            evidenceId,
             repositoryId,
             snapshotId: targetScanId,
             sourcePath: target.rootPath,

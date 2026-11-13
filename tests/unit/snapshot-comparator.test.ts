@@ -1,3 +1,7 @@
+import { createHash } from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { ConnectionManager } from "../../scripts/storage/connection-manager.ts";
 import { SqliteDatabase } from "../../scripts/storage/database.ts";
@@ -469,6 +473,167 @@ describe("snapshot-comparator (Deterministic Multi-Domain Diff Engine)", () => {
       const json1 = ComparisonSerializer.serialize(res1);
       const json2 = ComparisonSerializer.serialize(res2);
       expect(json1).toBe(json2);
+
+      // Serializer omits undefined optional keys cleanly instead of turning them into null
+      const parsed = JSON.parse(json1);
+      expect("isInferredRename" in parsed.files.changes[0]).toBe(false);
+    });
+  });
+
+  describe("Historical Correctness, Partial Snapshots & Summary Reconciliation", () => {
+    it("verifies ADR disk content against indexed SHA-256 hash and isolates stale disk rewrites", () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "fe-adr-history-"));
+      try {
+        const adrDir = path.join(tempDir, "docs", "adr");
+        fs.mkdirSync(adrDir, { recursive: true });
+
+        const adrV1 = `# ADR-001: Storage Engine\n\n- **Status:** Proposed\n- **Date:** 2026-11-01\n\nInitial proposal.\n`;
+        const adrV2 = `# ADR-001: Storage Engine\n\n- **Status:** Accepted\n- **Date:** 2026-11-02\n\nAccepted design.\n`;
+        const hashV1 = createHash("sha256").update(adrV1, "utf8").digest("hex");
+        const hashV2 = createHash("sha256").update(adrV2, "utf8").digest("hex");
+
+        // Current disk holds v2 (simulating a workspace at target snapshot state while comparing historical snapshots)
+        fs.writeFileSync(path.join(adrDir, "ADR-001-storage.md"), adrV2, "utf8");
+
+        const baseScan = createScan("2026-11-01T10:00:00.000Z");
+        const targetScan = createScan("2026-11-02T10:00:00.000Z");
+
+        insertFile(baseScan, "docs/adr/ADR-001-storage.md", hashV1, { classification: "doc" });
+        insertFile(targetScan, "docs/adr/ADR-001-storage.md", hashV2, { classification: "doc" });
+
+        const comparator = new SnapshotComparator(db);
+        const comparison = comparator.compare(baseScan, targetScan, { workspaceRoot: tempDir });
+
+        expect(comparison.summary.adrs.modified).toBe(1);
+        const adrChange = comparison.adrs.changes.find((a) => a.adrId === "ADR-001");
+        expect(adrChange?.changeType).toBe("MODIFIED");
+        // Target matches disk v2 so its parsed status is Accepted; base hash != disk v2 so base MUST NOT inherit disk "Accepted" or fabricate "PROPOSED"
+        expect(adrChange?.targetStatus).toBe("Accepted");
+        expect(adrChange?.baseStatus).toBeUndefined();
+        expect(adrChange?.isFallback).toBe(true);
+        expect(
+          comparison.limitations.some((l) => l.code === "LIM_ADR_HISTORICAL_CONTENT_FALLBACK"),
+        ).toBe(true);
+      } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it("withholds verified MODIFIED/UNCHANGED classification when non-sensitive file or ADR lacks historical hash", () => {
+      const baseScan = createScan("2026-11-01T10:00:00.000Z");
+      const targetScan = createScan("2026-11-02T10:00:00.000Z");
+
+      insertFile(baseScan, "src/nohash.ts", null, { sensitivityStatus: "SAFE" });
+      insertFile(targetScan, "src/nohash.ts", "h_target", { sensitivityStatus: "SAFE" });
+
+      insertFile(baseScan, "docs/adr/ADR-003-missing-hash.md", null, {
+        sensitivityStatus: "SAFE",
+        classification: "doc",
+      });
+      insertFile(targetScan, "docs/adr/ADR-003-missing-hash.md", "h_adr3_target", {
+        sensitivityStatus: "SAFE",
+        classification: "doc",
+      });
+
+      const comparator = new SnapshotComparator(db);
+      const comparison = comparator.compare(baseScan, targetScan, { includeUnchanged: true });
+
+      expect(comparison.summary.files.modified).toBe(0);
+      expect(comparison.summary.files.unchanged).toBe(0);
+      expect(comparison.files.changes.length).toBe(0);
+      expect(
+        comparison.limitations.some((l) => l.code === "LIM_FILE_MISSING_HISTORICAL_HASH"),
+      ).toBe(true);
+
+      expect(comparison.summary.adrs.modified).toBe(0);
+      expect(comparison.summary.adrs.unchanged).toBe(0);
+      expect(comparison.adrs.changes.length).toBe(0);
+      expect(comparison.limitations.some((l) => l.code === "LIM_ADR_MISSING_HISTORICAL_HASH")).toBe(
+        true,
+      );
+    });
+
+    it("marks comparison status PARTIAL and emits LIM_PARTIAL_SNAPSHOT_COMPARISON when comparing partial scans", () => {
+      const baseScan = createScan("2026-11-01T10:00:00.000Z", "PARTIAL");
+      const targetScan = createScan("2026-11-02T10:00:00.000Z", "COMPLETE");
+
+      insertFile(baseScan, "src/a.ts", "h1");
+      insertFile(targetScan, "src/a.ts", "h2");
+
+      const comparator = new SnapshotComparator(db);
+      const comparison = comparator.compare(baseScan, targetScan, { allowPartial: true });
+
+      expect(comparison.status).toBe("PARTIAL");
+      expect(comparison.baseSnapshot.status).toBe("PARTIAL");
+      expect(comparison.targetSnapshot.status).toBe("COMPLETE");
+      const partialLim = comparison.limitations.find(
+        (l) => l.code === "LIM_PARTIAL_SNAPSHOT_COMPARISON",
+      );
+      expect(partialLim).toBeDefined();
+      expect(partialLim?.domain).toBe("snapshot");
+      expect(partialLim?.affectedEntityCount).toBe(1);
+    });
+
+    it("reconciles summary counts with detailed change collections across all 5 domains", () => {
+      const baseScan = createScan("2026-11-01T10:00:00.000Z");
+      const targetScan = createScan("2026-11-02T10:00:00.000Z");
+
+      const fKeepBase = insertFile(baseScan, "src/api/keep.ts", "h_keep");
+      const fModBase = insertFile(baseScan, "src/api/mod.ts", "h_mod_1");
+      insertFile(baseScan, "src/api/del.ts", "h_del");
+      insertFile(baseScan, "docs/adr/ADR-001-base.md", "h_adr1_1", { classification: "doc" });
+
+      const fKeepTarget = insertFile(targetScan, "src/api/keep.ts", "h_keep");
+      const fModTarget = insertFile(targetScan, "src/api/mod.ts", "h_mod_2");
+      insertFile(targetScan, "src/api/add.ts", "h_add");
+      insertFile(targetScan, "docs/adr/ADR-001-base.md", "h_adr1_2", { classification: "doc" });
+      insertFile(targetScan, "docs/adr/ADR-002-new.md", "h_adr2_1", { classification: "doc" });
+
+      insertSymbol(baseScan, fModBase, "sym:mod", "fnMod", "function", "fp1");
+      insertSymbol(targetScan, fModTarget, "sym:mod", "fnMod", "function", "fp2");
+
+      // Persistent unresolved import AND newly added unresolved import
+      insertImport(baseScan, fKeepBase, "./still-missing", null, "UNRESOLVED");
+      insertImport(targetScan, fKeepTarget, "./still-missing", null, "UNRESOLVED");
+      insertImport(targetScan, fModTarget, "./new-missing", null, "UNRESOLVED");
+
+      const comparator = new SnapshotComparator(db);
+      const comparison = comparator.compare(baseScan, targetScan);
+
+      expect(comparison.summary.files.added).toBe(
+        comparison.files.changes.filter((c) => c.changeType === "ADDED").length,
+      );
+      expect(comparison.summary.files.modified).toBe(
+        comparison.files.changes.filter((c) => c.changeType === "MODIFIED").length,
+      );
+      expect(comparison.summary.files.deleted).toBe(
+        comparison.files.changes.filter((c) => c.changeType === "DELETED").length,
+      );
+
+      expect(comparison.summary.symbols.modified).toBe(
+        comparison.symbols.changes.filter((c) => c.changeType === "MODIFIED").length,
+      );
+
+      // Persistent + newly added UNRESOLVED imports must reconcile and not double-count into ADDED
+      expect(comparison.summary.dependencies.added).toBe(
+        comparison.dependencies.changes.filter((d) => d.changeType === "ADDED").length,
+      );
+      expect(comparison.summary.dependencies.added).toBe(0);
+      expect(comparison.summary.dependencies.unresolved).toBe(2);
+      expect(
+        comparison.dependencies.changes.filter((d) => d.changeType === "UNRESOLVED").length,
+      ).toBe(comparison.summary.dependencies.unresolved);
+
+      expect(comparison.summary.components.modified).toBe(
+        comparison.components.changes.filter((c) => c.changeType === "MODIFIED").length,
+      );
+
+      expect(comparison.summary.adrs.added).toBe(
+        comparison.adrs.changes.filter((a) => a.changeType === "ADDED").length,
+      );
+      expect(comparison.summary.adrs.modified).toBe(
+        comparison.adrs.changes.filter((a) => a.changeType === "MODIFIED").length,
+      );
     });
   });
 });

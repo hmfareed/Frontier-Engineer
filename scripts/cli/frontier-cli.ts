@@ -40,6 +40,7 @@ export async function runCli(argv: string[]): Promise<number> {
   let scanId: number | undefined;
   let verifyContent = false;
   let persistEvents = false;
+  let allowPartial = false;
 
   // Manual argument parsing without external dependencies
   const positional: string[] = [];
@@ -106,6 +107,8 @@ export async function runCli(argv: string[]): Promise<number> {
       verifyContent = true;
     } else if (arg === "--persist-events") {
       persistEvents = true;
+    } else if (arg === "--allow-partial") {
+      allowPartial = true;
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       return 0;
@@ -325,6 +328,7 @@ export async function runCli(argv: string[]): Promise<number> {
         const comparator = new SnapshotComparator(connectionManager.getDatabase());
         const comparison = comparator.compare(baseScanId, targetScanId, {
           persistEvents,
+          allowPartial,
           workspaceRoot,
         });
 
@@ -497,6 +501,7 @@ Options:
   --scan-id <id>             Explicit historical scan ID to inspect (default: active scan)
   --verify-content           Perform full SHA-256 cryptographic content hash verification
   --persist-events           Persist factual change events to evolution_events table
+  --allow-partial            Allow comparing PARTIAL snapshots (marks result PARTIAL)
   --help, -h                 Display this help message
 
 Exit codes:

@@ -5,6 +5,7 @@
 
 import type { SqliteDatabase } from "../storage/database.ts";
 import type { EvolutionEventRecord } from "../storage/types.ts";
+import { SnapshotValidator } from "./snapshot-validator.ts";
 import type { SnapshotComparison } from "./types.ts";
 
 export class EventPersistenceBoundary {
@@ -33,6 +34,40 @@ export class EventPersistenceBoundary {
     const persistedEvents: EvolutionEventRecord[] = [];
 
     db.transaction(() => {
+      // 0. Ownership & snapshot validity guard before destructive delete-and-reinsert
+      const baseScan = db
+        .prepare("SELECT id, repository_id AS repositoryId, status FROM scan_runs WHERE id = ?")
+        .get(baseScanId) as { id: number; repositoryId: number; status: string } | undefined;
+      const targetScan = db
+        .prepare("SELECT id, repository_id AS repositoryId, status FROM scan_runs WHERE id = ?")
+        .get(targetScanId) as { id: number; repositoryId: number; status: string } | undefined;
+
+      if (!baseScan || !targetScan) {
+        throw new Error(
+          `Cannot persist evolution events: snapshot pair (${baseScanId}, ${targetScanId}) does not exist.`,
+        );
+      }
+
+      if (baseScan.repositoryId !== repositoryId || targetScan.repositoryId !== repositoryId) {
+        throw new Error(
+          `Cannot persist evolution events: repository ownership mismatch for repository ${repositoryId}.`,
+        );
+      }
+
+      const allowPartial =
+        comparison.status === "PARTIAL" ||
+        comparison.baseSnapshot.status === "PARTIAL" ||
+        comparison.targetSnapshot.status === "PARTIAL";
+      const validation = SnapshotValidator.validate(db, baseScanId, targetScanId, {
+        allowPartial,
+      });
+      if (!validation.isValid || validation.repositoryId !== repositoryId) {
+        throw new Error(
+          validation.errorMessage ||
+            `Snapshot validation failed during event persistence for (${baseScanId}, ${targetScanId}).`,
+        );
+      }
+
       // 1. Idempotency: remove prior factual events for this exact comparison pair
       deleteStmt.run(repositoryId, baseScanId, targetScanId);
 
@@ -208,8 +243,13 @@ export class EventPersistenceBoundary {
         const eventType = `COMPONENT_${c.changeType}`;
         const title = `Component ${c.changeType.toLowerCase()}: ${c.name}`;
         const description = `Architectural component '${c.name}' (${c.category}) was ${c.changeType.toLowerCase()}`;
+        const effectiveStatus = c.targetStatus ?? c.baseStatus;
         const confidenceTier: "CONFIRMED" | "INFERRED" | "CANDIDATE" =
-          (c.targetStatus as any) === "CONFIRMED" ? "CONFIRMED" : "INFERRED";
+          effectiveStatus === "CONFIRMED"
+            ? "CONFIRMED"
+            : effectiveStatus === "CANDIDATE"
+              ? "CANDIDATE"
+              : "INFERRED";
         const confidence = c.targetConfidence ?? c.baseConfidence ?? 0.9;
 
         const detailsJson = JSON.stringify({
@@ -260,6 +300,10 @@ export class EventPersistenceBoundary {
         const eventType = `ADR_${a.changeType}`;
         const title = `Decision ${a.changeType.toLowerCase()}: ${a.adrId} (${a.title})`;
         const description = `Architecture Decision Record '${a.adrId}' was ${a.changeType.toLowerCase()}`;
+        const confidenceTier: "CONFIRMED" | "INFERRED" | "CANDIDATE" = a.isFallback
+          ? "INFERRED"
+          : "CONFIRMED";
+        const confidence = a.confidence ?? (a.isFallback ? 0.7 : 1.0);
 
         const detailsJson = JSON.stringify({
           adrId: a.adrId,
@@ -269,6 +313,7 @@ export class EventPersistenceBoundary {
           targetStatus: a.targetStatus,
           baseContentHash: a.baseContentHash,
           targetContentHash: a.targetContentHash,
+          isFallback: a.isFallback,
         });
 
         const res = insertStmt.run(
@@ -280,8 +325,8 @@ export class EventPersistenceBoundary {
           title,
           description,
           "INFO",
-          1.0,
-          "CONFIRMED",
+          confidence,
+          confidenceTier,
           detailsJson,
           now,
         );
@@ -296,8 +341,8 @@ export class EventPersistenceBoundary {
           title,
           description,
           severity: "INFO",
-          confidence: 1.0,
-          confidenceTier: "CONFIRMED",
+          confidence,
+          confidenceTier,
           detailsJson,
           createdAt: now,
         });

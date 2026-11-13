@@ -239,7 +239,7 @@ npm run frontier -- deps <target> [--depth 3] [--limit 50] [--format text|json] 
 #### Snapshot Comparison Commands (Phase 7.5 Stage 3)
 
 ```bash
-npm run frontier -- compare <base-scan-id> <target-scan-id> [--persist-events] [--format text|json]
+npm run frontier -- compare <base-scan-id> <target-scan-id> [--persist-events] [--allow-partial] [--format text|json]
 ```
 
 All commands accept `--scan-id <id>` to target an explicit historical scan.

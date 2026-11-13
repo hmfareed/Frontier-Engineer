@@ -122,7 +122,7 @@ Before computing differences, `SnapshotValidator` executes strict verification r
    - Both scans must be `status === 'COMPLETE'`.
    - `RUNNING` or `VALIDATING` scans fail with `ERR_BASE_SNAPSHOT_IN_PROGRESS` or `ERR_TARGET_SNAPSHOT_IN_PROGRESS`.
    - `FAILED` or `CANCELLED` scans fail with `ERR_BASE_SNAPSHOT_INCOMPLETE` or `ERR_TARGET_SNAPSHOT_INCOMPLETE`.
-   - `PARTIAL` scans fail with `ERR_BASE_SNAPSHOT_PARTIAL` unless `allowPartial: true` is explicitly opted into.
+   - `PARTIAL` scans fail with `ERR_BASE_SNAPSHOT_PARTIAL` or `ERR_TARGET_SNAPSHOT_PARTIAL` unless `allowPartial: true` (`--allow-partial`) is explicitly opted into. When `allowPartial: true` permits comparing a `PARTIAL` snapshot, the comparison output sets `status: "PARTIAL"` and records `LIM_PARTIAL_SNAPSHOT_COMPARISON`.
 5. **Chronological Validity:**
    - Both `startedAt` timestamps must be valid ISO 8601 strings (`ERR_INVALID_SCAN_TIMESTAMP`).
    - `target.startedAt >= base.startedAt` must hold (`ERR_CHRONOLOGY_VIOLATION`).
@@ -138,11 +138,12 @@ Before computing differences, `SnapshotValidator` executes strict verification r
   - Base absent, Target present $\rightarrow$ `ADDED`.
   - Base present, Target absent $\rightarrow$ `DELETED`.
   - Both present:
-    - Safe files: If content hashes match $\rightarrow$ `UNCHANGED`. If content hashes differ $\rightarrow$ `MODIFIED`.
-    - Sensitive files: Secrets are never inspected or exposed; content hashes are null. Changes in file size, classification, or sensitivity status $\rightarrow$ `MODIFIED` with `LIM_SENSITIVE_FILE_CONTENT_UNINSPECTABLE` recorded.
+    - Safe files with hashes: If content hashes match $\rightarrow$ `UNCHANGED`. If content hashes differ $\rightarrow$ `MODIFIED`.
+    - Safe files missing historical hashes: If either snapshot lacks a non-empty `contentHash` on a non-sensitive file, verified `MODIFIED`/`UNCHANGED` classification is withheld and `LIM_FILE_MISSING_HISTORICAL_HASH` is recorded.
+    - Sensitive files: Secrets are never inspected or exposed; content hashes are null. Changes in file size, classification, or sensitivity status $\rightarrow$ `MODIFIED` with `isInferred: true` evidence and `LIM_SENSITIVE_FILE_CONTENT_UNINSPECTABLE` recorded.
     - Timestamp invariance: A file whose mtime changed but whose content hash is identical remains strictly `UNCHANGED`.
 - Rename heuristics:
-  - Exact unique content hash matching between deleted and added files.
+  - Exact unique content hash matching between deleted and added files (`isInferredRename: true`, `isInferred: true` evidence).
   - If multiple deleted or added files share the same content hash, rename inference is aborted to avoid false certainty and records `LIM_AMBIGUOUS_RENAME_CANDIDATES`.
 
 ### 5.2 Symbol Diff Engine
@@ -155,35 +156,39 @@ Before computing differences, `SnapshotValidator` executes strict verification r
 - Relocation heuristics:
   - When a symbol is deleted from one file and added to another:
   - Evaluated on semantic key: `name + "::" + kind + "::" + scope + "::" + fingerprint`.
-  - If the match is unique across all candidate additions and deletions $\rightarrow$ `RELOCATED`.
-  - If multiple candidates exist $\rightarrow$ preserved as individual `REMOVED` and `ADDED` records with `LIM_AMBIGUOUS_SYMBOL_RELOCATION`.
+  - If the match is unique across all candidate additions and deletions $\rightarrow$ `RELOCATED` (`isInferred: true` evidence).
+  - If multiple candidates exist $\rightarrow$ preserved as individual `REMOVED` and `ADDED` records marked with `isAmbiguous: true`, `ambiguityReason`, and `LIM_AMBIGUOUS_SYMBOL_RELOCATION`.
 
 ### 5.3 Dependency Diff Engine
 
 - Primary key: `source_path + "::" + specifier + "::" + import_kind`.
 - Classifications:
-  - Target only $\rightarrow$ `ADDED`.
+  - Target only (`RESOLVED`) $\rightarrow$ `ADDED`.
+  - Target only (`UNRESOLVED`) $\rightarrow$ `UNRESOLVED` (counted strictly under `unresolved`, not double-counted as `added`).
   - Base only $\rightarrow$ `REMOVED`.
   - Both present with changed target file or resolution status $\rightarrow$ `MODIFIED`.
-  - Unresolved imports $\rightarrow$ strictly preserved as `UNRESOLVED` and never falsely resolved or treated as removed without evidence.
-  - Identical specifier and target $\rightarrow$ `UNCHANGED`.
+  - Persistent unresolved imports $\rightarrow$ strictly preserved as `UNRESOLVED` in both summary counts and detail collections, never falsely resolved or treated as removed without evidence.
+  - Identical resolved specifier and target $\rightarrow$ `UNCHANGED`.
 
 ### 5.4 Component Diff Engine
 
 - Primary key: `component_identity` (e.g. `comp:src/api`).
 - Evaluates:
   - Added member files, removed member files, unchanged member files.
-  - Boundary category or name changes.
-  - Any member file addition or removal classifies the component as `MODIFIED`.
+  - Boundary category, name, or confidence status (`CONFIRMED`, `INFERRED`, `CANDIDATE`) changes.
+  - Any member file addition/removal or attribute/status change classifies the component as `MODIFIED`.
   - New components $\rightarrow$ `ADDED`; retired components $\rightarrow$ `REMOVED`.
 
 ### 5.5 ADR Diff Engine
 
 - Primary key: ADR identifier (`ADR-xxx`) and number.
+- Historical verification & fallback:
+  - Disk markdown content is parsed ONLY when a file path is verified inside the workspace AND its SHA-256 hash matches the snapshot's indexed `content_hash`.
+  - When disk content is missing, unreadable, or fails SHA-256 verification against the historical snapshot, `AdrDiffEngine` uses indexed path and content hash only without reading stale disk state, omits unverified `status` instead of fabricating a synthetic status, marks the item with `isFallback: true` / `isInferred: true`, and records `LIM_ADR_HISTORICAL_CONTENT_FALLBACK`.
+  - When either snapshot lacks a historical `contentHash`, verified `MODIFIED`/`UNCHANGED` classification is withheld and `LIM_ADR_MISSING_HISTORICAL_HASH` is recorded.
 - Evaluates:
-  - Content hash and status changes.
-  - Modified ADR $\rightarrow$ `MODIFIED`.
-  - Invariant: The comparator establishes that an ADR changed; it does not interpret whether a decision is contradictory or obsolete (left to later analysis stages).
+  - Content hash, verified status, title, and path changes $\rightarrow$ `MODIFIED`.
+  - Scope invariant: Stage 3 establishes factual ADR additions, removals, and modifications; architectural drift analysis, ADR contradiction detection, and engineering-debt interpretation are explicitly deferred to Stage 4.
 
 ---
 
@@ -207,11 +212,11 @@ When `persistEvents: true` is enabled, the comparator writes factual change reco
 - `base_scan_id` & `target_scan_id`: Foreign keys to `scan_runs(repository_id, id)` with composite constraint enforcement.
 - `category`: Checked against `('file', 'symbol', 'dependency', 'architecture', 'decision', 'debt')`.
 - `severity`: Factual changes are persisted with `INFO` (or `LOW` for unresolved imports).
-- `confidence_tier`: `CONFIRMED` for verified diffs; `INFERRED` for renames and relocations.
+- `confidence_tier`: `CONFIRMED` for hash/AST-verified diffs, `INFERRED` for renames, relocations, sensitive metadata diffs, and fallback ADR events, and `CANDIDATE` for candidate component boundaries.
 
 ### Idempotency Guarantee
 
-To prevent duplicate event accumulation across repeated runs, existing factual events for `(repository_id, base_scan_id, target_scan_id)` are deleted inside an immediate transaction prior to insertion.
+Inside an immediate transaction (`BEGIN IMMEDIATE`), `EventPersistenceBoundary` first verifies snapshot existence, repository ownership matching, and `SnapshotValidator` validity (`ERR_*` rejection rolls back before any mutation). It then deletes prior factual events strictly scoped to `(repository_id, base_scan_id, target_scan_id)` prior to inserting the replacement event set.
 
 ---
 
@@ -229,6 +234,7 @@ node scripts/cli/frontier-cli.ts [intelligence] compare <base-scan-id> <target-s
 - `--format <text|json>`: Output format (default: text).
 - `--workspace <path>`: Repository workspace directory.
 - `--persist-events`: Persist factual change events to `evolution_events`.
+- `--allow-partial`: Allow comparing `PARTIAL` snapshots (propagates `status: "PARTIAL"` and `LIM_PARTIAL_SNAPSHOT_COMPARISON`).
 
 ### Exit Codes
 
@@ -263,5 +269,7 @@ Total comparison time scales linearly ($O(N)$ with hash lookups), remaining well
 ## 10. Known Limitations
 
 1. **Syntactic Rename Scope:** Rename detection is limited to exact SHA-256 content matches. Heuristic partial renames (fuzzy edits) are intentionally rejected to maintain zero false certainty.
-2. **Historical ADR Content on Missing Workspace:** If historical files have been pruned from disk, ADR title and status are extracted from indexed file metadata and content hashes.
-3. **Sensitive File Inspection:** Secrets are never read or diffed; sensitive files are compared strictly on cryptographic hash presence and filesystem metadata.
+2. **Filesystem Dependency for Historical ADR Markdown:** Because SQLite `files` stores normalized paths and SHA-256 `content_hash` values without raw file bodies, historical ADR title/status extraction from disk runs only when the on-disk file's SHA-256 matches the indexed snapshot hash. When a historical file is missing from disk or has been modified in a newer revision, `AdrDiffEngine` falls back to indexed path/hash metadata with `LIM_ADR_HISTORICAL_CONTENT_FALLBACK` and omits unverified status fields.
+3. **Partial Snapshot Completeness:** Comparisons invoked with `--allow-partial` / `allowPartial: true` surface `status: "PARTIAL"` and `LIM_PARTIAL_SNAPSHOT_COMPARISON`; missing files or symbols in incomplete scans are excluded from verified change claims.
+4. **Sensitive File Inspection:** Secrets are never read or diffed; sensitive files are compared strictly on filesystem metadata (`isInferred: true` evidence and `LIM_SENSITIVE_FILE_CONTENT_UNINSPECTABLE`).
+5. **Stage 3 Scope Boundary (Deferred to Stage 4):** Stage 3 implements deterministic snapshot validation, multi-domain diffing, evidence/limitation reporting, and idempotent factual event persistence. Architectural drift interpretation, ADR contradiction detection, memory staleness/contradiction evaluation, and engineering-debt scoring remain deferred to Stage 4.

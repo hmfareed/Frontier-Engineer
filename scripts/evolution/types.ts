@@ -140,6 +140,8 @@ export interface AdrDiffItem {
   governedComponents?: string[];
   evidenceDescription?: string;
   evidenceId?: string;
+  confidence?: number;
+  isFallback?: boolean;
 }
 
 export interface AdrDiffResult {
@@ -213,6 +215,7 @@ export interface SnapshotHeader {
   completedAt: string | null;
   scannerVersion: string;
   extractorVersion: string;
+  status?: ComparisonStatus;
 }
 
 export interface SnapshotComparison {
