@@ -59,7 +59,8 @@ export class ComponentDetector {
     const importRows = db
       .prepare(
         `SELECT source_file_id AS sourceFileId, imported_specifier AS specifier
-         FROM imports WHERE scan_id = ?`,
+         FROM imports WHERE scan_id = ?
+         ORDER BY source_file_id ASC, imported_specifier ASC, id ASC`,
       )
       .all(scanId) as { sourceFileId: number; specifier: string }[];
 
@@ -185,11 +186,13 @@ export class ComponentDetector {
             ? `Contains database schemas, migrations, or driver imports (${
                 Array.from(collectedImports)
                   .filter((i) => i.includes("sql") || i.includes("prisma") || i.includes("orm"))
+                  .sort()
                   .join(", ") || "SQL/Prisma files"
               })`
             : hasDbImports
               ? `Contains ORM or database package imports (${Array.from(collectedImports)
                   .filter((i) => i.includes("sql") || i.includes("prisma") || i.includes("orm"))
+                  .sort()
                   .join(", ")}) without dedicated schema/migration artifacts`
               : "Directory name indicates database layer without verified driver imports or schemas",
           filesCount: files.length,
@@ -302,6 +305,7 @@ export class ComponentDetector {
                       i.includes("fastify") ||
                       i.includes("hono"),
                   )
+                  .sort()
                   .join(", ")})`
               : "Contains API route handlers matching framework routing conventions"
             : "Directory name suggests API/backend layer without confirmed server framework imports",

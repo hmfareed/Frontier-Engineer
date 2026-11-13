@@ -19,6 +19,7 @@ import type {
   ComparatorOptions,
   ComparisonEvidence,
   ComparisonLimitation,
+  ComparisonStatus,
   SnapshotHeader,
 } from "./types.ts";
 
@@ -74,8 +75,12 @@ export class SnapshotComparator {
     const repositoryIdentity = repoRow?.identity || `repo_${repositoryId}`;
 
     // 3. Fetch Base and Target Snapshot Headers
-    const baseScan = this.getScanHeader(baseScanId);
-    const targetScan = this.getScanHeader(targetScanId);
+    const baseScan = this.getScanHeader(repositoryId, baseScanId);
+    const targetScan = this.getScanHeader(repositoryId, targetScanId);
+    const basePartial = baseScan.status === "PARTIAL";
+    const targetPartial = targetScan.status === "PARTIAL";
+    const comparisonStatus: ComparisonStatus =
+      basePartial || targetPartial ? "PARTIAL" : "COMPLETE";
 
     // 4. Execute Domain Diff Engines
     const fileDiff = FileDiffEngine.diff(this.db, repositoryId, baseScanId, targetScanId, options);
@@ -128,9 +133,28 @@ export class SnapshotComparator {
       ...adrDiff.limitations,
     ];
 
+    if (basePartial || targetPartial) {
+      const partialIds: number[] = [];
+      if (basePartial) partialIds.push(baseScanId);
+      if (targetPartial) partialIds.push(targetScanId);
+      allLimitations.push({
+        code: "LIM_PARTIAL_SNAPSHOT_COMPARISON",
+        description: `Comparison involves PARTIAL snapshot(s) (${partialIds.join(", ")}); completeness cannot be guaranteed for incomplete scans.`,
+        domain: "snapshot",
+        affectedEntityCount: partialIds.length,
+      });
+    }
+
     const limitationMap = new Map<string, ComparisonLimitation>();
     for (const lim of allLimitations) {
-      limitationMap.set(`${lim.code}:${lim.domain}`, lim);
+      const key = `${lim.code}:${lim.domain}`;
+      const existing = limitationMap.get(key);
+      if (!existing) {
+        limitationMap.set(key, { ...lim });
+      } else {
+        existing.affectedEntityCount =
+          (existing.affectedEntityCount ?? 0) + (lim.affectedEntityCount ?? 1);
+      }
     }
     const sortedLimitations = Array.from(limitationMap.values()).sort(
       (a, b) => a.code.localeCompare(b.code) || a.domain.localeCompare(b.domain),
@@ -155,7 +179,7 @@ export class SnapshotComparator {
       baseSnapshot: baseScan,
       targetSnapshot: targetScan,
       comparedAt,
-      status: "COMPLETE",
+      status: comparisonStatus,
       summary,
       files: fileDiff.result,
       symbols: symbolDiff.result,
@@ -174,15 +198,17 @@ export class SnapshotComparator {
     return comparison;
   }
 
-  private getScanHeader(scanId: number): SnapshotHeader {
+  private getScanHeader(repositoryId: number, scanId: number): SnapshotHeader {
     const row = this.db
       .prepare(
         `SELECT
           id AS scanId, started_at AS startedAt, completed_at AS completedAt,
-          scanner_version AS scannerVersion, extractor_version AS extractorVersion
-        FROM scan_runs WHERE id = ?`,
+          scanner_version AS scannerVersion, extractor_version AS extractorVersion,
+          status
+        FROM scan_runs WHERE repository_id = ? AND id = ?`,
       )
-      .get(scanId) as SnapshotHeader | undefined;
+      .get(repositoryId, scanId) as
+      (Omit<SnapshotHeader, "status"> & { status: string }) | undefined;
 
     if (!row) {
       throw new SnapshotComparisonError(
@@ -191,6 +217,13 @@ export class SnapshotComparator {
       );
     }
 
-    return row;
+    return {
+      scanId: row.scanId,
+      startedAt: row.startedAt,
+      completedAt: row.completedAt,
+      scannerVersion: row.scannerVersion,
+      extractorVersion: row.extractorVersion,
+      status: row.status === "PARTIAL" ? "PARTIAL" : "COMPLETE",
+    };
   }
 }

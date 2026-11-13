@@ -55,12 +55,12 @@ export class DependencyDiffEngine {
           i.resolution_status AS resolutionStatus, i.start_line AS startLine,
           i.end_line AS endLine, i.evidence_id AS evidenceId
         FROM imports i
-        JOIN files sf ON sf.id = i.source_file_id
-        LEFT JOIN files rf ON rf.id = i.resolved_file_id
-        WHERE i.scan_id = ?
-        ORDER BY sf.normalized_path ASC, i.imported_specifier ASC`,
+        JOIN files sf ON sf.id = i.source_file_id AND sf.repository_id = i.repository_id AND sf.scan_id = i.scan_id
+        LEFT JOIN files rf ON rf.id = i.resolved_file_id AND rf.repository_id = i.repository_id AND rf.scan_id = i.scan_id
+        WHERE i.repository_id = ? AND i.scan_id = ?
+        ORDER BY sf.normalized_path ASC, i.imported_specifier ASC, i.import_kind ASC, i.id ASC`,
       )
-      .all(baseScanId) as unknown as JoinedImportRecord[];
+      .all(repositoryId, baseScanId) as unknown as JoinedImportRecord[];
 
     // Query target imports with source path and resolved path
     const targetRows = db
@@ -73,12 +73,12 @@ export class DependencyDiffEngine {
           i.resolution_status AS resolutionStatus, i.start_line AS startLine,
           i.end_line AS endLine, i.evidence_id AS evidenceId
         FROM imports i
-        JOIN files sf ON sf.id = i.source_file_id
-        LEFT JOIN files rf ON rf.id = i.resolved_file_id
-        WHERE i.scan_id = ?
-        ORDER BY sf.normalized_path ASC, i.imported_specifier ASC`,
+        JOIN files sf ON sf.id = i.source_file_id AND sf.repository_id = i.repository_id AND sf.scan_id = i.scan_id
+        LEFT JOIN files rf ON rf.id = i.resolved_file_id AND rf.repository_id = i.repository_id AND rf.scan_id = i.scan_id
+        WHERE i.repository_id = ? AND i.scan_id = ?
+        ORDER BY sf.normalized_path ASC, i.imported_specifier ASC, i.import_kind ASC, i.id ASC`,
       )
-      .all(targetScanId) as unknown as JoinedImportRecord[];
+      .all(repositoryId, targetScanId) as unknown as JoinedImportRecord[];
 
     // Map imports by key: sourcePath + "::" + importedSpecifier + "::" + importKind
     const makeKey = (r: JoinedImportRecord) =>
@@ -109,13 +109,16 @@ export class DependencyDiffEngine {
       const target = targetMap.get(key);
 
       if (!base && target) {
-        // ADDED
-        addedCount++;
-        const changeType = target.resolutionStatus === "UNRESOLVED" ? "UNRESOLVED" : "ADDED";
-        if (changeType === "UNRESOLVED") {
+        // ADDED or newly introduced UNRESOLVED import
+        const isUnresolved = target.resolutionStatus === "UNRESOLVED";
+        const changeType = isUnresolved ? "UNRESOLVED" : "ADDED";
+        if (isUnresolved) {
           unresolvedCount++;
+        } else {
+          addedCount++;
         }
 
+        const evidenceId = `ev:dep:add:${targetScanId}:${key}`;
         changes.push({
           sourcePath: target.sourcePath,
           specifier: target.importedSpecifier,
@@ -125,16 +128,17 @@ export class DependencyDiffEngine {
           targetResolutionStatus: target.resolutionStatus,
           targetLines: { startLine: target.startLine, endLine: target.endLine },
           confidence: target.resolutionStatus === "RESOLVED" ? 1.0 : 0.8,
+          evidenceId,
         });
 
         evidence.push({
-          evidenceId: `ev:dep:add:${targetScanId}:${key}`,
+          evidenceId,
           repositoryId,
           snapshotId: targetScanId,
           sourcePath: target.sourcePath,
           sourceHash: null,
           entityIdentity: `import:${key}`,
-          evidenceType: "import_addition",
+          evidenceType: isUnresolved ? "unresolved_import_addition" : "import_addition",
           lineRange: [target.startLine, target.endLine],
           confidence: target.resolutionStatus === "RESOLVED" ? 1.0 : 0.8,
           supportedClassification: changeType,
@@ -142,6 +146,7 @@ export class DependencyDiffEngine {
       } else if (base && !target) {
         // REMOVED
         removedCount++;
+        const evidenceId = `ev:dep:rem:${baseScanId}:${key}`;
         changes.push({
           sourcePath: base.sourcePath,
           specifier: base.importedSpecifier,
@@ -151,10 +156,11 @@ export class DependencyDiffEngine {
           baseResolutionStatus: base.resolutionStatus,
           baseLines: { startLine: base.startLine, endLine: base.endLine },
           confidence: base.resolutionStatus === "RESOLVED" ? 1.0 : 0.8,
+          evidenceId,
         });
 
         evidence.push({
-          evidenceId: `ev:dep:rem:${baseScanId}:${key}`,
+          evidenceId,
           repositoryId,
           snapshotId: baseScanId,
           sourcePath: base.sourcePath,
@@ -173,6 +179,7 @@ export class DependencyDiffEngine {
 
         if (resolutionChanged) {
           modifiedCount++;
+          const evidenceId = `ev:dep:mod:${targetScanId}:${key}`;
           changes.push({
             sourcePath: target.sourcePath,
             specifier: target.importedSpecifier,
@@ -185,10 +192,11 @@ export class DependencyDiffEngine {
             baseLines: { startLine: base.startLine, endLine: base.endLine },
             targetLines: { startLine: target.startLine, endLine: target.endLine },
             confidence: 0.95,
+            evidenceId,
           });
 
           evidence.push({
-            evidenceId: `ev:dep:mod:${targetScanId}:${key}`,
+            evidenceId,
             repositoryId,
             snapshotId: targetScanId,
             sourcePath: target.sourcePath,
@@ -200,23 +208,36 @@ export class DependencyDiffEngine {
             supportedClassification: "MODIFIED",
           });
         } else if (target.resolutionStatus === "UNRESOLVED") {
-          // Invariant: Unresolved imports remain preserved as UNRESOLVED
+          // Invariant: Unresolved imports remain preserved as UNRESOLVED in both summary and details
           unresolvedCount++;
-          if (includeUnchanged) {
-            changes.push({
-              sourcePath: target.sourcePath,
-              specifier: target.importedSpecifier,
-              importKind: target.importKind,
-              changeType: "UNRESOLVED",
-              baseResolvedPath: base.resolvedPath,
-              targetResolvedPath: target.resolvedPath,
-              baseResolutionStatus: base.resolutionStatus,
-              targetResolutionStatus: target.resolutionStatus,
-              baseLines: { startLine: base.startLine, endLine: base.endLine },
-              targetLines: { startLine: target.startLine, endLine: target.endLine },
-              confidence: 0.8,
-            });
-          }
+          const evidenceId = `ev:dep:unres:${targetScanId}:${key}`;
+          changes.push({
+            sourcePath: target.sourcePath,
+            specifier: target.importedSpecifier,
+            importKind: target.importKind,
+            changeType: "UNRESOLVED",
+            baseResolvedPath: base.resolvedPath,
+            targetResolvedPath: target.resolvedPath,
+            baseResolutionStatus: base.resolutionStatus,
+            targetResolutionStatus: target.resolutionStatus,
+            baseLines: { startLine: base.startLine, endLine: base.endLine },
+            targetLines: { startLine: target.startLine, endLine: target.endLine },
+            confidence: 0.8,
+            evidenceId,
+          });
+
+          evidence.push({
+            evidenceId,
+            repositoryId,
+            snapshotId: targetScanId,
+            sourcePath: target.sourcePath,
+            sourceHash: null,
+            entityIdentity: `import:${key}`,
+            evidenceType: "unresolved_import",
+            lineRange: [target.startLine, target.endLine],
+            confidence: 0.8,
+            supportedClassification: "UNRESOLVED",
+          });
         } else {
           // UNCHANGED
           unchangedCount++;

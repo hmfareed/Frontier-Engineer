@@ -62,11 +62,11 @@ export class SymbolDiffEngine {
           s.start_column AS startColumn, s.end_column AS endColumn,
           s.fingerprint, s.confidence, s.extraction_status AS extractionStatus
         FROM symbols s
-        JOIN files f ON f.id = s.file_id
-        WHERE s.scan_id = ?
-        ORDER BY s.symbol_identity ASC`,
+        JOIN files f ON f.id = s.file_id AND f.repository_id = s.repository_id AND f.scan_id = s.scan_id
+        WHERE s.repository_id = ? AND s.scan_id = ?
+        ORDER BY s.symbol_identity ASC, s.id ASC`,
       )
-      .all(baseScanId) as unknown as JoinedSymbolRecord[];
+      .all(repositoryId, baseScanId) as unknown as JoinedSymbolRecord[];
 
     // Query target symbols with file path
     const targetRows = db
@@ -80,11 +80,11 @@ export class SymbolDiffEngine {
           s.start_column AS startColumn, s.end_column AS endColumn,
           s.fingerprint, s.confidence, s.extraction_status AS extractionStatus
         FROM symbols s
-        JOIN files f ON f.id = s.file_id
-        WHERE s.scan_id = ?
-        ORDER BY s.symbol_identity ASC`,
+        JOIN files f ON f.id = s.file_id AND f.repository_id = s.repository_id AND f.scan_id = s.scan_id
+        WHERE s.repository_id = ? AND s.scan_id = ?
+        ORDER BY s.symbol_identity ASC, s.id ASC`,
       )
-      .all(targetScanId) as unknown as JoinedSymbolRecord[];
+      .all(repositoryId, targetScanId) as unknown as JoinedSymbolRecord[];
 
     const baseById = new Map<string, JoinedSymbolRecord>();
     for (const r of baseRows) {
@@ -135,6 +135,7 @@ export class SymbolDiffEngine {
         } else {
           // Modified definition
           modifiedCount++;
+          const evidenceId = `ev:sym:mod:${targetScanId}:${id}`;
           changes.push({
             symbolIdentity: id,
             name: baseSym.name,
@@ -148,10 +149,11 @@ export class SymbolDiffEngine {
             targetLines: { startLine: targetSym.startLine, endLine: targetSym.endLine },
             baseConfidence: baseSym.confidence,
             targetConfidence: targetSym.confidence,
+            evidenceId,
           });
 
           evidence.push({
-            evidenceId: `ev:sym:mod:${targetScanId}:${id}`,
+            evidenceId,
             repositoryId,
             snapshotId: targetScanId,
             sourcePath: targetSym.normalizedPath,
@@ -184,6 +186,8 @@ export class SymbolDiffEngine {
     // 3. Relocation Detection (across files)
     const relocatedTargetIds = new Set<string>();
     const relocatedBaseIds = new Set<string>();
+    const ambiguousBaseReasons = new Map<string, string>();
+    const ambiguousTargetReasons = new Map<string, string>();
 
     if (detectRelocations && unmatchedBase.length > 0 && unmatchedTarget.length > 0) {
       // Group unmatched candidates by semantic key: name + "::" + kind + "::" + (scope ?? "") + "::" + fingerprint
@@ -217,6 +221,7 @@ export class SymbolDiffEngine {
           relocatedTargetIds.add(t.symbolIdentity);
           relocatedCount++;
 
+          const evidenceId = `ev:sym:reloc:${targetScanId}:${t.symbolIdentity}`;
           changes.push({
             symbolIdentity: t.symbolIdentity,
             name: t.name,
@@ -230,10 +235,11 @@ export class SymbolDiffEngine {
             targetLines: { startLine: t.startLine, endLine: t.endLine },
             baseConfidence: b.confidence,
             targetConfidence: t.confidence,
+            evidenceId,
           });
 
           evidence.push({
-            evidenceId: `ev:sym:reloc:${targetScanId}:${t.symbolIdentity}`,
+            evidenceId,
             repositoryId,
             snapshotId: targetScanId,
             sourcePath: t.normalizedPath,
@@ -247,6 +253,13 @@ export class SymbolDiffEngine {
           });
         } else {
           // Ambiguous candidates: multiple matching symbols with same fingerprint and signature
+          const reason = `Multiple symbols with name '${tList[0].name}' match relocation key across files (${bList.length} removed, ${tList.length} added); kept separate to avoid false certainty.`;
+          for (const b of bList) {
+            ambiguousBaseReasons.set(b.symbolIdentity, reason);
+          }
+          for (const t of tList) {
+            ambiguousTargetReasons.set(t.symbolIdentity, reason);
+          }
           limitations.push({
             code: "LIM_AMBIGUOUS_SYMBOL_RELOCATION",
             description: `Multiple symbols with name '${tList[0].name}' match relocation key across files; kept as separate addition/removal records to avoid false certainty.`,
@@ -262,6 +275,8 @@ export class SymbolDiffEngine {
       if (relocatedBaseIds.has(b.symbolIdentity)) continue;
       removedCount++;
 
+      const ambiguityReason = ambiguousBaseReasons.get(b.symbolIdentity);
+      const evidenceId = `ev:sym:rem:${baseScanId}:${b.symbolIdentity}`;
       changes.push({
         symbolIdentity: b.symbolIdentity,
         name: b.name,
@@ -271,10 +286,13 @@ export class SymbolDiffEngine {
         baseFingerprint: b.fingerprint,
         baseLines: { startLine: b.startLine, endLine: b.endLine },
         baseConfidence: b.confidence,
+        isAmbiguous: ambiguityReason ? true : undefined,
+        ambiguityReason,
+        evidenceId,
       });
 
       evidence.push({
-        evidenceId: `ev:sym:rem:${baseScanId}:${b.symbolIdentity}`,
+        evidenceId,
         repositoryId,
         snapshotId: baseScanId,
         sourcePath: b.normalizedPath,
@@ -292,6 +310,8 @@ export class SymbolDiffEngine {
       if (relocatedTargetIds.has(t.symbolIdentity)) continue;
       addedCount++;
 
+      const ambiguityReason = ambiguousTargetReasons.get(t.symbolIdentity);
+      const evidenceId = `ev:sym:add:${targetScanId}:${t.symbolIdentity}`;
       changes.push({
         symbolIdentity: t.symbolIdentity,
         name: t.name,
@@ -301,10 +321,13 @@ export class SymbolDiffEngine {
         targetFingerprint: t.fingerprint,
         targetLines: { startLine: t.startLine, endLine: t.endLine },
         targetConfidence: t.confidence,
+        isAmbiguous: ambiguityReason ? true : undefined,
+        ambiguityReason,
+        evidenceId,
       });
 
       evidence.push({
-        evidenceId: `ev:sym:add:${targetScanId}:${t.symbolIdentity}`,
+        evidenceId,
         repositoryId,
         snapshotId: targetScanId,
         sourcePath: t.normalizedPath,

@@ -498,14 +498,14 @@ try {
 }
 ```
 
-### 7.2 Pre-Migration Integrity
+### 7.3 Pre-Migration Integrity
 
 Migration 003 does not alter or recreate existing tables (`repositories`, `scan_runs`, `files`, `symbols`, `source_evidence`, `imports`, `exports`, `graph_nodes`, `graph_edges`, `architecture_components`). It creates:
 
 1. `idx_graph_edges_repo_scan_id` (enabling composite FKs from `memory_evidence` to `graph_edges`).
 2. The 5 new tables (`engineering_memories`, `memory_evidence`, `evolution_events`, `memory_relationships`, `memory_versions`).
 3. Targeted performance indexes.
-4. Three database triggers enforcing immutability and lifecycle transitions.
+4. Five database triggers enforcing version immutability, initial status/version invariants, lifecycle transitions, and replacement protection.
 
 ---
 

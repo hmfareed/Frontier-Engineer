@@ -3,9 +3,11 @@
  * Discovers and compares documented decisions, status transitions, and content hash modifications without interpretation.
  */
 
+import { createHash } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import type { SqliteDatabase } from "../storage/database.ts";
-import { AdrDetector } from "../architecture/adr-detector.ts";
+import { ComponentDetector } from "../architecture/component-detector.ts";
 import type { AdrFinding } from "../architecture/types.ts";
 import type {
   AdrDiffItem,
@@ -18,6 +20,20 @@ import type {
 interface AdrFileRecord {
   id: number;
   normalizedPath: string;
+  contentHash: string | null;
+}
+
+interface ResolvedAdrEntry {
+  adrId: string;
+  number: number;
+  title: string;
+  status?: string;
+  date?: string;
+  filePath: string;
+  governedComponents: string[];
+  evidenceDescription: string;
+  confidence: number;
+  isFallback: boolean;
   contentHash: string | null;
 }
 
@@ -46,127 +62,47 @@ export class AdrDiffEngine {
       rootPath = repoRow?.rootPath ?? process.cwd();
     }
 
-    // 1. Detect ADRs via AdrDetector
-    const baseDetected = AdrDetector.detect(db, repositoryId, baseScanId, rootPath);
-    const targetDetected = AdrDetector.detect(db, repositoryId, targetScanId, rootPath);
+    const baseFiles = this.queryAdrFiles(db, repositoryId, baseScanId);
+    const targetFiles = this.queryAdrFiles(db, repositoryId, targetScanId);
 
-    // 2. Also query indexed ADR files to acquire content hashes and catch ADR files if unreadable from disk
-    const baseFiles = db
-      .prepare(
-        `SELECT id, normalized_path AS normalizedPath, content_hash AS contentHash
-         FROM files
-         WHERE scan_id = ?
-           AND (
-             normalized_path LIKE 'docs/adr/ADR-%.md'
-             OR normalized_path LIKE 'docs/%/ADR-%.md'
-             OR normalized_path LIKE 'adr/ADR-%.md'
-             OR normalized_path LIKE 'ADR-%.md'
-           )
-         ORDER BY normalized_path ASC`,
-      )
-      .all(baseScanId) as unknown as AdrFileRecord[];
+    const baseComponents = this.loadScanComponents(db, repositoryId, baseScanId);
+    const targetComponents = this.loadScanComponents(db, repositoryId, targetScanId);
 
-    const targetFiles = db
-      .prepare(
-        `SELECT id, normalized_path AS normalizedPath, content_hash AS contentHash
-         FROM files
-         WHERE scan_id = ?
-           AND (
-             normalized_path LIKE 'docs/adr/ADR-%.md'
-             OR normalized_path LIKE 'docs/%/ADR-%.md'
-             OR normalized_path LIKE 'adr/ADR-%.md'
-             OR normalized_path LIKE 'ADR-%.md'
-           )
-         ORDER BY normalized_path ASC`,
-      )
-      .all(targetScanId) as unknown as AdrFileRecord[];
+    let fallbackCount = 0;
+    let missingHashCount = 0;
 
-    const baseFileHashMap = new Map<string, string | null>();
-    for (const f of baseFiles) {
-      baseFileHashMap.set(f.normalizedPath, f.contentHash);
-    }
+    const baseMap = this.resolveAdrMap(
+      baseScanId,
+      baseFiles,
+      baseComponents,
+      rootPath,
+      () => {
+        fallbackCount++;
+      },
+      () => {
+        missingHashCount++;
+      },
+    );
 
-    const targetFileHashMap = new Map<string, string | null>();
-    for (const f of targetFiles) {
-      targetFileHashMap.set(f.normalizedPath, f.contentHash);
-    }
-
-    // Build synthesized ADR map for base
-    const baseMap = new Map<string, { adr: AdrFinding; contentHash: string | null }>();
-    for (const d of baseDetected) {
-      baseMap.set(d.adrId, {
-        adr: d,
-        contentHash: baseFileHashMap.get(d.filePath) ?? null,
-      });
-    }
-
-    // Fallback: If any file was in baseFiles but not in baseDetected (e.g. disk file unreadable or in-memory)
-    for (const f of baseFiles) {
-      const basename = path.basename(f.normalizedPath);
-      const match = basename.match(/^ADR-(\d+)/i);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        const adrId = `ADR-${match[1].padStart(3, "0")}`;
-        if (!baseMap.has(adrId)) {
-          baseMap.set(adrId, {
-            adr: {
-              adrId,
-              number: num,
-              title: basename.replace(/\.md$/i, ""),
-              status: "PROPOSED",
-              filePath: f.normalizedPath,
-              governedComponents: [],
-              relatedDocuments: [],
-              evidenceDescription: `ADR file indexed at ${f.normalizedPath}`,
-              confidence: 0.9,
-            },
-            contentHash: f.contentHash,
-          });
-        }
-      }
-    }
-
-    // Build synthesized ADR map for target
-    const targetMap = new Map<string, { adr: AdrFinding; contentHash: string | null }>();
-    for (const d of targetDetected) {
-      targetMap.set(d.adrId, {
-        adr: d,
-        contentHash: targetFileHashMap.get(d.filePath) ?? null,
-      });
-    }
-
-    // Fallback for target
-    for (const f of targetFiles) {
-      const basename = path.basename(f.normalizedPath);
-      const match = basename.match(/^ADR-(\d+)/i);
-      if (match) {
-        const num = parseInt(match[1], 10);
-        const adrId = `ADR-${match[1].padStart(3, "0")}`;
-        if (!targetMap.has(adrId)) {
-          targetMap.set(adrId, {
-            adr: {
-              adrId,
-              number: num,
-              title: basename.replace(/\.md$/i, ""),
-              status: "PROPOSED",
-              filePath: f.normalizedPath,
-              governedComponents: [],
-              relatedDocuments: [],
-              evidenceDescription: `ADR file indexed at ${f.normalizedPath}`,
-              confidence: 0.9,
-            },
-            contentHash: f.contentHash,
-          });
-        }
-      }
-    }
+    const targetMap = this.resolveAdrMap(
+      targetScanId,
+      targetFiles,
+      targetComponents,
+      rootPath,
+      () => {
+        fallbackCount++;
+      },
+      () => {
+        missingHashCount++;
+      },
+    );
 
     const allIds = new Set<string>([...baseMap.keys(), ...targetMap.keys()]);
     const sortedIds = Array.from(allIds).sort((a, b) => {
       const itemA = baseMap.get(a) ?? targetMap.get(a);
       const itemB = baseMap.get(b) ?? targetMap.get(b);
-      const numA = itemA?.adr.number ?? 0;
-      const numB = itemB?.adr.number ?? 0;
+      const numA = itemA?.number ?? 0;
+      const numB = itemB?.number ?? 0;
       return numA - numB || a.localeCompare(b);
     });
 
@@ -181,98 +117,117 @@ export class AdrDiffEngine {
       const targetItem = targetMap.get(id);
 
       if (!baseItem && targetItem) {
-        // ADDED
         addedCount++;
+        const evidenceId = `ev:adr:add:${targetScanId}:${id}`;
         changes.push({
           adrId: id,
-          number: targetItem.adr.number,
-          title: targetItem.adr.title,
+          number: targetItem.number,
+          title: targetItem.title,
           changeType: "ADDED",
-          targetPath: targetItem.adr.filePath,
-          targetStatus: targetItem.adr.status,
+          targetPath: targetItem.filePath,
+          targetStatus: targetItem.status,
           targetContentHash: targetItem.contentHash,
-          date: targetItem.adr.date,
-          governedComponents: targetItem.adr.governedComponents,
-          evidenceDescription: targetItem.adr.evidenceDescription,
+          date: targetItem.date,
+          governedComponents: targetItem.governedComponents,
+          evidenceDescription: targetItem.evidenceDescription,
+          evidenceId,
+          confidence: targetItem.confidence,
+          isFallback: targetItem.isFallback || undefined,
         });
 
         evidence.push({
-          evidenceId: `ev:adr:add:${targetScanId}:${id}`,
+          evidenceId,
           repositoryId,
           snapshotId: targetScanId,
-          sourcePath: targetItem.adr.filePath,
+          sourcePath: targetItem.filePath,
           sourceHash: targetItem.contentHash,
           entityIdentity: `adr:${id}`,
-          evidenceType: "adr_addition",
-          confidence: targetItem.adr.confidence,
+          evidenceType: targetItem.isFallback ? "adr_addition_fallback" : "adr_addition",
+          confidence: targetItem.confidence,
+          isInferred: targetItem.isFallback ? true : undefined,
           supportedClassification: "ADDED",
         });
       } else if (baseItem && !targetItem) {
-        // REMOVED
         removedCount++;
+        const evidenceId = `ev:adr:rem:${baseScanId}:${id}`;
         changes.push({
           adrId: id,
-          number: baseItem.adr.number,
-          title: baseItem.adr.title,
+          number: baseItem.number,
+          title: baseItem.title,
           changeType: "REMOVED",
-          basePath: baseItem.adr.filePath,
-          baseStatus: baseItem.adr.status,
+          basePath: baseItem.filePath,
+          baseStatus: baseItem.status,
           baseContentHash: baseItem.contentHash,
-          date: baseItem.adr.date,
-          governedComponents: baseItem.adr.governedComponents,
-          evidenceDescription: baseItem.adr.evidenceDescription,
+          date: baseItem.date,
+          governedComponents: baseItem.governedComponents,
+          evidenceDescription: baseItem.evidenceDescription,
+          evidenceId,
+          confidence: baseItem.confidence,
+          isFallback: baseItem.isFallback || undefined,
         });
 
         evidence.push({
-          evidenceId: `ev:adr:rem:${baseScanId}:${id}`,
+          evidenceId,
           repositoryId,
           snapshotId: baseScanId,
-          sourcePath: baseItem.adr.filePath,
+          sourcePath: baseItem.filePath,
           sourceHash: baseItem.contentHash,
           entityIdentity: `adr:${id}`,
-          evidenceType: "adr_removal",
-          confidence: baseItem.adr.confidence,
+          evidenceType: baseItem.isFallback ? "adr_removal_fallback" : "adr_removal",
+          confidence: baseItem.confidence,
+          isInferred: baseItem.isFallback ? true : undefined,
           supportedClassification: "REMOVED",
         });
       } else if (baseItem && targetItem) {
-        // BOTH PRESENT: compare content hash, status, title, path
-        const hashChanged =
-          baseItem.contentHash &&
-          targetItem.contentHash &&
-          baseItem.contentHash !== targetItem.contentHash;
-        const statusChanged = baseItem.adr.status !== targetItem.adr.status;
-        const titleChanged = baseItem.adr.title !== targetItem.adr.title;
-        const pathChanged = baseItem.adr.filePath !== targetItem.adr.filePath;
+        if (!baseItem.contentHash || !targetItem.contentHash) {
+          // Missing historical content hash prevents verified MODIFIED or UNCHANGED classification.
+          continue;
+        }
+
+        const hashChanged = baseItem.contentHash !== targetItem.contentHash;
+        const statusChanged =
+          baseItem.status !== undefined &&
+          targetItem.status !== undefined &&
+          baseItem.status !== targetItem.status;
+        const titleChanged = baseItem.title !== targetItem.title;
+        const pathChanged = baseItem.filePath !== targetItem.filePath;
+        const isFallback = baseItem.isFallback || targetItem.isFallback;
+        const confidence = Math.min(baseItem.confidence, targetItem.confidence);
 
         const isModified = hashChanged || statusChanged || titleChanged || pathChanged;
 
         if (isModified) {
           modifiedCount++;
+          const evidenceId = `ev:adr:mod:${targetScanId}:${id}`;
           changes.push({
             adrId: id,
-            number: targetItem.adr.number,
-            title: targetItem.adr.title,
+            number: targetItem.number,
+            title: targetItem.title,
             changeType: "MODIFIED",
-            basePath: baseItem.adr.filePath,
-            targetPath: targetItem.adr.filePath,
-            baseStatus: baseItem.adr.status,
-            targetStatus: targetItem.adr.status,
+            basePath: baseItem.filePath,
+            targetPath: targetItem.filePath,
+            baseStatus: baseItem.status,
+            targetStatus: targetItem.status,
             baseContentHash: baseItem.contentHash,
             targetContentHash: targetItem.contentHash,
-            date: targetItem.adr.date,
-            governedComponents: targetItem.adr.governedComponents,
-            evidenceDescription: targetItem.adr.evidenceDescription,
+            date: targetItem.date,
+            governedComponents: targetItem.governedComponents,
+            evidenceDescription: targetItem.evidenceDescription,
+            evidenceId,
+            confidence,
+            isFallback: isFallback || undefined,
           });
 
           evidence.push({
-            evidenceId: `ev:adr:mod:${targetScanId}:${id}`,
+            evidenceId,
             repositoryId,
             snapshotId: targetScanId,
-            sourcePath: targetItem.adr.filePath,
+            sourcePath: targetItem.filePath,
             sourceHash: targetItem.contentHash,
             entityIdentity: `adr:${id}`,
-            evidenceType: "adr_modification",
-            confidence: targetItem.adr.confidence,
+            evidenceType: isFallback ? "adr_modification_fallback" : "adr_modification",
+            confidence,
+            isInferred: isFallback ? true : undefined,
             supportedClassification: "MODIFIED",
           });
         } else {
@@ -280,22 +235,44 @@ export class AdrDiffEngine {
           if (includeUnchanged) {
             changes.push({
               adrId: id,
-              number: targetItem.adr.number,
-              title: targetItem.adr.title,
+              number: targetItem.number,
+              title: targetItem.title,
               changeType: "UNCHANGED",
-              basePath: baseItem.adr.filePath,
-              targetPath: targetItem.adr.filePath,
-              baseStatus: baseItem.adr.status,
-              targetStatus: targetItem.adr.status,
+              basePath: baseItem.filePath,
+              targetPath: targetItem.filePath,
+              baseStatus: baseItem.status,
+              targetStatus: targetItem.status,
               baseContentHash: baseItem.contentHash,
               targetContentHash: targetItem.contentHash,
-              date: targetItem.adr.date,
-              governedComponents: targetItem.adr.governedComponents,
-              evidenceDescription: targetItem.adr.evidenceDescription,
+              date: targetItem.date,
+              governedComponents: targetItem.governedComponents,
+              evidenceDescription: targetItem.evidenceDescription,
+              confidence,
+              isFallback: isFallback || undefined,
             });
           }
         }
       }
+    }
+
+    if (missingHashCount > 0) {
+      limitations.push({
+        code: "LIM_ADR_MISSING_HISTORICAL_HASH",
+        description:
+          "One or more indexed ADR files lacked a stored historical content hash; verified MODIFIED/UNCHANGED comparison and disk hash verification were withheld.",
+        domain: "adr",
+        affectedEntityCount: missingHashCount,
+      });
+    }
+
+    if (fallbackCount > 0) {
+      limitations.push({
+        code: "LIM_ADR_HISTORICAL_CONTENT_FALLBACK",
+        description:
+          "Historical ADR markdown content on disk was missing or failed SHA-256 verification against the indexed snapshot hash; compared using indexed path and content hash without fabricating status metadata.",
+        domain: "adr",
+        affectedEntityCount: fallbackCount,
+      });
     }
 
     // Sort deterministically: number ASC, then adrId ASC
@@ -311,6 +288,263 @@ export class AdrDiffEngine {
       },
       evidence,
       limitations,
+    };
+  }
+
+  private static queryAdrFiles(
+    db: SqliteDatabase,
+    repositoryId: number,
+    scanId: number,
+  ): AdrFileRecord[] {
+    return db
+      .prepare(
+        `SELECT id, normalized_path AS normalizedPath, content_hash AS contentHash
+         FROM files
+         WHERE repository_id = ?
+           AND scan_id = ?
+           AND (
+             normalized_path LIKE 'docs/adr/ADR-%.md'
+             OR normalized_path LIKE 'docs/%/ADR-%.md'
+             OR normalized_path LIKE 'adr/ADR-%.md'
+             OR normalized_path LIKE 'ADR-%.md'
+           )
+         ORDER BY normalized_path ASC, id ASC`,
+      )
+      .all(repositoryId, scanId) as unknown as AdrFileRecord[];
+  }
+
+  private static loadScanComponents(
+    db: SqliteDatabase,
+    repositoryId: number,
+    scanId: number,
+  ): { identity: string; name: string; rootPath: string; category: string }[] {
+    const stored = db
+      .prepare(
+        `SELECT component_identity AS identity, name, root_path AS rootPath, category
+         FROM architecture_components
+         WHERE repository_id = ? AND scan_id = ?
+         ORDER BY component_identity ASC`,
+      )
+      .all(repositoryId, scanId) as {
+      identity: string;
+      name: string;
+      rootPath: string;
+      category: string;
+    }[];
+
+    if (stored.length > 0) {
+      return stored;
+    }
+
+    return ComponentDetector.detect(db, repositoryId, scanId).map((comp) => ({
+      identity: comp.componentIdentity,
+      name: comp.name,
+      rootPath: comp.rootPath,
+      category: comp.category,
+    }));
+  }
+
+  private static resolveAdrMap(
+    scanId: number,
+    files: AdrFileRecord[],
+    components: { identity: string; name: string; rootPath: string; category: string }[],
+    rootPath: string,
+    onFallback: () => void,
+    onMissingHash: () => void,
+  ): Map<string, ResolvedAdrEntry> {
+    const map = new Map<string, ResolvedAdrEntry>();
+    const realWsRoot = fs.existsSync(rootPath) ? fs.realpathSync(rootPath) : path.resolve(rootPath);
+
+    for (const file of files) {
+      const contentHash = file.contentHash ?? null;
+      let parsed: AdrFinding | null = null;
+      let mismatchReason = "historical content unavailable on disk";
+
+      if (!contentHash) {
+        onMissingHash();
+        mismatchReason = "missing indexed content hash";
+      } else {
+        const verifiedContent = this.readHashVerifiedDiskFile(
+          realWsRoot,
+          rootPath,
+          file.normalizedPath,
+          contentHash,
+        );
+        if (verifiedContent.content !== null) {
+          parsed = this.parseAdrContent(file.normalizedPath, verifiedContent.content, components);
+        } else if (verifiedContent.reason) {
+          mismatchReason = verifiedContent.reason;
+        }
+      }
+
+      if (parsed) {
+        map.set(parsed.adrId, {
+          adrId: parsed.adrId,
+          number: parsed.number,
+          title: parsed.title,
+          status: parsed.status,
+          date: parsed.date,
+          filePath: parsed.filePath,
+          governedComponents: parsed.governedComponents,
+          evidenceDescription: parsed.evidenceDescription,
+          confidence: parsed.confidence,
+          isFallback: false,
+          contentHash,
+        });
+        continue;
+      }
+
+      const basename = path.posix.basename(file.normalizedPath);
+      const match = basename.match(/^ADR-(\d+)/i);
+      if (!match) {
+        continue;
+      }
+
+      const num = parseInt(match[1], 10);
+      const adrId = `ADR-${match[1].padStart(3, "0")}`;
+      if (map.has(adrId)) {
+        continue;
+      }
+
+      onFallback();
+      map.set(adrId, {
+        adrId,
+        number: num,
+        title: basename.replace(/\.md$/i, ""),
+        status: undefined,
+        filePath: file.normalizedPath,
+        governedComponents: [],
+        evidenceDescription: `Historical ADR metadata fallback from indexed path ${file.normalizedPath} (scan ${scanId}: ${mismatchReason})`,
+        confidence: 0.7,
+        isFallback: true,
+        contentHash,
+      });
+    }
+
+    return map;
+  }
+
+  private static readHashVerifiedDiskFile(
+    realWsRoot: string,
+    rootPath: string,
+    normalizedPath: string,
+    expectedHash: string,
+  ): { content: string | null; reason?: string } {
+    const fullPath = path.resolve(rootPath, normalizedPath);
+    try {
+      if (!fs.existsSync(fullPath)) {
+        return { content: null, reason: "historical content unavailable on disk" };
+      }
+      const realFilePath = fs.realpathSync(fullPath);
+      const rel = path.relative(realWsRoot, realFilePath);
+      if (rel.startsWith("..") || path.isAbsolute(rel)) {
+        return { content: null, reason: "file path outside workspace root" };
+      }
+
+      const rawBuffer = fs.readFileSync(realFilePath);
+      const actualHash = createHash("sha256").update(rawBuffer).digest("hex");
+      if (actualHash !== expectedHash) {
+        return { content: null, reason: "disk content hash differs from indexed snapshot" };
+      }
+
+      return { content: rawBuffer.toString("utf8") };
+    } catch {
+      return { content: null, reason: "unable to read file from disk" };
+    }
+  }
+
+  private static parseAdrContent(
+    filePath: string,
+    content: string,
+    components: { identity: string; name: string; rootPath: string; category: string }[],
+  ): AdrFinding | null {
+    if (content.trim().length === 0) return null;
+
+    let adrId = "";
+    let number = 0;
+    let title = "";
+
+    const titleMatch = content.match(/^#\s+(ADR-(\d+)[^:\n]*):\s*(.+)$/m);
+    if (titleMatch) {
+      adrId = titleMatch[1].trim();
+      number = parseInt(titleMatch[2], 10);
+      title = titleMatch[3].trim();
+    } else {
+      const simpleMatch = content.match(/^#\s+(ADR-(\d+)[^\n]*)/m);
+      if (simpleMatch) {
+        adrId = simpleMatch[1].trim();
+        number = parseInt(simpleMatch[2], 10);
+        title = adrId;
+      } else {
+        const fileBase = path.posix.basename(filePath, ".md");
+        const numMatch = fileBase.match(/ADR-(\d+)/i);
+        if (numMatch) {
+          number = parseInt(numMatch[1], 10);
+          adrId = `ADR-${String(number).padStart(3, "0")}`;
+          title = fileBase;
+        } else {
+          return null;
+        }
+      }
+    }
+
+    let status = "Proposed";
+    let date: string | undefined;
+    let phase: string | undefined;
+    const relatedDocuments: string[] = [];
+
+    const statusMatch = content.match(/[-*]\s+\*\*Status:\*\*\s*([^\n\r]+)/i);
+    if (statusMatch) {
+      status = statusMatch[1].trim();
+    }
+
+    const dateMatch = content.match(/[-*]\s+\*\*Date:\*\*\s*([^\n\r]+)/i);
+    if (dateMatch) {
+      date = dateMatch[1].trim();
+    }
+
+    const phaseMatch = content.match(/[-*]\s+\*\*Phase:\*\*\s*([^\n\r]+)/i);
+    if (phaseMatch) {
+      phase = phaseMatch[1].trim();
+    }
+
+    const relatedSectionMatch = content.match(/[-*]\s+\*\*Related:\*\*\s*([^\n\r]+)/i);
+    if (relatedSectionMatch) {
+      const linkRegex = /\[([^\]]+)\]\(([^)]+)\)/g;
+      let m: RegExpExecArray | null;
+      while ((m = linkRegex.exec(relatedSectionMatch[1])) !== null) {
+        relatedDocuments.push(m[2]);
+      }
+    }
+
+    const governedComponents: string[] = [];
+    const lowerContent = content.toLowerCase();
+
+    for (const comp of components) {
+      const compBase = path.posix.basename(comp.rootPath).toLowerCase();
+      if (
+        lowerContent.includes(comp.rootPath.toLowerCase()) ||
+        lowerContent.includes(`comp:${comp.name.toLowerCase()}`) ||
+        (compBase.length >= 4 && lowerContent.includes(compBase))
+      ) {
+        if (!governedComponents.includes(comp.identity)) {
+          governedComponents.push(comp.identity);
+        }
+      }
+    }
+
+    return {
+      adrId,
+      number,
+      title,
+      status,
+      date,
+      phase,
+      filePath,
+      governedComponents,
+      relatedDocuments,
+      evidenceDescription: `Architecture Decision Record parsed from ${filePath} (Status: ${status}, Phase: ${phase ?? "N/A"})`,
+      confidence: 1.0,
     };
   }
 }

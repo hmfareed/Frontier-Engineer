@@ -27,7 +27,9 @@ export class ComparisonSerializer {
     const result: Record<string, any> = {};
     for (const key of sortedKeys) {
       const val = obj[key];
-      result[key] = val !== undefined ? this.normalize(val) : null;
+      if (val !== undefined) {
+        result[key] = this.normalize(val);
+      }
     }
     return result;
   }
