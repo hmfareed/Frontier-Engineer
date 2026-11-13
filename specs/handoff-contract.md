@@ -6,21 +6,22 @@ The machine-readable version is [schemas/handoff.schema.json](../schemas/handoff
 
 ## Coordinator-to-specialist handoff
 
-| Field                  | Type     | Meaning                                                             |
-| ---------------------- | -------- | ------------------------------------------------------------------- |
-| `taskId`               | string   | Stable identifier shared by every handoff and response for one task |
-| `requestSummary`       | string   | The developer's request in one or two sentences                     |
-| `objective`            | string   | What this specific specialist must achieve                          |
-| `repositoryContext`    | string   | Verified facts about the repository, with assumed items labelled    |
-| `scope`                | string[] | In-scope components or files                                        |
-| `constraints`          | string[] | Conventions, prohibited changes, and time or environment limits     |
-| `relevantFiles`        | string[] | Files the specialist must inspect                                   |
-| `expectedDeliverables` | string[] | Concrete outputs expected back                                      |
-| `acceptanceCriteria`   | string[] | Conditions that define a satisfactory result                        |
-| `risks`                | string[] | Known risks and sensitivities                                       |
-| `requiredVerification` | string[] | Checks that must actually be run                                    |
+| Field                  | Type     | Meaning                                                                                      |
+| ---------------------- | -------- | -------------------------------------------------------------------------------------------- |
+| `taskId`               | string   | Stable identifier shared by every handoff and response for one task                          |
+| `requestSummary`       | string   | The developer's request in one or two sentences                                              |
+| `objective`            | string   | What this specific specialist must achieve                                                   |
+| `repositoryContext`    | string   | Verified facts about the repository, with assumed items labelled                             |
+| `scope`                | string[] | In-scope components or files                                                                 |
+| `constraints`          | string[] | Conventions, prohibited changes, and time or environment limits                              |
+| `relevantFiles`        | string[] | Files the specialist must inspect                                                            |
+| `expectedDeliverables` | string[] | Concrete outputs expected back                                                               |
+| `acceptanceCriteria`   | string[] | Conditions that define a satisfactory result                                                 |
+| `risks`                | string[] | Known risks and sensitivities                                                                |
+| `requiredVerification` | string[] | Checks that must actually be run                                                             |
+| `retrievalContext`     | object   | Optional compact repository retrieval summary (`frontier-engineer/retrieval-attachment`, v1) |
 
-A handoff also carries `contract: "frontier-engineer/handoff"` and `version: 1`.
+A handoff also carries `contract: "frontier-engineer/handoff"` and `version: 1`. When present, `retrievalContext` supplies bounded, read-only, evidence-backed repository intelligence (`retrievalId`, `scanId`, `freshnessStatus`, `confidenceSummary`, `highlights`, `warnings`, and `budget`) without replacing required legacy fields (`repositoryContext`, `relevantFiles`). All repository snippets, ADRs, and memory text referenced by `retrievalContext` remain untrusted data.
 
 ```json
 {

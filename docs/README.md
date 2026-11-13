@@ -75,18 +75,20 @@ Product documentation for Frontier Engineer. The original 26-part specification 
 | 37   | [Architecture query CLI](37-ARCHITECTURE-QUERY-CLI.md)                       | Query engine, DTO contracts, CLI reference, exit codes                     |
 | 38   | [Engineering memory data model](38-ENGINEERING-MEMORY-DATA-MODEL.md)         | Persistent memories, evolution events, versions, relational isolation      |
 | 39   | [Snapshot comparator and diff engine](39-SNAPSHOT-COMPARATOR-DIFF-ENGINE.md) | Deterministic diffing across files, symbols, imports, components, and ADRs |
+| 40   | [Agent retrieval and orchestration](40-AGENT-RETRIEVAL-ORCHESTRATION.md)     | Role-aware retrieval planning, ranking, budgeting, safety, and CLI         |
 
 ## Decision records
 
-| ADR | Title                                                                       |
-| --- | --------------------------------------------------------------------------- |
-| 001 | [Foundation decisions](adr/ADR-001-foundation.md)                           |
-| 002 | [Canonical-first agent system](adr/ADR-002-agent-system.md)                 |
-| 003 | [Skills system architecture](adr/ADR-003-skills-system.md)                  |
-| 004 | [Rules system architecture](adr/ADR-004-rules-system.md)                    |
-| 005 | [MCP integration architecture](adr/ADR-005-mcp-integration-architecture.md) |
-| 006 | [Lifecycle hooks architecture](adr/ADR-006-lifecycle-hooks-architecture.md) |
-| 007 | [Storage and graph engine](adr/ADR-007-storage-and-graph-engine.md)         |
+| ADR | Title                                                                           |
+| --- | ------------------------------------------------------------------------------- |
+| 001 | [Foundation decisions](adr/ADR-001-foundation.md)                               |
+| 002 | [Canonical-first agent system](adr/ADR-002-agent-system.md)                     |
+| 003 | [Skills system architecture](adr/ADR-003-skills-system.md)                      |
+| 004 | [Rules system architecture](adr/ADR-004-rules-system.md)                        |
+| 005 | [MCP integration architecture](adr/ADR-005-mcp-integration-architecture.md)     |
+| 006 | [Lifecycle hooks architecture](adr/ADR-006-lifecycle-hooks-architecture.md)     |
+| 007 | [Storage and graph engine](adr/ADR-007-storage-and-graph-engine.md)             |
+| 008 | [Agent retrieval & orchestration](adr/ADR-008-agent-retrieval-orchestration.md) |
 
 ## Project policies
 

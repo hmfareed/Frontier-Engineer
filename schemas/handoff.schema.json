@@ -35,7 +35,85 @@
         "expectedDeliverables": { "type": "array", "items": { "type": "string" } },
         "acceptanceCriteria": { "type": "array", "items": { "type": "string" } },
         "risks": { "type": "array", "items": { "type": "string" } },
-        "requiredVerification": { "type": "array", "items": { "type": "string" } }
+        "requiredVerification": { "type": "array", "items": { "type": "string" } },
+        "retrievalContext": { "$ref": "#/definitions/retrievalContextAttachment" }
+      }
+    },
+    "retrievalContextAttachment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "contract",
+        "version",
+        "retrievalId",
+        "repositoryIdentity",
+        "scanId",
+        "snapshotStatus",
+        "freshnessStatus",
+        "isStale",
+        "taskType",
+        "confidenceSummary",
+        "highlights",
+        "warnings",
+        "budget"
+      ],
+      "properties": {
+        "contract": { "const": "frontier-engineer/retrieval-attachment" },
+        "version": { "const": 1 },
+        "retrievalId": { "type": "string", "minLength": 8 },
+        "repositoryIdentity": { "type": "string", "minLength": 1 },
+        "scanId": { "type": "integer", "minimum": 1 },
+        "snapshotStatus": { "type": "string", "minLength": 1 },
+        "freshnessStatus": { "type": "string", "minLength": 1 },
+        "isStale": { "type": "boolean" },
+        "taskType": { "type": "string", "minLength": 1 },
+        "confidenceSummary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "confirmedCount",
+            "inferredCount",
+            "candidateCount",
+            "unresolvedCount",
+            "isMixedConfidence"
+          ],
+          "properties": {
+            "confirmedCount": { "type": "integer", "minimum": 0 },
+            "inferredCount": { "type": "integer", "minimum": 0 },
+            "candidateCount": { "type": "integer", "minimum": 0 },
+            "unresolvedCount": { "type": "integer", "minimum": 0 },
+            "isMixedConfidence": { "type": "boolean" }
+          }
+        },
+        "highlights": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["domain", "idOrPath", "summary", "confidenceTier"],
+            "properties": {
+              "domain": { "type": "string", "minLength": 1 },
+              "idOrPath": { "type": "string", "minLength": 1 },
+              "summary": { "type": "string", "minLength": 1 },
+              "confidenceTier": {
+                "type": "string",
+                "enum": ["CONFIRMED", "INFERRED", "CANDIDATE", "UNRESOLVED"]
+              },
+              "evidenceFile": { "type": "string" }
+            }
+          }
+        },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "budget": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["includedCount", "truncatedCount", "estimatedTokens"],
+          "properties": {
+            "includedCount": { "type": "integer", "minimum": 0 },
+            "truncatedCount": { "type": "integer", "minimum": 0 },
+            "estimatedTokens": { "type": "integer", "minimum": 0 }
+          }
+        }
       }
     },
     "response": {

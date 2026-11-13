@@ -1,0 +1,305 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "frontier-engineer/retrieval-context.schema.json",
+  "title": "Frontier Engineer Retrieval Response Contract",
+  "description": "Deterministic, evidence-backed repository context returned to Frontier Engineer agents.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "contract",
+    "version",
+    "retrievalId",
+    "repository",
+    "snapshot",
+    "agentId",
+    "policyVersion",
+    "classification",
+    "plan",
+    "context",
+    "confidenceSummary",
+    "warnings",
+    "budget",
+    "limitations"
+  ],
+  "properties": {
+    "contract": { "type": "string", "const": "frontier-engineer/retrieval" },
+    "version": { "type": "integer", "const": 1 },
+    "retrievalId": { "type": "string", "minLength": 8 },
+    "repository": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repositoryId",
+        "repositoryIdentity",
+        "rootPath",
+        "displayName",
+        "schemaVersion"
+      ],
+      "properties": {
+        "repositoryId": { "type": "integer", "minimum": 1 },
+        "repositoryIdentity": { "type": "string", "minLength": 1 },
+        "rootPath": { "type": "string", "minLength": 1 },
+        "displayName": { "type": "string", "minLength": 1 },
+        "schemaVersion": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "snapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scanId", "status", "freshness"],
+      "properties": {
+        "scanId": { "type": "integer", "minimum": 1 },
+        "status": { "type": "string" },
+        "baseScanId": { "type": "integer", "minimum": 1 },
+        "targetScanId": { "type": "integer", "minimum": 1 },
+        "freshness": {
+          "type": "object",
+          "additionalProperties": true,
+          "required": ["status", "isStale", "isPartial"],
+          "properties": {
+            "status": { "type": "string" },
+            "isStale": { "type": "boolean" },
+            "isPartial": { "type": "boolean" },
+            "staleReason": { "type": "string" }
+          }
+        }
+      }
+    },
+    "agentId": {
+      "type": "string",
+      "enum": [
+        "frontier-engineer",
+        "architect",
+        "implementation-engineer",
+        "security-auditor",
+        "qa-engineer",
+        "design-engineer"
+      ]
+    },
+    "policyVersion": { "type": "integer", "minimum": 1 },
+    "classification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["primaryTaskType", "intents", "extractedTargets", "classificationSignals"],
+      "properties": {
+        "primaryTaskType": {
+          "type": "string",
+          "enum": [
+            "architecture_design",
+            "feature_implementation",
+            "bug_fix",
+            "refactoring",
+            "security_audit",
+            "test_generation",
+            "ui_ux_work",
+            "documentation",
+            "evolution_review",
+            "general_inspection"
+          ]
+        },
+        "intents": { "type": "array", "items": { "type": "string" } },
+        "extractedTargets": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "files",
+            "symbols",
+            "components",
+            "adrs",
+            "keywords",
+            "ignoredUnsafeTargets"
+          ],
+          "properties": {
+            "files": { "type": "array", "items": { "type": "string" } },
+            "symbols": { "type": "array", "items": { "type": "string" } },
+            "components": { "type": "array", "items": { "type": "string" } },
+            "adrs": { "type": "array", "items": { "type": "string" } },
+            "keywords": { "type": "array", "items": { "type": "string" } },
+            "ignoredUnsafeTargets": { "type": "array", "items": { "type": "string" } },
+            "baseScanId": { "type": "integer", "minimum": 1 },
+            "targetScanId": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "classificationSignals": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "plan": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["steps", "effectiveLimits", "includeSnippets", "includeHistoricalMemories"],
+      "properties": {
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["domain", "priority", "reason", "maxItems", "depth"],
+            "properties": {
+              "domain": { "type": "string" },
+              "priority": { "type": "integer", "minimum": 1 },
+              "reason": { "type": "string" },
+              "maxItems": { "type": "integer", "minimum": 0 },
+              "depth": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "effectiveLimits": { "$ref": "#/definitions/limits" },
+        "includeSnippets": { "type": "boolean" },
+        "includeHistoricalMemories": { "type": "boolean" }
+      }
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "components",
+        "files",
+        "symbols",
+        "dependencies",
+        "tests",
+        "decisions",
+        "memories",
+        "snippets"
+      ],
+      "properties": {
+        "overview": { "type": ["object", "null"] },
+        "components": { "type": "array", "items": { "$ref": "#/definitions/rankedItem" } },
+        "files": { "type": "array", "items": { "$ref": "#/definitions/rankedItem" } },
+        "symbols": { "type": "array", "items": { "$ref": "#/definitions/rankedItem" } },
+        "dependencies": { "type": "array", "items": { "$ref": "#/definitions/rankedItem" } },
+        "tests": { "type": "array", "items": { "$ref": "#/definitions/rankedItem" } },
+        "decisions": { "type": "array", "items": { "$ref": "#/definitions/rankedItem" } },
+        "memories": { "type": "array", "items": { "$ref": "#/definitions/rankedItem" } },
+        "evolution": { "type": ["object", "null"] },
+        "snippets": { "type": "array", "items": { "$ref": "#/definitions/rankedItem" } }
+      }
+    },
+    "confidenceSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "confirmedCount",
+        "inferredCount",
+        "candidateCount",
+        "unresolvedCount",
+        "isMixedConfidence"
+      ],
+      "properties": {
+        "confirmedCount": { "type": "integer", "minimum": 0 },
+        "inferredCount": { "type": "integer", "minimum": 0 },
+        "candidateCount": { "type": "integer", "minimum": 0 },
+        "unresolvedCount": { "type": "integer", "minimum": 0 },
+        "isMixedConfidence": { "type": "boolean" }
+      }
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["code", "severity", "message"],
+        "properties": {
+          "code": { "type": "string" },
+          "severity": { "type": "string", "enum": ["info", "warning", "error"] },
+          "message": { "type": "string" },
+          "entity": { "type": "string" }
+        }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "limitsConfigured",
+        "usedChars",
+        "estimatedTokens",
+        "totalCandidatesFound",
+        "includedCount",
+        "truncatedCount",
+        "truncatedDomains",
+        "omittedItemIds"
+      ],
+      "properties": {
+        "limitsConfigured": { "$ref": "#/definitions/limits" },
+        "usedChars": { "type": "integer", "minimum": 0 },
+        "estimatedTokens": { "type": "integer", "minimum": 0 },
+        "totalCandidatesFound": { "type": "integer", "minimum": 0 },
+        "includedCount": { "type": "integer", "minimum": 0 },
+        "truncatedCount": { "type": "integer", "minimum": 0 },
+        "truncatedDomains": { "type": "array", "items": { "type": "string" } },
+        "omittedItemIds": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "limitations": { "type": "array", "items": { "type": "string" } }
+  },
+  "definitions": {
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["maxItems", "maxTotalChars", "maxTokens", "maxDepth", "maxSnippetLines"],
+      "properties": {
+        "maxItems": { "type": "integer", "minimum": 1 },
+        "maxTotalChars": { "type": "integer", "minimum": 1 },
+        "maxTokens": { "type": "integer", "minimum": 1 },
+        "maxDepth": { "type": "integer", "minimum": 1 },
+        "maxSnippetLines": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "evidenceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceType", "filePath", "confidenceTier", "verificationStatus", "description"],
+      "properties": {
+        "sourceType": { "type": "string" },
+        "filePath": { "type": "string" },
+        "lineRange": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "symbolIdentity": { "type": "string" },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "confidenceTier": {
+          "type": "string",
+          "enum": ["CONFIRMED", "INFERRED", "CANDIDATE", "UNRESOLVED"]
+        },
+        "verificationStatus": {
+          "type": "string",
+          "enum": ["VERIFIED", "MISSING", "CONTRADICTED", "UNVERIFIED", "STATIC_INDEX"]
+        },
+        "description": { "type": "string" }
+      }
+    },
+    "rankedItem": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "id",
+        "domain",
+        "title",
+        "rankScore",
+        "rankingReasons",
+        "confidenceTier",
+        "untrustedRepositoryContent",
+        "evidence"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "domain": { "type": "string", "minLength": 1 },
+        "title": { "type": "string", "minLength": 1 },
+        "rankScore": { "type": "number", "minimum": 0, "maximum": 100 },
+        "rankingReasons": { "type": "array", "items": { "type": "string" } },
+        "confidenceTier": {
+          "type": "string",
+          "enum": ["CONFIRMED", "INFERRED", "CANDIDATE", "UNRESOLVED"]
+        },
+        "untrustedRepositoryContent": { "type": "boolean" },
+        "evidence": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/evidenceRef" }
+        }
+      }
+    }
+  }
+}

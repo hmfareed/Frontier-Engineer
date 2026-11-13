@@ -29,6 +29,12 @@ import {
   EvolutionSerializer,
   type SnapshotComparison,
 } from "../evolution/index.ts";
+import {
+  AGENT_RETRIEVAL_POLICIES,
+  RetrievalEngine,
+  RetrievalFormatter,
+  type AgentId,
+} from "../retrieval/index.ts";
 
 export interface CliExecutionResult {
   exitCode: number;
@@ -46,9 +52,26 @@ export async function runCli(argv: string[]): Promise<number> {
   let persistEvents = false;
   let allowPartial = false;
   let applyLifecycle = false;
+  let agentId: AgentId = "frontier-engineer";
+  let agentProvided = false;
+  let taskSummary: string | undefined;
+  let maxChars: number | undefined;
+  let includeSnippets: boolean | undefined;
+  let includeHistorical = false;
+  let baseScanIdOpt: number | undefined;
+  let targetScanIdOpt: number | undefined;
+  const targetFiles: string[] = [];
+  const targetSymbols: string[] = [];
+  const targetComponents: string[] = [];
 
   // Manual argument parsing without external dependencies
   const positional: string[] = [];
+
+  const splitList = (raw: string): string[] =>
+    raw
+      .split(",")
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
 
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
@@ -84,6 +107,18 @@ export async function runCli(argv: string[]): Promise<number> {
         outputError("Invalid limit option: must be a positive integer.", 2, format);
         return 2;
       }
+    } else if (arg === "--max-chars" && i + 1 < argv.length) {
+      maxChars = parseInt(argv[++i], 10);
+      if (isNaN(maxChars) || maxChars < 1) {
+        outputError("Invalid max-chars option: must be a positive integer.", 2, format);
+        return 2;
+      }
+    } else if (arg.startsWith("--max-chars=")) {
+      maxChars = parseInt(arg.split("=")[1], 10);
+      if (isNaN(maxChars) || maxChars < 1) {
+        outputError("Invalid max-chars option: must be a positive integer.", 2, format);
+        return 2;
+      }
     } else if (arg === "--depth" && i + 1 < argv.length) {
       depth = parseInt(argv[++i], 10);
       if (isNaN(depth) || depth < 1) {
@@ -108,6 +143,68 @@ export async function runCli(argv: string[]): Promise<number> {
         outputError("Invalid scan-id option: must be a positive integer.", 2, format);
         return 2;
       }
+    } else if (arg === "--base-scan-id" && i + 1 < argv.length) {
+      baseScanIdOpt = parseInt(argv[++i], 10);
+      if (isNaN(baseScanIdOpt) || baseScanIdOpt < 1) {
+        outputError("Invalid base-scan-id option: must be a positive integer.", 2, format);
+        return 2;
+      }
+    } else if (arg.startsWith("--base-scan-id=")) {
+      baseScanIdOpt = parseInt(arg.split("=")[1], 10);
+      if (isNaN(baseScanIdOpt) || baseScanIdOpt < 1) {
+        outputError("Invalid base-scan-id option: must be a positive integer.", 2, format);
+        return 2;
+      }
+    } else if (arg === "--target-scan-id" && i + 1 < argv.length) {
+      targetScanIdOpt = parseInt(argv[++i], 10);
+      if (isNaN(targetScanIdOpt) || targetScanIdOpt < 1) {
+        outputError("Invalid target-scan-id option: must be a positive integer.", 2, format);
+        return 2;
+      }
+    } else if (arg.startsWith("--target-scan-id=")) {
+      targetScanIdOpt = parseInt(arg.split("=")[1], 10);
+      if (isNaN(targetScanIdOpt) || targetScanIdOpt < 1) {
+        outputError("Invalid target-scan-id option: must be a positive integer.", 2, format);
+        return 2;
+      }
+    } else if (arg === "--agent" && i + 1 < argv.length) {
+      const candidate = argv[++i].trim() as AgentId;
+      if (!(candidate in AGENT_RETRIEVAL_POLICIES)) {
+        outputError(`Unknown agent ID: '${candidate}'.`, 2, format);
+        return 2;
+      }
+      agentId = candidate;
+      agentProvided = true;
+    } else if (arg.startsWith("--agent=")) {
+      const candidate = arg.slice("--agent=".length).trim() as AgentId;
+      if (!(candidate in AGENT_RETRIEVAL_POLICIES)) {
+        outputError(`Unknown agent ID: '${candidate}'.`, 2, format);
+        return 2;
+      }
+      agentId = candidate;
+      agentProvided = true;
+    } else if (arg === "--task" && i + 1 < argv.length) {
+      taskSummary = argv[++i];
+    } else if (arg.startsWith("--task=")) {
+      taskSummary = arg.slice("--task=".length);
+    } else if (arg === "--file" && i + 1 < argv.length) {
+      targetFiles.push(...splitList(argv[++i]));
+    } else if (arg.startsWith("--file=")) {
+      targetFiles.push(...splitList(arg.slice("--file=".length)));
+    } else if (arg === "--symbol" && i + 1 < argv.length) {
+      targetSymbols.push(...splitList(argv[++i]));
+    } else if (arg.startsWith("--symbol=")) {
+      targetSymbols.push(...splitList(arg.slice("--symbol=".length)));
+    } else if (arg === "--component" && i + 1 < argv.length) {
+      targetComponents.push(...splitList(argv[++i]));
+    } else if (arg.startsWith("--component=")) {
+      targetComponents.push(...splitList(arg.slice("--component=".length)));
+    } else if (arg === "--include-snippets") {
+      includeSnippets = true;
+    } else if (arg === "--no-snippets") {
+      includeSnippets = false;
+    } else if (arg === "--include-historical") {
+      includeHistorical = true;
     } else if (arg === "--verify-content") {
       verifyContent = true;
     } else if (arg === "--persist-events") {
@@ -166,6 +263,7 @@ export async function runCli(argv: string[]): Promise<number> {
     "debt",
     "memories",
     "memory",
+    "retrieve",
   ]);
 
   if (!KNOWN_COMMANDS.has(subcommand)) {
@@ -239,10 +337,60 @@ export async function runCli(argv: string[]): Promise<number> {
     }
   }
 
+  if (subcommand === "retrieve") {
+    if ((baseScanIdOpt !== undefined) !== (targetScanIdOpt !== undefined)) {
+      outputError("Both --base-scan-id and --target-scan-id must be provided together.", 2, format);
+      return 2;
+    }
+    const resolvedTask = (taskSummary ?? target ?? "").trim();
+    if (!resolvedTask) {
+      outputError(
+        'Missing required task summary for retrieve: pass --task "<summary>" or positional text.',
+        2,
+        format,
+      );
+      return 2;
+    }
+  }
+
+  // Validate retrieval-only flags against unrelated subcommands
+  if (
+    subcommand !== "retrieve" &&
+    (agentProvided ||
+      taskSummary !== undefined ||
+      targetFiles.length > 0 ||
+      targetSymbols.length > 0 ||
+      targetComponents.length > 0 ||
+      maxChars !== undefined ||
+      includeSnippets !== undefined ||
+      includeHistorical ||
+      baseScanIdOpt !== undefined ||
+      targetScanIdOpt !== undefined)
+  ) {
+    outputError(
+      `Retrieval options (--agent, --task, --file, --symbol, --component, --max-chars, --include-snippets, --include-historical, --base-scan-id, --target-scan-id) are only supported for 'retrieve' (got '${subcommand}').`,
+      2,
+      format,
+    );
+    return 2;
+  }
+
   // Validate workspace and database availability
   if (!fs.existsSync(workspaceRoot)) {
     outputError(`Workspace root does not exist: ${workspaceRoot}`, 3, format);
     return 3;
+  }
+
+  if (subcommand === "retrieve") {
+    const dbPath = path.join(workspaceRoot, ".frontier", "intelligence", "index.sqlite");
+    if (!fs.existsSync(dbPath)) {
+      outputError(
+        `Repository index is unavailable: no index database found at '${dbPath}'. Run repository scan first.`,
+        3,
+        format,
+      );
+      return 3;
+    }
   }
 
   let connectionManager: ConnectionManager | null = null;
@@ -526,6 +674,36 @@ export async function runCli(argv: string[]): Promise<number> {
           process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
         } else {
           process.stdout.write(formatTerminalMemoryDetail(payload) + "\n");
+        }
+        return 0;
+      }
+
+      case "retrieve": {
+        const resolvedTask = (taskSummary ?? target ?? "").trim();
+        const retrievalEngine = new RetrievalEngine(connectionManager);
+        const retrieval = await retrievalEngine.retrieve({
+          agentId,
+          taskSummary: resolvedTask,
+          targetFiles: targetFiles.length > 0 ? targetFiles : undefined,
+          targetSymbols: targetSymbols.length > 0 ? targetSymbols : undefined,
+          targetComponents: targetComponents.length > 0 ? targetComponents : undefined,
+          scanId,
+          baseScanId: baseScanIdOpt,
+          targetScanId: targetScanIdOpt,
+          verifyContentHashes: verifyContent,
+          includeSnippets,
+          includeHistoricalMemories: includeHistorical,
+          allowPartialSnapshot: allowPartial,
+          limits: {
+            ...(limit !== undefined ? { maxItems: limit } : {}),
+            ...(maxChars !== undefined ? { maxTotalChars: maxChars } : {}),
+            ...(depth !== undefined ? { maxDepth: depth } : {}),
+          },
+        });
+        if (format === "json") {
+          process.stdout.write(RetrievalFormatter.formatJson(retrieval, true) + "\n");
+        } else {
+          process.stdout.write(RetrievalFormatter.formatTerminal(retrieval) + "\n");
         }
         return 0;
       }
@@ -820,12 +998,26 @@ Commands:
   memories                        List durable engineering memories (use --scan-id for lifecycle validation)
   memory <key-or-id>              Inspect a single memory, its version history, evidence, and relationships
 
+  # Agent Retrieval & Orchestration Command (1)
+  retrieve                        Retrieve role-aware, budgeted, evidence-backed task context for an agent
+
 Options:
   --format <text|json>       Output format (default: text)
   --workspace <path>         Target workspace root directory (default: current directory)
   --depth <n>                Maximum traversal depth for dependency queries (default: 3, max: 10)
   --limit <n>                Maximum number of results to display (default: 50)
   --scan-id <id>             Explicit historical scan ID to inspect (default: active scan)
+  --agent <agent-id>         Target agent policy profile for 'retrieve' (default: frontier-engineer)
+  --task "<summary>"         Task description for 'retrieve'
+  --file <path>              Target file hint for 'retrieve' (repeatable)
+  --symbol <name>            Target symbol hint for 'retrieve' (repeatable)
+  --component <name>         Target component hint for 'retrieve' (repeatable)
+  --max-chars <n>            Character budget ceiling for 'retrieve'
+  --include-snippets         Include bounded SAFE source snippets in 'retrieve'
+  --no-snippets              Suppress source snippets in 'retrieve'
+  --include-historical       Include SUPERSEDED/ARCHIVED memories in 'retrieve'
+  --base-scan-id <id>        Optional base scan ID for evolution retrieval
+  --target-scan-id <id>      Optional target scan ID for evolution retrieval
   --verify-content           Perform full SHA-256 cryptographic content hash verification
   --persist-events           Persist factual/analytical change events to evolution_events table
   --apply-lifecycle          Apply validated memory lifecycle transitions and scan verifications
