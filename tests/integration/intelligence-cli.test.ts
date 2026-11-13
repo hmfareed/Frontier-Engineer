@@ -855,4 +855,138 @@ describe("intelligence-cli (Subprocess Integration & Output Contracts)", () => {
     expect(queryJson.status).toBe(0);
     expect(JSON.parse(queryJson.stdout).query.category).toBe("components");
   }, 60000);
+
+  it("executes intelligence compare command across snapshots in text and json mode", async () => {
+    const ws = createTempWorkspace();
+    fs.writeFileSync(path.join(ws, "package.json"), "{}", "utf8");
+
+    const cm = new ConnectionManager({ workspaceRoot: ws });
+    const sm = new StorageManager(cm);
+    await sm.initialize();
+    const repo = cm.getRepository();
+
+    // 1. First snapshot
+    const snap1 = await sm.persistSnapshot({
+      repositoryIdentity: repo.identity,
+      rootPath: ws,
+      displayName: "Scan 1",
+      inventory: {
+        workspaceRoot: ws,
+        scannedAt: new Date().toISOString(),
+        scanStatus: "COMPLETE",
+        files: [
+          {
+            canonicalPath: "src/main.ts",
+            fileExtension: ".ts",
+            classification: "source",
+            sizeBytes: 100,
+            mtimeMs: 1700000000000,
+            contentHash: "hash_main_v1",
+            hashState: "COMPUTED",
+            inspectionStatus: "INCLUDED",
+            exclusionStatus: "INCLUDED",
+            exclusionReason: null,
+          },
+        ],
+        summary: {
+          totalFilesDiscovered: 1,
+          totalFilesInspected: 1,
+          totalFilesExcluded: 0,
+          totalFilesUnreadable: 0,
+          totalBytesDiscovered: 100,
+          totalBytesInspected: 100,
+        },
+        totalFilesScanned: 1,
+        totalBytesScanned: 100,
+        limitExceeded: false,
+        scanDurationMs: 5,
+      },
+      extractions: new Map(),
+      scannerVersion: "0.6.3",
+      extractorVersion: "0.6.3",
+    });
+
+    // 2. Second snapshot
+    const snap2 = await sm.persistSnapshot({
+      repositoryIdentity: repo.identity,
+      rootPath: ws,
+      displayName: "Scan 2",
+      inventory: {
+        workspaceRoot: ws,
+        scannedAt: new Date().toISOString(),
+        scanStatus: "COMPLETE",
+        files: [
+          {
+            canonicalPath: "src/main.ts",
+            fileExtension: ".ts",
+            classification: "source",
+            sizeBytes: 150,
+            mtimeMs: 1700000060000,
+            contentHash: "hash_main_v2",
+            hashState: "COMPUTED",
+            inspectionStatus: "INCLUDED",
+            exclusionStatus: "INCLUDED",
+            exclusionReason: null,
+          },
+        ],
+        summary: {
+          totalFilesDiscovered: 1,
+          totalFilesInspected: 1,
+          totalFilesExcluded: 0,
+          totalFilesUnreadable: 0,
+          totalBytesDiscovered: 150,
+          totalBytesInspected: 150,
+        },
+        totalFilesScanned: 1,
+        totalBytesScanned: 150,
+        limitExceeded: false,
+        scanDurationMs: 5,
+      },
+      extractions: new Map(),
+      scannerVersion: "0.6.3",
+      extractorVersion: "0.6.3",
+    });
+
+    // Missing arguments -> exit code 2
+    const missingArgs = runSubprocess(["--workspace", ws, "compare"]);
+    expect(missingArgs.status).toBe(2);
+    expect(missingArgs.stderr).toContain("Missing required arguments");
+
+    // Non-existent scan ID -> exit code 4
+    const notFoundProc = runSubprocess(["--workspace", ws, "compare", "999", "1000"]);
+    expect(notFoundProc.status).toBe(4);
+
+    // Text format comparison -> exit code 0
+    const textProc = runSubprocess([
+      "--workspace",
+      ws,
+      "compare",
+      String(snap1.scanId),
+      String(snap2.scanId),
+    ]);
+    expect(textProc.status).toBe(0);
+    expect(textProc.stdout).toContain("Snapshot Comparison:");
+    expect(textProc.stdout).toContain("Summary:");
+    expect(textProc.stdout).toContain("Files:");
+
+    // JSON format comparison -> exit code 0, parseable JSON
+    const jsonProc = runSubprocess([
+      "--workspace",
+      ws,
+      "compare",
+      String(snap1.scanId),
+      String(snap2.scanId),
+      "--format",
+      "json",
+      "--persist-events",
+    ]);
+    expect(jsonProc.status).toBe(0);
+    const parsed = JSON.parse(jsonProc.stdout);
+    expect(parsed.comparisonId).toBe(`cmp:${repo.id}:${snap1.scanId}:${snap2.scanId}`);
+    expect(parsed.summary.files.modified).toBe(1);
+    expect(parsed.files.changes[0].path).toBe("src/main.ts");
+    expect(parsed.files.changes[0].changeType).toBe("MODIFIED");
+
+    await sm.close();
+  });
 });

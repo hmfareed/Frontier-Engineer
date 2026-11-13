@@ -300,6 +300,18 @@ BEGIN
     ) IN ('SUPERSEDED', 'ARCHIVED') THEN
       RAISE(ABORT, 'Illegal supersession: replacement memory cannot be in SUPERSEDED or ARCHIVED status')
   END;
+
+  -- A memory referenced as replacement by one or more SUPERSEDED memories cannot become SUPERSEDED or ARCHIVED
+  SELECT CASE
+    WHEN NEW.status IN ('SUPERSEDED', 'ARCHIVED') AND (
+      SELECT COUNT(*) FROM engineering_memories
+      WHERE repository_id = OLD.repository_id
+        AND superseded_by_id = OLD.id
+        AND status = 'SUPERSEDED'
+        AND id != OLD.id
+    ) > 0 THEN
+      RAISE(ABORT, 'Illegal status transition: cannot supersede or archive a memory that is currently an active replacement for superseded memories')
+  END;
 END;
 
 -- 5. Disallow deleting replacement memories directly while referenced
@@ -401,12 +413,13 @@ stateDiagram-v2
    - **Repository Isolation**: The replacement memory must belong to the same repository (enforced by composite foreign key `(repository_id, superseded_by_id)`).
    - **No Self-Supersession**: A memory cannot supersede itself (`CHECK(superseded_by_id IS NULL OR superseded_by_id != id)` and trigger).
    - **Valid Replacement Status**: A replacement memory cannot be in `SUPERSEDED` or `ARCHIVED` status.
+   - **Persistent Replacement Lifecycle Invariant**: A memory referenced by one or more `SUPERSEDED` memories cannot transition into either `SUPERSEDED` or `ARCHIVED`. This is a persistent relationship invariant, not merely a check performed when the relationship is created. It guarantees that a superseded memory always points to a viable, non-terminal replacement. Non-terminal transitions (such as `ACTIVE -> STALE` or `STALE -> ACTIVE`) remain fully permitted for referenced replacements.
    - **Immutability of Supersession**: Once superseded, a memory cannot change or clear its `superseded_by_id` reference.
    - **Terminal Status**: A `SUPERSEDED` memory cannot be reactivated or transitioned to any other status.
    - **Replacement Retention**: A memory acting as a replacement for superseded memories cannot be deleted directly while referenced (`trg_engineering_memories_no_delete_replacement`).
 
 3. **Atomic Historical Version History**:
-   - Direct SQL mutations that bypass the storage API do not create version records. All production lifecycle writes must route through `MemoryStore.transitionLifecycle()`.
+   - Direct SQL mutations that bypass the storage API do not automatically create version records. All production lifecycle writes must route through `MemoryStore.transitionLifecycle()`.
    - `MemoryStore.transitionLifecycle()` executes an immediate transaction:
      1. Validates requested transition and checks for no-op requests.
      2. Snapshots prior state into `memory_versions` with SHA-256 content hashes and change reason.
@@ -419,28 +432,29 @@ stateDiagram-v2
 
 To maintain transparent architectural discipline, invariants are divided strictly by enforcement layer:
 
-| Invariant                               | Enforcement Mechanism                                                                      | Layer                       | Stage     |
-| :-------------------------------------- | :----------------------------------------------------------------------------------------- | :-------------------------- | :-------- |
-| **Repository Multi-Tenant Isolation**   | Composite foreign keys `(repository_id, entity_id)`                                        | Database Engine (SQLite)    | Stage 2   |
-| **Snapshot Evidence Scope**             | Composite foreign keys `(repository_id, scan_id, entity_id)`                               | Database Engine (SQLite)    | Stage 2   |
-| **Memory Key Uniqueness**               | Table constraint `UNIQUE(repository_id, memory_key)`                                       | Database Engine (SQLite)    | Stage 2   |
-| **Initial Memory Status (ACTIVE)**      | Database trigger `trg_engineering_memories_insert_guard`                                   | Database Engine (SQLite)    | Stage 2   |
-| **Initial Version Sequence (1)**        | Database trigger `trg_engineering_memories_insert_guard`                                   | Database Engine (SQLite)    | Stage 2   |
-| **Non-Self-Supersession**               | Table constraint `CHECK(superseded_by_id IS NULL OR superseded_by_id != id)`               | Database Engine (SQLite)    | Stage 2   |
-| **Supersession Non-Null Replacement**   | Database trigger `trg_engineering_memories_update_guard`                                   | Database Engine (SQLite)    | Stage 2   |
-| **Supersession Replacement Validity**   | Database trigger `trg_engineering_memories_update_guard`                                   | Database Engine (SQLite)    | Stage 2   |
-| **Supersession Reference Immutability** | Database trigger `trg_engineering_memories_update_guard`                                   | Database Engine (SQLite)    | Stage 2   |
-| **Replacement Deletion Protection**     | Database trigger `trg_engineering_memories_no_delete_replacement`                          | Database Engine (SQLite)    | Stage 2   |
-| **Non-Self-Relationships**              | Table constraint `CHECK(source_memory_id != target_memory_id)`                             | Database Engine (SQLite)    | Stage 2   |
-| **Distinct Evolution Scan Pairs**       | Table constraint `CHECK(base_scan_id != target_scan_id)`                                   | Database Engine (SQLite)    | Stage 2   |
-| **Memory Version Immutability**         | Database triggers `trg_memory_versions_no_update` & `trg_memory_versions_no_direct_delete` | Database Engine (SQLite)    | Stage 2   |
-| **Lifecycle Transition Graph**          | Database trigger `trg_engineering_memories_update_guard`                                   | Database Engine (SQLite)    | Stage 2   |
-| **Historical Scan Retention**           | Composite foreign key `ON DELETE RESTRICT` on `first_seen_scan_id` & `source_scan_id`      | Database Engine (SQLite)    | Stage 2   |
-| **Atomic Version Creation**             | Immediate transaction writing version row and advancing memory counter                     | Storage API (`MemoryStore`) | Stage 2.2 |
-| **No-Op Status Redundancy Guard**       | Storage API idempotency check returning existing record without incrementing version       | Storage API (`MemoryStore`) | Stage 2.2 |
-| **Chronological Evolution Order**       | Validation that `targetScan.startedAt >= baseScan.startedAt` before event emission         | Snapshot Comparator Layer   | Stage 3   |
-| **Rename Detection Heuristic**          | Structural hash matching and fingerprint correlation                                       | Snapshot Comparator Layer   | Stage 3   |
-| **Architectural Drift Analysis**        | Correlating ADR decisions with observed dependency graph changes                           | Evolution Analyzer Layer    | Stage 4   |
+| Invariant                               | Enforcement Mechanism                                                                      | Layer                                  | Stage     |
+| :-------------------------------------- | :----------------------------------------------------------------------------------------- | :------------------------------------- | :-------- |
+| **Repository Multi-Tenant Isolation**   | Composite foreign keys `(repository_id, entity_id)`                                        | Database Engine (SQLite)               | Stage 2   |
+| **Snapshot Evidence Scope**             | Composite foreign keys `(repository_id, scan_id, entity_id)`                               | Database Engine (SQLite)               | Stage 2   |
+| **Memory Key Uniqueness**               | Table constraint `UNIQUE(repository_id, memory_key)`                                       | Database Engine (SQLite)               | Stage 2   |
+| **Initial Memory Status (ACTIVE)**      | Database trigger `trg_engineering_memories_insert_guard`                                   | Database Engine (SQLite)               | Stage 2   |
+| **Initial Version Sequence (1)**        | Database trigger `trg_engineering_memories_insert_guard`                                   | Database Engine (SQLite)               | Stage 2   |
+| **Non-Self-Supersession**               | Table constraint `CHECK(superseded_by_id IS NULL OR superseded_by_id != id)`               | Database Engine (SQLite)               | Stage 2   |
+| **Supersession Non-Null Replacement**   | Database trigger `trg_engineering_memories_update_guard`                                   | Database Engine (SQLite)               | Stage 2   |
+| **Supersession Replacement Validity**   | Database trigger `trg_engineering_memories_update_guard`                                   | Database Engine (SQLite)               | Stage 2   |
+| **Replacement Lifecycle Protection**    | Database trigger `trg_engineering_memories_update_guard` & `MemoryStore`                   | Database Engine (SQLite) & Storage API | Stage 2.3 |
+| **Supersession Reference Immutability** | Database trigger `trg_engineering_memories_update_guard`                                   | Database Engine (SQLite)               | Stage 2   |
+| **Replacement Deletion Protection**     | Database trigger `trg_engineering_memories_no_delete_replacement`                          | Database Engine (SQLite)               | Stage 2   |
+| **Non-Self-Relationships**              | Table constraint `CHECK(source_memory_id != target_memory_id)`                             | Database Engine (SQLite)               | Stage 2   |
+| **Distinct Evolution Scan Pairs**       | Table constraint `CHECK(base_scan_id != target_scan_id)`                                   | Database Engine (SQLite)               | Stage 2   |
+| **Memory Version Immutability**         | Database triggers `trg_memory_versions_no_update` & `trg_memory_versions_no_direct_delete` | Database Engine (SQLite)               | Stage 2   |
+| **Lifecycle Transition Graph**          | Database trigger `trg_engineering_memories_update_guard`                                   | Database Engine (SQLite)               | Stage 2   |
+| **Historical Scan Retention**           | Composite foreign key `ON DELETE RESTRICT` on `first_seen_scan_id` & `source_scan_id`      | Database Engine (SQLite)               | Stage 2   |
+| **Atomic Version Creation**             | Immediate transaction writing version row and advancing memory counter                     | Storage API (`MemoryStore`)            | Stage 2.2 |
+| **No-Op Status Redundancy Guard**       | Storage API idempotency check returning existing record without incrementing version       | Storage API (`MemoryStore`)            | Stage 2.2 |
+| **Chronological Evolution Order**       | Validation that `targetScan.startedAt >= baseScan.startedAt` before event emission         | Snapshot Comparator Layer              | Stage 3   |
+| **Rename Detection Heuristic**          | Structural hash matching and fingerprint correlation                                       | Snapshot Comparator Layer              | Stage 3   |
+| **Architectural Drift Analysis**        | Correlating ADR decisions with observed dependency graph changes                           | Evolution Analyzer Layer               | Stage 4   |
 
 ---
 

@@ -437,8 +437,13 @@ CREATE INDEX IF NOT EXISTS idx_components_category ON architecture_components(sc
     version: 3,
     name: "003-engineering-memory-evolution",
     sql: `-- Frontier Engineer Phase 7.5: Engineering Memory & Repository Evolution Intelligence
+-- Migration: 003-engineering-memory-evolution.sql
+-- Persistent engineering memories, memory evidence, evolution events, memory relationships, and versions.
+
+-- 0. Ensure unique index on graph_edges for composite foreign key references from memory_evidence
 CREATE UNIQUE INDEX IF NOT EXISTS idx_graph_edges_repo_scan_id ON graph_edges(repository_id, scan_id, id);
 
+-- 1. Persistent Engineering Memories
 CREATE TABLE IF NOT EXISTS engineering_memories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   repository_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
@@ -473,6 +478,7 @@ CREATE TABLE IF NOT EXISTS engineering_memories (
 
 CREATE INDEX IF NOT EXISTS idx_memories_repo_cat_status ON engineering_memories(repository_id, category, status);
 
+-- 2. Memory Evidence and Provenance
 CREATE TABLE IF NOT EXISTS memory_evidence (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   repository_id INTEGER NOT NULL,
@@ -510,6 +516,7 @@ CREATE TABLE IF NOT EXISTS memory_evidence (
 CREATE INDEX IF NOT EXISTS idx_memory_evidence_memory ON memory_evidence(memory_id);
 CREATE INDEX IF NOT EXISTS idx_memory_evidence_repo_scan ON memory_evidence(repository_id, scan_id);
 
+-- 3. Evolution Events
 CREATE TABLE IF NOT EXISTS evolution_events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   repository_id INTEGER NOT NULL,
@@ -532,6 +539,7 @@ CREATE TABLE IF NOT EXISTS evolution_events (
 CREATE INDEX IF NOT EXISTS idx_evolution_events_target ON evolution_events(repository_id, target_scan_id);
 CREATE INDEX IF NOT EXISTS idx_evolution_events_base ON evolution_events(repository_id, base_scan_id);
 
+-- 4. Memory Relationships
 CREATE TABLE IF NOT EXISTS memory_relationships (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   repository_id INTEGER NOT NULL,
@@ -555,6 +563,7 @@ CREATE TABLE IF NOT EXISTS memory_relationships (
 CREATE INDEX IF NOT EXISTS idx_memory_relationships_source ON memory_relationships(source_memory_id);
 CREATE INDEX IF NOT EXISTS idx_memory_relationships_target ON memory_relationships(target_memory_id);
 
+-- 5. Memory Versions (Immutable History)
 CREATE TABLE IF NOT EXISTS memory_versions (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   repository_id INTEGER NOT NULL,
@@ -575,6 +584,7 @@ CREATE TABLE IF NOT EXISTS memory_versions (
 
 CREATE INDEX IF NOT EXISTS idx_memory_versions_memory_ver ON memory_versions(memory_id, version);
 
+-- 6. Immutability Triggers for Memory Versions
 CREATE TRIGGER IF NOT EXISTS trg_memory_versions_no_update
 BEFORE UPDATE ON memory_versions
 BEGIN
@@ -588,6 +598,7 @@ BEGIN
   SELECT RAISE(ABORT, 'Direct deletion of memory_versions is prohibited; versions are immutable');
 END;
 
+-- 7. Initial State, Lifecycle Transitions, and Supersession Guards on Engineering Memories
 CREATE TRIGGER IF NOT EXISTS trg_engineering_memories_insert_guard
 BEFORE INSERT ON engineering_memories
 FOR EACH ROW
@@ -645,6 +656,18 @@ BEGIN
       WHERE repository_id = NEW.repository_id AND id = NEW.superseded_by_id
     ) IN ('SUPERSEDED', 'ARCHIVED') THEN
       RAISE(ABORT, 'Illegal supersession: replacement memory cannot be in SUPERSEDED or ARCHIVED status')
+  END;
+
+  -- A memory referenced as replacement by one or more SUPERSEDED memories cannot become SUPERSEDED or ARCHIVED
+  SELECT CASE
+    WHEN NEW.status IN ('SUPERSEDED', 'ARCHIVED') AND (
+      SELECT COUNT(*) FROM engineering_memories
+      WHERE repository_id = OLD.repository_id
+        AND superseded_by_id = OLD.id
+        AND status = 'SUPERSEDED'
+        AND id != OLD.id
+    ) > 0 THEN
+      RAISE(ABORT, 'Illegal status transition: cannot supersede or archive a memory that is currently an active replacement for superseded memories')
   END;
 END;
 

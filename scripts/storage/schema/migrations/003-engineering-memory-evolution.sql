@@ -219,6 +219,18 @@ BEGIN
     ) IN ('SUPERSEDED', 'ARCHIVED') THEN
       RAISE(ABORT, 'Illegal supersession: replacement memory cannot be in SUPERSEDED or ARCHIVED status')
   END;
+
+  -- A memory referenced as replacement by one or more SUPERSEDED memories cannot become SUPERSEDED or ARCHIVED
+  SELECT CASE
+    WHEN NEW.status IN ('SUPERSEDED', 'ARCHIVED') AND (
+      SELECT COUNT(*) FROM engineering_memories
+      WHERE repository_id = OLD.repository_id
+        AND superseded_by_id = OLD.id
+        AND status = 'SUPERSEDED'
+        AND id != OLD.id
+    ) > 0 THEN
+      RAISE(ABORT, 'Illegal status transition: cannot supersede or archive a memory that is currently an active replacement for superseded memories')
+  END;
 END;
 
 CREATE TRIGGER IF NOT EXISTS trg_engineering_memories_no_delete_replacement

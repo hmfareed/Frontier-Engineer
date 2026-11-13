@@ -969,6 +969,77 @@ describe("storage-migration-003 (Engineering Memory & Evolution Data Model)", ()
     ).toThrow(
       /Illegal operation: cannot delete a memory that is currently a replacement for superseded memories/,
     );
+
+    // 6.8 Stage 2.3: A memory referenced by SUPERSEDED memories cannot transition to SUPERSEDED or ARCHIVED
+    const memA = createActiveMemory();
+    const memB = createActiveMemory();
+    const memC = createActiveMemory();
+    const memD_repo2 = createActiveMemory(repo2Id);
+
+    // Transition A to SUPERSEDED pointing to B
+    db.rawDb
+      .prepare(
+        "UPDATE engineering_memories SET status = 'SUPERSEDED', superseded_by_id = ? WHERE id = ?",
+      )
+      .run(memB, memA);
+
+    // Attempt to archive B directly through SQL -> MUST FAIL
+    expect(() =>
+      db.rawDb
+        .prepare("UPDATE engineering_memories SET status = 'ARCHIVED' WHERE id = ?")
+        .run(memB),
+    ).toThrow(
+      /Illegal status transition: cannot supersede or archive a memory that is currently an active replacement for superseded memories/,
+    );
+
+    // Attempt to supersede B directly through SQL (pointing to C) -> MUST FAIL
+    expect(() =>
+      db.rawDb
+        .prepare(
+          "UPDATE engineering_memories SET status = 'SUPERSEDED', superseded_by_id = ? WHERE id = ?",
+        )
+        .run(memC, memB),
+    ).toThrow(
+      /Illegal status transition: cannot supersede or archive a memory that is currently an active replacement for superseded memories/,
+    );
+
+    // Verify A remains SUPERSEDED and still references B after each rejected operation
+    const checkMemA = db.rawDb
+      .prepare("SELECT status, superseded_by_id FROM engineering_memories WHERE id = ?")
+      .get(memA) as { status: string; superseded_by_id: number };
+    expect(checkMemA.status).toBe("SUPERSEDED");
+    expect(checkMemA.superseded_by_id).toBe(memB);
+
+    // Verify B can still transition to an allowed non-terminal status (STALE, and back to ACTIVE)
+    expect(() =>
+      db.rawDb.prepare("UPDATE engineering_memories SET status = 'STALE' WHERE id = ?").run(memB),
+    ).not.toThrow();
+
+    const checkMemBStale = db.rawDb
+      .prepare("SELECT status FROM engineering_memories WHERE id = ?")
+      .get(memB) as { status: string };
+    expect(checkMemBStale.status).toBe("STALE");
+
+    expect(() =>
+      db.rawDb.prepare("UPDATE engineering_memories SET status = 'ACTIVE' WHERE id = ?").run(memB),
+    ).not.toThrow();
+
+    const checkMemBActive = db.rawDb
+      .prepare("SELECT status FROM engineering_memories WHERE id = ?")
+      .get(memB) as { status: string };
+    expect(checkMemBActive.status).toBe("ACTIVE");
+
+    // Verify a memory in another repository (memD_repo2) is NOT incorrectly treated as a replacement
+    expect(() =>
+      db.rawDb
+        .prepare("UPDATE engineering_memories SET status = 'ARCHIVED' WHERE id = ?")
+        .run(memD_repo2),
+    ).not.toThrow();
+
+    const checkMemD = db.rawDb
+      .prepare("SELECT status FROM engineering_memories WHERE id = ?")
+      .get(memD_repo2) as { status: string };
+    expect(checkMemD.status).toBe("ARCHIVED");
   });
 
   it("8. clarifies evolution-event chronology and verifies database boundaries", () => {

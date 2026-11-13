@@ -229,13 +229,28 @@ export class MemoryStore {
         }
       }
 
+      // Replacement lifecycle protection: a memory referenced by SUPERSEDED memories cannot become SUPERSEDED or ARCHIVED
+      if (params.targetStatus === "SUPERSEDED" || params.targetStatus === "ARCHIVED") {
+        const row = this.db
+          .prepare(
+            `SELECT COUNT(*) AS count FROM engineering_memories
+             WHERE repository_id = ? AND superseded_by_id = ? AND status = 'SUPERSEDED' AND id != ?`,
+          )
+          .get(params.repositoryId, current.id, current.id) as { count: number } | undefined;
+
+        if (row && row.count > 0) {
+          throw new Error(
+            `Illegal status transition: cannot transition memory ${current.id} to ${params.targetStatus} because it is currently an active replacement for superseded memories`,
+          );
+        }
+      }
+
       const now = new Date().toISOString();
       const prevHash = sha256(current.content);
       const newContent = params.newContent ?? current.content;
       const nextHash = sha256(newContent);
 
-      const sourceScanId: number | null =
-        params.sourceScanId ?? current.lastSeenScanId ?? null;
+      const sourceScanId: number | null = params.sourceScanId ?? current.lastSeenScanId ?? null;
 
       // Record immutable historical version of the PRIOR state
       this.db

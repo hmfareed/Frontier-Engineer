@@ -183,7 +183,7 @@ The evaluator applies a **1,000 ms tolerance window** when comparing filesystem 
 - **Unindexed State:** When `repositories.active_scan_id` is null, commands requiring an index return exit code 3 (`Repository index is unavailable`).
 - **Failure Preservation:** If a subsequent scan run fails, `repositories.active_scan_id` remains unchanged (preserving the older stable snapshot), but the `FreshnessEvaluator` marks the index `STALE` with notice of the failed latest scan.
 - **Historical Query Isolation:** Explicit `--scan-id <id>` queries inspect historical snapshots without modifying `repositories.active_scan_id`. Requesting an unrecorded scan ID safely rejects with exit code 4.
-- **Snapshot Diffs:** Historical snapshot comparisons and diffing (`getSnapshotDiff`) are not part of Phase 7.4 and are reserved for Phase 7.5.
+- **Snapshot Diffs:** Historical snapshot comparisons and deterministic diffing are implemented in Phase 7.5 Stage 3 via `SnapshotComparator` and the `frontier intelligence compare` CLI command (see [Part 39](39-SNAPSHOT-COMPARATOR-DIFF-ENGINE.md)).
 
 ### 2.5 Evidence Integrity & Secret Safety
 
@@ -234,6 +234,12 @@ npm run frontier -- query "<expression>" [--format text|json]
 
 ```bash
 npm run frontier -- deps <target> [--depth 3] [--limit 50] [--format text|json]  # alias for dependencies
+```
+
+#### Snapshot Comparison Commands (Phase 7.5 Stage 3)
+
+```bash
+npm run frontier -- compare <base-scan-id> <target-scan-id> [--persist-events] [--format text|json]
 ```
 
 All commands accept `--scan-id <id>` to target an explicit historical scan.

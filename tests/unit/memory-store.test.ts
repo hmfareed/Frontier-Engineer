@@ -428,4 +428,108 @@ describe("memory-store (Atomic Lifecycle & Historical Consistency)", () => {
     expect(staleDebt).toHaveLength(1);
     expect(staleDebt[0].memoryKey).toBe("filter_2");
   });
+
+  it("12. rejects attempts to archive or supersede a referenced replacement via transitionLifecycle and preserves state and history", () => {
+    // 1. Create memA, memB, and memC
+    const memA = store.createMemory({
+      repositoryId: repoId,
+      memoryKey: "store_mem_a",
+      category: "architectural_decision",
+      title: "Store Memory A",
+      content: "Initial decision A",
+    });
+
+    const memB = store.createMemory({
+      repositoryId: repoId,
+      memoryKey: "store_mem_b",
+      category: "architectural_decision",
+      title: "Store Memory B",
+      content: "Replacement decision B",
+    });
+
+    const memC = store.createMemory({
+      repositoryId: repoId,
+      memoryKey: "store_mem_c",
+      category: "architectural_decision",
+      title: "Store Memory C",
+      content: "Alternative decision C",
+    });
+
+    // 2. Supersede memA pointing to memB
+    store.transitionLifecycle({
+      repositoryId: repoId,
+      memoryId: memA.id,
+      targetStatus: "SUPERSEDED",
+      supersededById: memB.id,
+      changeReason: "Replaced A with B",
+    });
+
+    // 3. Attempt to archive B via transitionLifecycle -> MUST FAIL
+    expect(() => {
+      store.transitionLifecycle({
+        repositoryId: repoId,
+        memoryId: memB.id,
+        targetStatus: "ARCHIVED",
+        changeReason: "Attempting to archive replacement B",
+      });
+    }).toThrow(
+      /cannot transition memory \d+ to ARCHIVED because it is currently an active replacement for superseded memories/,
+    );
+
+    // Verify B's status, version, and versions count
+    const checkBAfterArchiveAttempt = store.getMemory(repoId, memB.id)!;
+    expect(checkBAfterArchiveAttempt.status).toBe("ACTIVE");
+    expect(checkBAfterArchiveAttempt.version).toBe(1);
+    expect(store.getMemoryVersions(memB.id)).toHaveLength(0);
+
+    // Verify existing supersession reference on A remains intact
+    const checkA1 = store.getMemory(repoId, memA.id)!;
+    expect(checkA1.status).toBe("SUPERSEDED");
+    expect(checkA1.supersededById).toBe(memB.id);
+
+    // 4. Attempt to supersede B (pointing to C) via transitionLifecycle -> MUST FAIL
+    expect(() => {
+      store.transitionLifecycle({
+        repositoryId: repoId,
+        memoryId: memB.id,
+        targetStatus: "SUPERSEDED",
+        supersededById: memC.id,
+        changeReason: "Attempting to supersede replacement B",
+      });
+    }).toThrow(
+      /cannot transition memory \d+ to SUPERSEDED because it is currently an active replacement for superseded memories/,
+    );
+
+    // Verify B's status, version, and versions count remain unchanged
+    const checkBAfterSupersedeAttempt = store.getMemory(repoId, memB.id)!;
+    expect(checkBAfterSupersedeAttempt.status).toBe("ACTIVE");
+    expect(checkBAfterSupersedeAttempt.version).toBe(1);
+    expect(store.getMemoryVersions(memB.id)).toHaveLength(0);
+
+    // Verify existing supersession reference on A remains intact
+    const checkA2 = store.getMemory(repoId, memA.id)!;
+    expect(checkA2.status).toBe("SUPERSEDED");
+    expect(checkA2.supersededById).toBe(memB.id);
+
+    // 5. Verify B can still transition to an allowed non-terminal status (STALE and back to ACTIVE)
+    const staleB = store.transitionLifecycle({
+      repositoryId: repoId,
+      memoryId: memB.id,
+      targetStatus: "STALE",
+      changeReason: "Valid non-terminal transition to STALE",
+    });
+    expect(staleB.status).toBe("STALE");
+    expect(staleB.version).toBe(2);
+    expect(store.getMemoryVersions(memB.id)).toHaveLength(1);
+
+    const reactivatedB = store.transitionLifecycle({
+      repositoryId: repoId,
+      memoryId: memB.id,
+      targetStatus: "ACTIVE",
+      changeReason: "Valid non-terminal reactivation to ACTIVE",
+    });
+    expect(reactivatedB.status).toBe("ACTIVE");
+    expect(reactivatedB.version).toBe(3);
+    expect(store.getMemoryVersions(memB.id)).toHaveLength(2);
+  });
 });

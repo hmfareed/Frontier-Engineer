@@ -19,6 +19,12 @@ import { ArchitectureQueryEngine } from "../query/query-engine.ts";
 import { QueryGrammar } from "../query/query-grammar.ts";
 import { QueryFormatter } from "../query/query-formatter.ts";
 import type { QueryOptions, TraversalQueryOptions } from "../query/types.ts";
+import {
+  SnapshotComparator,
+  SnapshotComparisonError,
+  ComparisonSerializer,
+  type SnapshotComparison,
+} from "../evolution/index.ts";
 
 export interface CliExecutionResult {
   exitCode: number;
@@ -33,6 +39,7 @@ export async function runCli(argv: string[]): Promise<number> {
   let depth: number | undefined;
   let scanId: number | undefined;
   let verifyContent = false;
+  let persistEvents = false;
 
   // Manual argument parsing without external dependencies
   const positional: string[] = [];
@@ -97,6 +104,8 @@ export async function runCli(argv: string[]): Promise<number> {
       }
     } else if (arg === "--verify-content") {
       verifyContent = true;
+    } else if (arg === "--persist-events") {
+      persistEvents = true;
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       return 0;
@@ -141,6 +150,7 @@ export async function runCli(argv: string[]): Promise<number> {
     "decision",
     "freshness",
     "query",
+    "compare",
   ]);
 
   if (!KNOWN_COMMANDS.has(subcommand)) {
@@ -150,6 +160,13 @@ export async function runCli(argv: string[]): Promise<number> {
       format,
     );
     return 2;
+  }
+
+  if (subcommand === "compare") {
+    if (positional.length < 3) {
+      outputError("Missing required arguments: compare <base_scan_id> <target_scan_id>", 2, format);
+      return 2;
+    }
   }
 
   const REQUIRES_TARGET: Record<string, string> = {
@@ -184,7 +201,8 @@ export async function runCli(argv: string[]): Promise<number> {
       !repo.activeScanId &&
       scanId === undefined &&
       subcommand !== "status" &&
-      subcommand !== "freshness"
+      subcommand !== "freshness" &&
+      subcommand !== "compare"
     ) {
       outputError(
         `Repository index is unavailable: no active scan exists for '${repo.identity}'. Run repository scan to generate an index.`,
@@ -293,6 +311,31 @@ export async function runCli(argv: string[]): Promise<number> {
         result = await QueryGrammar.execute(engine, target, queryOpts);
         break;
 
+      case "compare": {
+        const baseScanId = parseInt(positional[1], 10);
+        const targetScanId = parseInt(positional[2], 10);
+        if (isNaN(baseScanId) || baseScanId < 1 || isNaN(targetScanId) || targetScanId < 1) {
+          outputError(
+            "Invalid scan ID: base_scan_id and target_scan_id must be positive integers.",
+            2,
+            format,
+          );
+          return 2;
+        }
+        const comparator = new SnapshotComparator(connectionManager.getDatabase());
+        const comparison = comparator.compare(baseScanId, targetScanId, {
+          persistEvents,
+          workspaceRoot,
+        });
+
+        if (format === "json") {
+          process.stdout.write(ComparisonSerializer.serialize(comparison, true) + "\n");
+        } else {
+          process.stdout.write(formatTerminalComparison(comparison) + "\n");
+        }
+        return 0;
+      }
+
       default:
         outputError(
           `Unknown subcommand: "${subcommand}". Use --help for available intelligence commands.`,
@@ -311,6 +354,19 @@ export async function runCli(argv: string[]): Promise<number> {
 
     return 0;
   } catch (err: any) {
+    if (err instanceof SnapshotComparisonError) {
+      if (
+        err.code === "ERR_BASE_SNAPSHOT_NOT_FOUND" ||
+        err.code === "ERR_TARGET_SNAPSHOT_NOT_FOUND" ||
+        err.code === "ERR_SNAPSHOT_NOT_FOUND"
+      ) {
+        outputError(err.message, 4, format);
+        return 4;
+      }
+      outputError(err.message, 2, format);
+      return 2;
+    }
+
     const message = err?.message || String(err);
 
     // Differentiate "not found" (exit code 4) vs operational failure (exit code 1) vs syntax (2)
@@ -363,6 +419,44 @@ function outputError(message: string, exitCode: number, format: "text" | "json")
   }
 }
 
+function formatTerminalComparison(c: SnapshotComparison): string {
+  const lines: string[] = [];
+  lines.push(`================================================================================`);
+  lines.push(`Frontier Engineer — Snapshot Comparison: ${c.comparisonId}`);
+  lines.push(`Repository: ${c.repositoryIdentity} (ID: ${c.repositoryId}) | Status: ${c.status}`);
+  lines.push(`Base Snapshot:   ID ${c.baseSnapshot.scanId} (started: ${c.baseSnapshot.startedAt})`);
+  lines.push(
+    `Target Snapshot: ID ${c.targetSnapshot.scanId} (started: ${c.targetSnapshot.startedAt})`,
+  );
+  lines.push(`Compared At:     ${c.comparedAt}`);
+  lines.push(`--------------------------------------------------------------------------------`);
+  lines.push(`Summary:`);
+  lines.push(
+    `  Files:        +${c.summary.files.added} added, ~${c.summary.files.modified} modified, -${c.summary.files.deleted} deleted, =${c.summary.files.unchanged} unchanged (renamed: ${c.summary.files.renamed})`,
+  );
+  lines.push(
+    `  Symbols:      +${c.summary.symbols.added} added, -${c.summary.symbols.removed} removed, ~${c.summary.symbols.modified} modified, ->${c.summary.symbols.relocated} relocated, =${c.summary.symbols.unchanged} unchanged`,
+  );
+  lines.push(
+    `  Dependencies: +${c.summary.dependencies.added} added, -${c.summary.dependencies.removed} removed, ~${c.summary.dependencies.modified} modified, ?${c.summary.dependencies.unresolved} unresolved`,
+  );
+  lines.push(
+    `  Components:   +${c.summary.components.added} added, -${c.summary.components.removed} removed, ~${c.summary.components.modified} modified, =${c.summary.components.unchanged} unchanged`,
+  );
+  lines.push(
+    `  ADRs:         +${c.summary.adrs.added} added, -${c.summary.adrs.removed} removed, ~${c.summary.adrs.modified} modified, =${c.summary.adrs.unchanged} unchanged`,
+  );
+  lines.push(`  Evidence:     ${c.evidence.length} verifiable records`);
+  if (c.limitations.length > 0) {
+    lines.push(`  Limitations:  ${c.limitations.length} items`);
+    for (const lim of c.limitations) {
+      lines.push(`    * [${lim.code}] ${lim.description}`);
+    }
+  }
+  lines.push(`================================================================================`);
+  return lines.join("\n");
+}
+
 function printHelp(): void {
   process.stdout.write(`
 Frontier Engineer — Architecture Intelligence Query CLI
@@ -392,6 +486,9 @@ Commands:
   # Command Aliases (1)
   deps <target>              Alias for 'dependencies <target>'
 
+  # Snapshot Comparison Commands (1)
+  compare <base-id> <target-id> Compare two snapshots deterministically across all architectural domains
+
 Options:
   --format <text|json>       Output format (default: text)
   --workspace <path>         Target workspace root directory (default: current directory)
@@ -399,6 +496,7 @@ Options:
   --limit <n>                Maximum number of results to display (default: 50)
   --scan-id <id>             Explicit historical scan ID to inspect (default: active scan)
   --verify-content           Perform full SHA-256 cryptographic content hash verification
+  --persist-events           Persist factual change events to evolution_events table
   --help, -h                 Display this help message
 
 Exit codes:
