@@ -6,5 +6,6 @@ export default defineConfig({
     environment: "node",
     clearMocks: true,
     testTimeout: 15000,
+    maxWorkers: 4,
   },
 });

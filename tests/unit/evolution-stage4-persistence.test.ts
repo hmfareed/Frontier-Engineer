@@ -228,4 +228,159 @@ describe("evolution-stage4-persistence (Coexistence, Idempotency & Atomic Rollba
     ).count;
     expect(countAfter).toBe(countBefore);
   });
+
+  it("EVO-PERSIST-REMEDIATION-02: recovers cleanly from top-level BEGIN, nested SAVEPOINT, and nested callback failures while preserving depth and DB integrity", () => {
+    const store = new MemoryStore(db);
+    const scan1 = createScan("2026-11-01T10:00:00.000Z");
+
+    // Helper to restore original exec cleanly across fault injections
+    const originalExec = db.rawDb.exec.bind(db.rawDb);
+
+    // 1. Top-level BEGIN IMMEDIATE failure -> activeTransactionDepth stays 0 & integrity OK
+    expect(db.activeTransactionDepth).toBe(0);
+    let failBeginOnce = true;
+    db.rawDb.exec = ((sql: string) => {
+      if (failBeginOnce && sql.startsWith("BEGIN IMMEDIATE")) {
+        failBeginOnce = false;
+        throw new Error("SQLITE_BUSY: simulated BEGIN IMMEDIATE failure");
+      }
+      return originalExec(sql);
+    }) as typeof db.rawDb.exec;
+
+    expect(() =>
+      db.transaction(() => {
+        store.createMemory({
+          repositoryId: repoId,
+          memoryKey: "should_not_run_begin",
+          category: "project_context",
+          title: "Never Created",
+          content: "Never",
+          firstSeenScanId: scan1,
+          lastSeenScanId: scan1,
+        });
+      }),
+    ).toThrow(/SQLITE_BUSY/);
+    db.rawDb.exec = originalExec;
+    expect(db.activeTransactionDepth).toBe(0);
+    expect(db.integrityCheck().ok).toBe(true);
+
+    // 4. Subsequent top-level transaction succeeds after failed BEGIN IMMEDIATE
+    const afterBeginMem = db.transaction(() => {
+      expect(db.activeTransactionDepth).toBe(1);
+      return store.createMemory({
+        repositoryId: repoId,
+        memoryKey: "after_begin_fail",
+        category: "project_context",
+        title: "Recovered Top-Level",
+        content: "Top-level works after BEGIN failure",
+        firstSeenScanId: scan1,
+        lastSeenScanId: scan1,
+      });
+    });
+    expect(db.activeTransactionDepth).toBe(0);
+    expect(store.getMemory(repoId, afterBeginMem.id)?.memoryKey).toBe("after_begin_fail");
+    expect(db.integrityCheck().ok).toBe(true);
+
+    // 2. Nested SAVEPOINT creation failure -> throws, keeps outer depth === 1 when caught, outer commits, depth returns to 0
+    let failSavepointOnce = true;
+    db.rawDb.exec = ((sql: string) => {
+      if (failSavepointOnce && sql.startsWith("SAVEPOINT ")) {
+        failSavepointOnce = false;
+        throw new Error("SQLITE_ERROR: simulated SAVEPOINT failure");
+      }
+      return originalExec(sql);
+    }) as typeof db.rawDb.exec;
+
+    db.transaction(() => {
+      expect(db.activeTransactionDepth).toBe(1);
+      const outerKept = store.createMemory({
+        repositoryId: repoId,
+        memoryKey: "outer_survives_sp_fail",
+        category: "project_context",
+        title: "Outer Survives",
+        content: "Outer memory stays committed",
+        firstSeenScanId: scan1,
+        lastSeenScanId: scan1,
+      });
+      expect(() =>
+        db.transaction(() => {
+          throw new Error("Should not enter inner body when SAVEPOINT fails");
+        }),
+      ).toThrow(/simulated SAVEPOINT failure/);
+      db.rawDb.exec = originalExec;
+      expect(db.activeTransactionDepth).toBe(1);
+
+      // 5. Subsequent nested transaction succeeds inside outer transaction after failed SAVEPOINT
+      db.transaction(() => {
+        expect(db.activeTransactionDepth).toBe(2);
+        store.createMemory({
+          repositoryId: repoId,
+          memoryKey: "nested_after_sp_fail",
+          category: "project_context",
+          title: "Nested Recovered",
+          content: "Nested works after SAVEPOINT failure",
+          firstSeenScanId: scan1,
+          lastSeenScanId: scan1,
+        });
+      });
+      expect(db.activeTransactionDepth).toBe(1);
+      expect(store.getMemory(repoId, outerKept.id)).toBeDefined();
+    });
+    db.rawDb.exec = originalExec;
+    expect(db.activeTransactionDepth).toBe(0);
+    expect(db.integrityCheck().ok).toBe(true);
+    expect(store.listMemories(repoId).map((m) => m.memoryKey)).toContain("nested_after_sp_fail");
+
+    // 3. Nested callback failure rolls back nested savepoint ONLY while outer transaction commits
+    db.transaction(() => {
+      expect(db.activeTransactionDepth).toBe(1);
+      store.createMemory({
+        repositoryId: repoId,
+        memoryKey: "outer_before_inner_abort",
+        category: "project_context",
+        title: "Outer Before Inner Abort",
+        content: "Persists when inner savepoint rolls back",
+        firstSeenScanId: scan1,
+        lastSeenScanId: scan1,
+      });
+
+      expect(() =>
+        db.transaction(() => {
+          expect(db.activeTransactionDepth).toBe(2);
+          store.createMemory({
+            repositoryId: repoId,
+            memoryKey: "inner_rolled_back",
+            category: "project_context",
+            title: "Inner Aborted",
+            content: "Must roll back to savepoint",
+            firstSeenScanId: scan1,
+            lastSeenScanId: scan1,
+          });
+          throw new Error("Intentional inner callback failure");
+        }),
+      ).toThrow(/Intentional inner callback failure/);
+
+      // 6. Depth returns cleanly to 1 after inner rollback, then 0 on outer commit
+      expect(db.activeTransactionDepth).toBe(1);
+    });
+    expect(db.activeTransactionDepth).toBe(0);
+    expect(db.integrityCheck().ok).toBe(true);
+
+    const keys = store.listMemories(repoId).map((m) => m.memoryKey);
+    expect(keys).toContain("outer_before_inner_abort");
+    expect(keys).not.toContain("inner_rolled_back");
+
+    // 6b & 7. Uncaught nested failure rolling back whole transaction still resets activeTransactionDepth to 0 and preserves DB integrity
+    expect(() =>
+      db.transaction(() => {
+        expect(db.activeTransactionDepth).toBe(1);
+        db.transaction(() => {
+          expect(db.activeTransactionDepth).toBe(2);
+          throw new Error("Uncaught full-stack abort");
+        });
+      }),
+    ).toThrow(/Uncaught full-stack abort/);
+    expect(db.activeTransactionDepth).toBe(0);
+    expect(db.integrityCheck().ok).toBe(true);
+  });
 });

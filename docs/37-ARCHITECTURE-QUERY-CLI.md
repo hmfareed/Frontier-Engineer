@@ -248,7 +248,7 @@ npm run frontier -- memory <memory_key_or_id> [--format text|json]
 ```
 
 - **Read-Only Default & Flag Restrictions:** `evolution`, `drift`, `debt`, and `memories` are read-only unless explicitly opted into mutations via `--persist-events` (permitted only on `compare` and `evolution`) or `--apply-lifecycle` (permitted only on `evolution` and `memories --scan-id <id>`). Misplaced mutation flags exit with code `2`.
-- **Workspace Repository Ownership:** `compare`, `evolution`, `drift`, and `debt` validate `expectedRepositoryId` against the resolved workspace repository before evaluating or persisting events, rejecting foreign scan IDs with exit code `2`.
+- **Workspace Repository Ownership:** `compare`, `evolution`, `drift`, `debt`, `memories --scan-id <id>`, and `memory <id>` validate `expectedRepositoryId` against the resolved workspace repository before evaluating or persisting data. Foreign scan IDs exit with code `2`, foreign memory IDs exit with code `4` (without leaking `memory_versions` across repositories), and rejected invocations perform zero workspace database mutations even when `--persist-events` or `--apply-lifecycle` is supplied.
 - All commands accept `--scan-id <id>` to target an explicit historical scan (and `memories`/`memory` preserve full repository-scoped version lookup).
 
 ### 3.2 Output Formats
@@ -310,6 +310,7 @@ The `QueryGrammar` parser translates English-like questions into structured quer
 ### 6.1 Test Environment Disclosures
 
 - **Host Environment:** Windows 11 x64, Intel Core i7, Node.js v22.14.0, SQLite (via `node:sqlite`).
+- **Bounded Test Concurrency:** `vitest.config.ts` constrains Vitest worker concurrency with `maxWorkers: 4` (and `testTimeout: 15000`) to avoid worker IPC starvation and timeouts under full-suite execution on Windows hosts.
 - **Cross-Platform Qualifications:** Internally, path handling and query normalizers enforce canonical POSIX paths (`/`). Actual automated tests were executed exclusively on the verified Windows 11 host environment. Platform compatibility for Linux or macOS is limited to path normalization logic; host-level execution on other platforms is subject to platform-specific CI pipelines.
 - **Scope Limitation:** Benchmark fixtures represent synthetic repositories of 50, 200, and 600 files. 600 files represents a synthetic scaling test sample, not a claim of universal suitability for multi-million-line monorepos. Measured results under synthetic fixtures do not constitute a contractual SLA across arbitrary host hardware.
 

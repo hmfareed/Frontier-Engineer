@@ -588,7 +588,7 @@ export class MemoryStore {
         params.relationshipType === "IMPLEMENTS"
       ) {
         const MAX_DEPTH = 32;
-        const visited = new Set<number>();
+        const visited = new Set<number>([params.targetMemoryId]);
         const queue: { id: number; depth: number }[] = [{ id: params.targetMemoryId, depth: 0 }];
         const nextStmt = this.db.prepare(
           `SELECT target_memory_id AS targetMemoryId
@@ -604,10 +604,6 @@ export class MemoryStore {
               `ERR_MEMORY_RELATIONSHIP_CYCLE: Cycle detected in ${params.relationshipType} relationship graph`,
             );
           }
-          if (visited.has(item.id)) {
-            continue;
-          }
-          visited.add(item.id);
           const nextRows = nextStmt.all(
             params.repositoryId,
             item.id,
@@ -625,6 +621,7 @@ export class MemoryStore {
                   `ERR_MEMORY_RELATIONSHIP_DEPTH_EXCEEDED: Cycle check for ${params.relationshipType} relationship exceeded MAX_DEPTH=${MAX_DEPTH}; failing closed`,
                 );
               }
+              visited.add(nr.targetMemoryId);
               queue.push({ id: nr.targetMemoryId, depth: item.depth + 1 });
             }
           }

@@ -253,12 +253,19 @@ describe("cli-evolution (Phase 7.5 Stage 4 CLI Integration)", () => {
     );
     expect(badPersistMemories.status).toBe(2);
 
-    // DEFECT-CLI-01: Reject scans belonging to a different repository (exit code 2)
+    // DEFECT-CLI-01: Reject scans and memories belonging to a different repository across all Stage 3/4 commands
     const dbPath = path.join(ws, ".frontier", "intelligence", "index.sqlite");
     const { SqliteDatabase } = await import("../../scripts/storage/database.ts");
+    const { MemoryStore } = await import("../../scripts/storage/repositories/memory-store.ts");
     const rawDb = new SqliteDatabase({ path: dbPath });
     let foreignS1: number;
     let foreignS2: number;
+    let foreignMemoryId: number;
+    let snapshotBefore: {
+      memories: unknown[];
+      versions: unknown[];
+      events: unknown[];
+    };
     try {
       const otherRepoId = Number(
         rawDb
@@ -281,26 +288,137 @@ describe("cli-evolution (Phase 7.5 Stage 4 CLI Integration)", () => {
           )
           .run(otherRepoId).lastInsertRowid,
       );
+      const memStore = new MemoryStore(rawDb);
+      const foreignMem = memStore.createMemory({
+        repositoryId: otherRepoId,
+        memoryKey: "foreign_secret_memory",
+        category: "project_context",
+        title: "Foreign Secret Memory Title",
+        content: "Foreign secret content must never leak across workspace isolation",
+        firstSeenScanId: foreignS1,
+        lastSeenScanId: foreignS2,
+      });
+      foreignMemoryId = foreignMem.id;
+
+      // Seed an existing workspace memory & event to verify cross-repo commands cannot overwrite or mutate them
+      const ownRepo = rawDb
+        .prepare("SELECT id FROM repositories WHERE identity != 'foreign_cli_repo' LIMIT 1")
+        .get() as { id: number };
+      memStore.createMemory({
+        repositoryId: ownRepo.id,
+        memoryKey: "own_ws_memory",
+        category: "project_context",
+        title: "Workspace Memory",
+        content: "Must remain intact on rejected cross-repo commands",
+        firstSeenScanId: s1ScanId,
+        lastSeenScanId: s2ScanId,
+      });
+
+      snapshotBefore = {
+        memories: rawDb.prepare("SELECT * FROM engineering_memories ORDER BY id").all(),
+        versions: rawDb.prepare("SELECT * FROM memory_versions ORDER BY id").all(),
+        events: rawDb.prepare("SELECT * FROM evolution_events ORDER BY id").all(),
+      };
     } finally {
       rawDb.close();
     }
 
     const crossRepoCompare = runSubprocess(
-      ["--workspace", ws, "compare", String(foreignS1), String(foreignS2), "--format", "json"],
+      [
+        "--workspace",
+        ws,
+        "compare",
+        String(foreignS1),
+        String(foreignS2),
+        "--persist-events",
+        "--format",
+        "json",
+      ],
       ws,
     );
     expect(crossRepoCompare.status).toBe(2);
 
     const crossRepoEvo = runSubprocess(
-      ["--workspace", ws, "evolution", String(foreignS1), String(foreignS2), "--format", "json"],
+      [
+        "--workspace",
+        ws,
+        "evolution",
+        String(foreignS1),
+        String(foreignS2),
+        "--persist-events",
+        "--apply-lifecycle",
+        "--format",
+        "json",
+      ],
       ws,
     );
     expect(crossRepoEvo.status).toBe(2);
 
+    const crossRepoDrift = runSubprocess(
+      ["--workspace", ws, "drift", String(foreignS1), String(foreignS2), "--format", "json"],
+      ws,
+    );
+    expect(crossRepoDrift.status).toBe(2);
+
+    const crossRepoDebt = runSubprocess(
+      ["--workspace", ws, "debt", String(foreignS1), String(foreignS2), "--format", "json"],
+      ws,
+    );
+    expect(crossRepoDebt.status).toBe(2);
+
     const crossRepoMemories = runSubprocess(
-      ["--workspace", ws, "memories", "--scan-id", String(foreignS2), "--format", "json"],
+      [
+        "--workspace",
+        ws,
+        "memories",
+        "--scan-id",
+        String(foreignS2),
+        "--apply-lifecycle",
+        "--format",
+        "json",
+      ],
       ws,
     );
     expect(crossRepoMemories.status).toBe(2);
+
+    const crossRepoSingleMemory = runSubprocess(
+      ["--workspace", ws, "memory", String(foreignMemoryId), "--format", "json"],
+      ws,
+    );
+    expect(crossRepoSingleMemory.status).toBe(4);
+    expect(`${crossRepoSingleMemory.stdout}\n${crossRepoSingleMemory.stderr}`).not.toContain(
+      "Foreign Secret Memory Title",
+    );
+
+    const verifyDb = new SqliteDatabase({ path: dbPath, readOnly: true });
+    try {
+      const snapshotAfter = {
+        memories: verifyDb.prepare("SELECT * FROM engineering_memories ORDER BY id").all(),
+        versions: verifyDb.prepare("SELECT * FROM memory_versions ORDER BY id").all(),
+        events: verifyDb.prepare("SELECT * FROM evolution_events ORDER BY id").all(),
+      };
+      expect(snapshotAfter).toEqual(snapshotBefore);
+    } finally {
+      verifyDb.close();
+    }
+
+    // Valid memories --scan-id --apply-lifecycle on workspace's own scan exits 0
+    const ownMemoriesApply = runSubprocess(
+      [
+        "--workspace",
+        ws,
+        "memories",
+        "--scan-id",
+        String(s2ScanId),
+        "--apply-lifecycle",
+        "--format",
+        "json",
+      ],
+      ws,
+    );
+    expect(ownMemoriesApply.status).toBe(0);
+    const parsedOwn = JSON.parse(ownMemoriesApply.stdout);
+    expect(parsedOwn.totalCount).toBeGreaterThanOrEqual(1);
+    expect(Array.isArray(parsedOwn.memories)).toBe(true);
   });
 });

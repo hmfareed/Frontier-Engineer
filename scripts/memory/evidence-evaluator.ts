@@ -11,11 +11,47 @@ import { ComponentDetector } from "../architecture/component-detector.ts";
 import { TestAssociationEngine } from "../architecture/test-association.ts";
 import { AdrDiffEngine } from "../evolution/adr-diff.ts";
 import { SnapshotComparisonError } from "../evolution/snapshot-comparator.ts";
+import { SnapshotValidator } from "../evolution/snapshot-validator.ts";
 import type { EvidenceEvaluationItem, EvidenceVerificationStatus } from "./types.ts";
 
 export interface EvidenceContextOptions {
   allowPartial?: boolean;
   workspaceRoot?: string;
+}
+
+export interface RelocatedSymbolInfo {
+  isAmbiguous: boolean;
+  targetIdentity: string;
+  targetFingerprint?: string;
+  targetPath?: string;
+  baseFingerprint?: string;
+  name?: string;
+  kind?: string;
+}
+
+export interface TargetGraphEdgeInfo {
+  id: number;
+  edgeIdentity: string;
+  relationshipType: string;
+  relationshipStatus: string;
+  sourceNodeIdentity: string | null;
+  targetNodeIdentity: string | null;
+  hasValidOwnedEndpoints: boolean;
+}
+
+export interface GraphEdgeByIdRecord {
+  id: number;
+  repositoryId: number;
+  scanId: number;
+  edgeIdentity: string;
+  relationshipType: string;
+  relationshipStatus: string;
+  sourceNodeIdentity: string | null;
+  sourceNodeRepoId: number | null;
+  sourceNodeScanId: number | null;
+  targetNodeIdentity: string | null;
+  targetNodeRepoId: number | null;
+  targetNodeScanId: number | null;
 }
 
 export interface TargetSnapshotContext {
@@ -25,20 +61,24 @@ export interface TargetSnapshotContext {
   isPartialSnapshot: boolean;
   hasComparison: boolean;
   limitations: ComparisonLimitation[];
+  isScanOwnedByRepository: (scanId: number) => boolean;
   filesByPath: Map<string, { id: number; contentHash: string | null }>;
   symbolsByIdentity: Map<
     string,
-    { id: number; fingerprint: string; filePath: string; name: string }
-  >;
-  relocatedSymbols: Map<
-    string,
     {
-      isAmbiguous: boolean;
-      targetIdentity: string;
-      targetFingerprint?: string;
-      targetPath?: string;
+      id: number;
+      fingerprint: string;
+      filePath: string;
+      name: string;
+      kind: string;
+      scope: string | null;
     }
   >;
+  relocatedSymbols: Map<string, RelocatedSymbolInfo>;
+  resolveRelocationFromScan: (
+    originScanId: number,
+    symbolIdentity: string,
+  ) => RelocatedSymbolInfo | undefined;
   importsBySource: Map<
     string,
     {
@@ -53,7 +93,8 @@ export interface TargetSnapshotContext {
   getComponentCategoryInScan: (scanId: number, compIdentity: string) => string | undefined;
   adrsById: Map<string, { status?: string; filePath: string; isFallback: boolean }>;
   adrsByPath: Map<string, { status?: string; adrId: string; isFallback: boolean }>;
-  graphEdgesByIdentity: Map<string, { relationshipStatus: string }>;
+  graphEdgesByIdentity: Map<string, TargetGraphEdgeInfo>;
+  getGraphEdgeById: (edgeId: number) => GraphEdgeByIdRecord | undefined;
   sourceEdgeIdentitiesById: Map<number, string>;
   testFilesWithAssociations: Set<string>;
 }
@@ -69,6 +110,7 @@ export class EvidenceEvaluator {
     workspaceRoot?: string,
     options: EvidenceContextOptions = {},
   ): TargetSnapshotContext {
+    // DEFECT-LC-03: Validate target scan existence, ownership, completion status, and comparison validity upfront.
     const scanRow = db
       .prepare("SELECT id, repository_id AS repositoryId, status FROM scan_runs WHERE id = ?")
       .get(targetScanId) as { id: number; repositoryId: number; status: string } | undefined;
@@ -109,6 +151,50 @@ export class EvidenceEvaluator {
       );
     }
 
+    if (comparison) {
+      if (comparison.repositoryId !== repositoryId) {
+        throw new SnapshotComparisonError(
+          `Snapshot comparison belongs to repository ${comparison.repositoryId}, expected ${repositoryId}.`,
+          "ERR_REPOSITORY_MISMATCH",
+        );
+      }
+      if (comparison.targetSnapshot.scanId !== targetScanId) {
+        throw new SnapshotComparisonError(
+          `Snapshot comparison targets scan ${comparison.targetSnapshot.scanId}, expected ${targetScanId}.`,
+          "ERR_SCAN_MISMATCH",
+        );
+      }
+      const validation = SnapshotValidator.validate(
+        db,
+        comparison.baseSnapshot.scanId,
+        targetScanId,
+        {
+          allowPartial: options.allowPartial,
+          expectedRepositoryId: repositoryId,
+        },
+      );
+      if (!validation.isValid) {
+        throw new SnapshotComparisonError(
+          validation.errorMessage ?? "Invalid snapshot comparison for lifecycle evaluation.",
+          validation.errorCode ?? "ERR_SNAPSHOT_VALIDATION_FAILED",
+          validation,
+        );
+      }
+    }
+
+    const scanOwnershipCache = new Map<number, boolean>([[targetScanId, true]]);
+    const scanOwnershipStmt = db.prepare(
+      "SELECT 1 AS owned FROM scan_runs WHERE id = ? AND repository_id = ?",
+    );
+    const isScanOwnedByRepository = (scanId: number): boolean => {
+      if (!scanOwnershipCache.has(scanId)) {
+        const ownedRow = scanOwnershipStmt.get(scanId, repositoryId) as
+          { owned: number } | undefined;
+        scanOwnershipCache.set(scanId, Boolean(ownedRow));
+      }
+      return scanOwnershipCache.get(scanId)!;
+    };
+
     const limitations: ComparisonLimitation[] = [];
     if (isPartialSnapshot) {
       limitations.push({
@@ -135,11 +221,18 @@ export class EvidenceEvaluator {
 
     const symbolsByIdentity = new Map<
       string,
-      { id: number; fingerprint: string; filePath: string; name: string }
+      {
+        id: number;
+        fingerprint: string;
+        filePath: string;
+        name: string;
+        kind: string;
+        scope: string | null;
+      }
     >();
     const symbolRows = db
       .prepare(
-        `SELECT s.id, s.symbol_identity AS symbolIdentity, s.fingerprint, s.name, f.normalized_path AS filePath
+        `SELECT s.id, s.symbol_identity AS symbolIdentity, s.fingerprint, s.name, s.kind, s.scope, f.normalized_path AS filePath
          FROM symbols s
          JOIN files f ON f.id = s.file_id
          WHERE s.repository_id = ? AND s.scan_id = ?`,
@@ -149,6 +242,8 @@ export class EvidenceEvaluator {
       symbolIdentity: string;
       fingerprint: string;
       name: string;
+      kind: string;
+      scope: string | null;
       filePath: string;
     }[];
     for (const s of symbolRows) {
@@ -157,34 +252,164 @@ export class EvidenceEvaluator {
         fingerprint: s.fingerprint,
         filePath: s.filePath,
         name: s.name,
+        kind: s.kind,
+        scope: s.scope,
       });
     }
 
-    const relocatedSymbols = new Map<
-      string,
-      {
-        isAmbiguous: boolean;
-        targetIdentity: string;
-        targetFingerprint?: string;
-        targetPath?: string;
+    // DEFECT-EV-03: Deterministic relocation resolution using SymbolDiffEngine's exact
+    // semantic key (name::kind::scope::fingerprint) without brittle path string replacement.
+    const originRelocationCache = new Map<number, Map<string, RelocatedSymbolInfo>>();
+    const originSymbolsStmt = db.prepare(
+      `SELECT s.symbol_identity AS symbolIdentity, s.fingerprint, s.name, s.kind, s.scope, f.normalized_path AS filePath
+       FROM symbols s
+       JOIN files f ON f.id = s.file_id
+       WHERE s.repository_id = ? AND s.scan_id = ?
+       ORDER BY s.symbol_identity ASC, s.id ASC`,
+    );
+
+    const buildScanRelocationMap = (originScanId: number): Map<string, RelocatedSymbolInfo> => {
+      if (originRelocationCache.has(originScanId)) {
+        return originRelocationCache.get(originScanId)!;
       }
-    >();
+      const map = new Map<string, RelocatedSymbolInfo>();
+      if (!isScanOwnedByRepository(originScanId) || originScanId === targetScanId) {
+        originRelocationCache.set(originScanId, map);
+        return map;
+      }
+
+      const originRows = originSymbolsStmt.all(repositoryId, originScanId) as unknown as {
+        symbolIdentity: string;
+        fingerprint: string;
+        name: string;
+        kind: string;
+        scope: string | null;
+        filePath: string;
+      }[];
+
+      const originById = new Map<string, (typeof originRows)[number]>();
+      for (const b of originRows) {
+        originById.set(b.symbolIdentity, b);
+      }
+
+      const unmatchedOrigin = originRows.filter((b) => !symbolsByIdentity.has(b.symbolIdentity));
+      const unmatchedTarget: {
+        symbolIdentity: string;
+        fingerprint: string;
+        filePath: string;
+        name: string;
+        kind: string;
+        scope: string | null;
+      }[] = [];
+      for (const [tId, t] of symbolsByIdentity.entries()) {
+        if (!originById.has(tId)) {
+          unmatchedTarget.push({ symbolIdentity: tId, ...t });
+        }
+      }
+
+      if (unmatchedOrigin.length > 0 && unmatchedTarget.length > 0) {
+        const makeKey = (s: {
+          name: string;
+          kind: string;
+          scope: string | null;
+          fingerprint: string;
+        }) => `${s.name}::${s.kind}::${s.scope ?? ""}::${s.fingerprint}`;
+
+        const originByKey = new Map<string, typeof unmatchedOrigin>();
+        for (const b of unmatchedOrigin) {
+          const k = makeKey(b);
+          if (!originByKey.has(k)) originByKey.set(k, []);
+          originByKey.get(k)!.push(b);
+        }
+
+        const targetByKey = new Map<string, typeof unmatchedTarget>();
+        for (const t of unmatchedTarget) {
+          const k = makeKey(t);
+          if (!targetByKey.has(k)) targetByKey.set(k, []);
+          targetByKey.get(k)!.push(t);
+        }
+
+        for (const [k, tList] of targetByKey.entries()) {
+          const bList = originByKey.get(k);
+          if (!bList) continue;
+
+          if (bList.length === 1 && tList.length === 1) {
+            const b = bList[0];
+            const t = tList[0];
+            const info: RelocatedSymbolInfo = {
+              isAmbiguous: false,
+              targetIdentity: t.symbolIdentity,
+              targetFingerprint: t.fingerprint,
+              targetPath: t.filePath,
+              baseFingerprint: b.fingerprint,
+              name: t.name,
+              kind: t.kind,
+            };
+            map.set(b.symbolIdentity, info);
+            map.set(t.symbolIdentity, info);
+          } else {
+            for (const b of bList) {
+              map.set(b.symbolIdentity, {
+                isAmbiguous: true,
+                targetIdentity: b.symbolIdentity,
+                baseFingerprint: b.fingerprint,
+                name: b.name,
+                kind: b.kind,
+              });
+            }
+            for (const t of tList) {
+              map.set(t.symbolIdentity, {
+                isAmbiguous: true,
+                targetIdentity: t.symbolIdentity,
+                targetFingerprint: t.fingerprint,
+                targetPath: t.filePath,
+                name: t.name,
+                kind: t.kind,
+              });
+            }
+          }
+        }
+      }
+
+      originRelocationCache.set(originScanId, map);
+      return map;
+    };
+
+    const resolveRelocationFromScan = (
+      originScanId: number,
+      symbolIdentity: string,
+    ): RelocatedSymbolInfo | undefined => {
+      return buildScanRelocationMap(originScanId).get(symbolIdentity);
+    };
+
+    const relocatedSymbols = new Map<string, RelocatedSymbolInfo>();
     if (comparison) {
+      const baseRelocMap = buildScanRelocationMap(comparison.baseSnapshot.scanId);
+      for (const [symId, info] of baseRelocMap.entries()) {
+        relocatedSymbols.set(symId, info);
+      }
+
       for (const sc of comparison.symbols.changes) {
-        if (sc.changeType === "RELOCATED") {
-          const info = {
-            isAmbiguous: Boolean(sc.isAmbiguous),
+        if (sc.isAmbiguous) {
+          relocatedSymbols.set(sc.symbolIdentity, {
+            isAmbiguous: true,
             targetIdentity: sc.symbolIdentity,
             targetFingerprint: sc.targetFingerprint,
             targetPath: sc.targetPath,
-          };
-          relocatedSymbols.set(sc.symbolIdentity, info);
-          // Also index by probable base identity (replacing targetPath with basePath) so memories
-          // anchored on the old symbolIdentity can resolve cleanly (or flag ambiguity).
-          if (sc.basePath && sc.targetPath && sc.symbolIdentity.includes(sc.targetPath)) {
-            const probableBaseId = sc.symbolIdentity.replace(sc.targetPath, sc.basePath);
-            relocatedSymbols.set(probableBaseId, info);
-          }
+            baseFingerprint: sc.baseFingerprint,
+            name: sc.name,
+            kind: sc.kind,
+          });
+        } else if (sc.changeType === "RELOCATED" && !relocatedSymbols.has(sc.symbolIdentity)) {
+          relocatedSymbols.set(sc.symbolIdentity, {
+            isAmbiguous: false,
+            targetIdentity: sc.symbolIdentity,
+            targetFingerprint: sc.targetFingerprint,
+            targetPath: sc.targetPath,
+            baseFingerprint: sc.baseFingerprint,
+            name: sc.name,
+            kind: sc.kind,
+          });
         }
       }
     }
@@ -238,6 +463,9 @@ export class EvidenceEvaluator {
       scanId: number,
       compIdentity: string,
     ): string | undefined => {
+      if (!isScanOwnedByRepository(scanId)) {
+        return undefined;
+      }
       if (!scanCategoryCache.has(scanId)) {
         const comps = ComponentDetector.detect(db, repositoryId, scanId);
         scanCategoryCache.set(scanId, new Map(comps.map((c) => [c.componentIdentity, c.category])));
@@ -299,21 +527,85 @@ export class EvidenceEvaluator {
       }
     }
 
-    const graphEdgesByIdentity = new Map<string, { relationshipStatus: string }>();
+    // ISSUE-EV-09: Load target graph edges joined with endpoint nodes to enforce continuity and ownership
+    const graphEdgesByIdentity = new Map<string, TargetGraphEdgeInfo>();
     const edgeRows = db
       .prepare(
-        `SELECT edge_identity AS edgeIdentity, relationship_status AS relationshipStatus
-         FROM graph_edges WHERE repository_id = ? AND scan_id = ?`,
+        `SELECT
+          ge.id,
+          ge.edge_identity AS edgeIdentity,
+          ge.relationship_type AS relationshipType,
+          ge.relationship_status AS relationshipStatus,
+          src.node_identity AS sourceNodeIdentity,
+          src.repository_id AS sourceNodeRepoId,
+          src.scan_id AS sourceNodeScanId,
+          dst.node_identity AS targetNodeIdentity,
+          dst.repository_id AS targetNodeRepoId,
+          dst.scan_id AS targetNodeScanId
+         FROM graph_edges ge
+         LEFT JOIN graph_nodes src ON src.id = ge.source_node_id
+         LEFT JOIN graph_nodes dst ON dst.id = ge.target_node_id
+         WHERE ge.repository_id = ? AND ge.scan_id = ?`,
       )
       .all(repositoryId, targetScanId) as unknown as {
+      id: number;
       edgeIdentity: string;
+      relationshipType: string;
       relationshipStatus: string;
+      sourceNodeIdentity: string | null;
+      sourceNodeRepoId: number | null;
+      sourceNodeScanId: number | null;
+      targetNodeIdentity: string | null;
+      targetNodeRepoId: number | null;
+      targetNodeScanId: number | null;
     }[];
     for (const edge of edgeRows) {
+      const hasValidOwnedEndpoints = Boolean(
+        edge.sourceNodeIdentity &&
+        edge.targetNodeIdentity &&
+        edge.sourceNodeRepoId === repositoryId &&
+        edge.sourceNodeScanId === targetScanId &&
+        edge.targetNodeRepoId === repositoryId &&
+        edge.targetNodeScanId === targetScanId,
+      );
       graphEdgesByIdentity.set(edge.edgeIdentity, {
+        id: edge.id,
+        edgeIdentity: edge.edgeIdentity,
+        relationshipType: edge.relationshipType,
         relationshipStatus: edge.relationshipStatus,
+        sourceNodeIdentity: edge.sourceNodeIdentity,
+        targetNodeIdentity: edge.targetNodeIdentity,
+        hasValidOwnedEndpoints,
       });
     }
+
+    const edgeByIdCache = new Map<number, GraphEdgeByIdRecord | null>();
+    const edgeByIdStmt = db.prepare(
+      `SELECT
+        ge.id,
+        ge.repository_id AS repositoryId,
+        ge.scan_id AS scanId,
+        ge.edge_identity AS edgeIdentity,
+        ge.relationship_type AS relationshipType,
+        ge.relationship_status AS relationshipStatus,
+        src.node_identity AS sourceNodeIdentity,
+        src.repository_id AS sourceNodeRepoId,
+        src.scan_id AS sourceNodeScanId,
+        dst.node_identity AS targetNodeIdentity,
+        dst.repository_id AS targetNodeRepoId,
+        dst.scan_id AS targetNodeScanId
+       FROM graph_edges ge
+       LEFT JOIN graph_nodes src ON src.id = ge.source_node_id
+       LEFT JOIN graph_nodes dst ON dst.id = ge.target_node_id
+       WHERE ge.id = ?`,
+    );
+    const getGraphEdgeById = (edgeId: number): GraphEdgeByIdRecord | undefined => {
+      if (!edgeByIdCache.has(edgeId)) {
+        const row = edgeByIdStmt.get(edgeId) as GraphEdgeByIdRecord | undefined;
+        edgeByIdCache.set(edgeId, row ?? null);
+      }
+      return edgeByIdCache.get(edgeId) ?? undefined;
+    };
 
     const sourceEdgeIdentitiesById = new Map<number, string>();
     const allEvidenceEdges = db
@@ -338,9 +630,11 @@ export class EvidenceEvaluator {
       isPartialSnapshot,
       hasComparison: Boolean(comparison),
       limitations,
+      isScanOwnedByRepository,
       filesByPath,
       symbolsByIdentity,
       relocatedSymbols,
+      resolveRelocationFromScan,
       importsBySource,
       componentsByIdentity,
       modifiedComponentCategories,
@@ -348,6 +642,7 @@ export class EvidenceEvaluator {
       adrsById,
       adrsByPath,
       graphEdgesByIdentity,
+      getGraphEdgeById,
       sourceEdgeIdentitiesById,
       testFilesWithAssociations,
     };
@@ -357,18 +652,11 @@ export class EvidenceEvaluator {
     ctx: TargetSnapshotContext,
     evidence: MemoryEvidenceRecord,
   ): EvidenceEvaluationItem {
-    let status: EvidenceVerificationStatus;
-    let reason: string;
-
-    if (evidence.isContradictory) {
-      const active = this.isContradictoryArtifactPresent(ctx, evidence);
-      if (active) {
-        status = "CONTRADICTED";
-        reason = `Contradictory ${evidence.evidenceType} evidence active in scan ${ctx.targetScanId}: ${evidence.description}`;
-      } else {
-        status = "MISSING";
-        reason = `Contradictory ${evidence.evidenceType} artifact absent in scan ${ctx.targetScanId}`;
-      }
+    // Reject cross-repository or non-owned evidence scans conservatively as UNVERIFIED
+    if (
+      evidence.repositoryId !== ctx.repositoryId ||
+      !ctx.isScanOwnedByRepository(evidence.scanId)
+    ) {
       return {
         evidenceId: evidence.id,
         memoryId: evidence.memoryId,
@@ -376,14 +664,33 @@ export class EvidenceEvaluator {
         sourcePath: evidence.sourcePath,
         symbolIdentity: evidence.symbolIdentity,
         isContradictory: evidence.isContradictory,
-        status,
-        reason,
+        status: "UNVERIFIED",
+        reason: `Evidence ${evidence.id} belongs to repository ${evidence.repositoryId} / scan ${evidence.scanId}, outside active repository ${ctx.repositoryId}`,
         targetScanId: ctx.targetScanId,
       };
     }
 
+    if (evidence.isContradictory) {
+      const outcome = this.evaluateContradictoryEvidence(ctx, evidence);
+      return {
+        evidenceId: evidence.id,
+        memoryId: evidence.memoryId,
+        evidenceType: evidence.evidenceType,
+        sourcePath: evidence.sourcePath,
+        symbolIdentity: evidence.symbolIdentity,
+        isContradictory: evidence.isContradictory,
+        status: outcome.status,
+        reason: outcome.reason,
+        targetScanId: ctx.targetScanId,
+      };
+    }
+
+    let status: EvidenceVerificationStatus;
+    let reason: string;
+
     switch (evidence.evidenceType) {
       case "source_file": {
+        // DEFECT-EV-01: Verify both file path presence and contentHash against evidence.sourceHash
         const fileEntry = ctx.filesByPath.get(evidence.sourcePath);
         if (!fileEntry) {
           status = "MISSING";
@@ -402,9 +709,15 @@ export class EvidenceEvaluator {
       }
 
       case "symbol": {
+        // DEFECT-EV-02 & DEFECT-EV-03: Fingerprint drift is MISSING (STALE); unique relocation resolves target identity & fingerprint
         const symId = evidence.symbolIdentity;
         const targetSym = symId ? ctx.symbolsByIdentity.get(symId) : undefined;
-        const reloc = symId ? ctx.relocatedSymbols.get(symId) : undefined;
+        const reloc = symId
+          ? (ctx.relocatedSymbols.get(symId) ??
+            (evidence.scanId !== ctx.targetScanId
+              ? ctx.resolveRelocationFromScan(evidence.scanId, symId)
+              : undefined))
+          : undefined;
 
         if (!symId) {
           status = ctx.filesByPath.has(evidence.sourcePath) ? "UNVERIFIED" : "MISSING";
@@ -424,13 +737,22 @@ export class EvidenceEvaluator {
             reason = `Symbol '${symId}' verified in scan ${ctx.targetScanId}`;
           }
         } else if (reloc && !reloc.isAmbiguous) {
-          if (
+          const relocatedTargetSym = ctx.symbolsByIdentity.get(reloc.targetIdentity);
+          if (!relocatedTargetSym) {
+            status = "UNVERIFIED";
+            reason = `Relocated symbol target '${reloc.targetIdentity}' could not be confirmed in scan ${ctx.targetScanId}`;
+          } else if (
             evidence.sourceHash &&
-            reloc.targetFingerprint &&
-            evidence.sourceHash !== reloc.targetFingerprint
+            evidence.sourceHash !== relocatedTargetSym.fingerprint
           ) {
             status = "MISSING";
-            reason = `Relocated symbol '${symId}' fingerprint changed (${evidence.sourceHash} -> ${reloc.targetFingerprint}); memory needs re-verification`;
+            reason = `Relocated symbol '${symId}' fingerprint changed (${evidence.sourceHash} -> ${relocatedTargetSym.fingerprint}); memory needs re-verification`;
+          } else if (
+            reloc.baseFingerprint &&
+            reloc.baseFingerprint !== relocatedTargetSym.fingerprint
+          ) {
+            status = "MISSING";
+            reason = `Relocated symbol '${symId}' fingerprint drifted across move (${reloc.baseFingerprint} -> ${relocatedTargetSym.fingerprint}); memory needs re-verification`;
           } else {
             status = "VERIFIED";
             reason = `Symbol '${symId}' verified via unique relocation (${reloc.targetIdentity}) in scan ${ctx.targetScanId}`;
@@ -443,6 +765,7 @@ export class EvidenceEvaluator {
       }
 
       case "import": {
+        // ISSUE-EV-07: Validate specifier, line window, and UNRESOLVED import semantics
         const imports = ctx.importsBySource.get(evidence.sourcePath) ?? [];
         const specMatch = evidence.description.match(/import:([^\s]+)/i);
         const targetSpec = evidence.symbolIdentity ?? specMatch?.[1];
@@ -471,6 +794,7 @@ export class EvidenceEvaluator {
       }
 
       case "component": {
+        // ISSUE-EV-08: Detect component category shifts across comparison or origin scan
         const descMatch = evidence.description.match(/comp:([^\s,)]+)/);
         const compIdentity = descMatch?.[1]
           ? `comp:${descMatch[1]}`
@@ -506,6 +830,7 @@ export class EvidenceEvaluator {
       }
 
       case "adr": {
+        // DEFECT-EV-06: Historical ADR status resolved purely from hash-verified snapshot state
         const adrMatch = evidence.description.match(/\b(ADR-\d+)\b/i);
         const byPath = ctx.adrsByPath.get(evidence.sourcePath);
         const byId = adrMatch ? ctx.adrsById.get(adrMatch[1].toUpperCase()) : undefined;
@@ -532,24 +857,83 @@ export class EvidenceEvaluator {
       }
 
       case "graph_edge": {
-        const resolvedIdentity =
-          (evidence.graphEdgeId !== null
-            ? ctx.sourceEdgeIdentitiesById.get(evidence.graphEdgeId)
-            : undefined) ?? evidence.description.match(/(edge:[^\s]+)/)?.[1];
-        if (!resolvedIdentity) {
-          status = "UNVERIFIED";
-          reason = `Graph edge identity could not be resolved for scan ${ctx.targetScanId}`;
-        } else {
-          const edge = ctx.graphEdgesByIdentity.get(resolvedIdentity);
-          if (!edge) {
-            status = "MISSING";
-            reason = `Graph edge '${resolvedIdentity}' missing in scan ${ctx.targetScanId}`;
-          } else if (edge.relationshipStatus === "UNRESOLVED") {
+        // ISSUE-EV-09: Resolve graph-edge evidence via graphEdgeId even when symbolIdentity is null,
+        // verifying endpoint ownership, scan provenance, and endpoint/relationship continuity.
+        if (evidence.graphEdgeId !== null) {
+          const srcEdge = ctx.getGraphEdgeById(evidence.graphEdgeId);
+          if (!srcEdge) {
             status = "UNVERIFIED";
-            reason = `Graph edge '${resolvedIdentity}' is UNRESOLVED in scan ${ctx.targetScanId}; target cannot be verified`;
+            reason = `Graph edge ID ${evidence.graphEdgeId} could not be resolved for scan ${ctx.targetScanId}`;
+          } else if (
+            srcEdge.repositoryId !== ctx.repositoryId ||
+            srcEdge.sourceNodeRepoId !== ctx.repositoryId ||
+            srcEdge.targetNodeRepoId !== ctx.repositoryId
+          ) {
+            status = "UNVERIFIED";
+            reason = `Graph edge ${evidence.graphEdgeId} or its endpoint nodes belong to another repository`;
+          } else if (
+            srcEdge.scanId !== evidence.scanId ||
+            srcEdge.sourceNodeScanId !== srcEdge.scanId ||
+            srcEdge.targetNodeScanId !== srcEdge.scanId
+          ) {
+            status = "UNVERIFIED";
+            reason = `Graph edge ${evidence.graphEdgeId} (scan ${srcEdge.scanId}) does not match evidence scan ${evidence.scanId}`;
+          } else if (!srcEdge.sourceNodeIdentity || !srcEdge.targetNodeIdentity) {
+            status = "UNVERIFIED";
+            reason = `Graph edge ${evidence.graphEdgeId} lacks resolved endpoint node identities`;
+          } else if (
+            evidence.symbolIdentity !== null &&
+            evidence.symbolIdentity !== srcEdge.edgeIdentity
+          ) {
+            status = "UNVERIFIED";
+            reason = `Graph edge ${evidence.graphEdgeId} identity '${srcEdge.edgeIdentity}' conflicts with symbolIdentity '${evidence.symbolIdentity}'`;
           } else {
-            status = "VERIFIED";
-            reason = `Graph edge '${resolvedIdentity}' verified in scan ${ctx.targetScanId}`;
+            const targetEdge = ctx.graphEdgesByIdentity.get(srcEdge.edgeIdentity);
+            if (!targetEdge) {
+              status = "MISSING";
+              reason = `Graph edge '${srcEdge.edgeIdentity}' missing in scan ${ctx.targetScanId}`;
+            } else if (!targetEdge.hasValidOwnedEndpoints) {
+              status = "UNVERIFIED";
+              reason = `Graph edge '${srcEdge.edgeIdentity}' in scan ${ctx.targetScanId} has invalid or cross-repository endpoints`;
+            } else if (
+              targetEdge.sourceNodeIdentity !== srcEdge.sourceNodeIdentity ||
+              targetEdge.targetNodeIdentity !== srcEdge.targetNodeIdentity ||
+              targetEdge.relationshipType !== srcEdge.relationshipType
+            ) {
+              status = "MISSING";
+              reason = `Graph edge '${srcEdge.edgeIdentity}' changed endpoints or relationship type (${srcEdge.relationshipType} -> ${targetEdge.relationshipType}) in scan ${ctx.targetScanId}`;
+            } else if (targetEdge.relationshipStatus === "UNRESOLVED") {
+              status = "UNVERIFIED";
+              reason = `Graph edge '${srcEdge.edgeIdentity}' is UNRESOLVED in scan ${ctx.targetScanId}; target cannot be verified`;
+            } else {
+              status = "VERIFIED";
+              reason = `Graph edge '${srcEdge.edgeIdentity}' verified via graphEdgeId=${evidence.graphEdgeId} in scan ${ctx.targetScanId}`;
+            }
+          }
+        } else {
+          const fallbackIdentity =
+            evidence.symbolIdentity ??
+            evidence.description.match(
+              /(?:edge:[^\s]+|[a-z_]+:[^\s]+->[A-Z_]+->[a-z_]+:[^\s]+)/,
+            )?.[0];
+          if (!fallbackIdentity) {
+            status = "UNVERIFIED";
+            reason = `Graph edge identity could not be resolved for scan ${ctx.targetScanId}`;
+          } else {
+            const targetEdge = ctx.graphEdgesByIdentity.get(fallbackIdentity);
+            if (!targetEdge) {
+              status = "MISSING";
+              reason = `Graph edge '${fallbackIdentity}' missing in scan ${ctx.targetScanId}`;
+            } else if (
+              !targetEdge.hasValidOwnedEndpoints ||
+              targetEdge.relationshipStatus === "UNRESOLVED"
+            ) {
+              status = "UNVERIFIED";
+              reason = `Graph edge '${fallbackIdentity}' in scan ${ctx.targetScanId} cannot be positively verified (${targetEdge.relationshipStatus})`;
+            } else {
+              status = "VERIFIED";
+              reason = `Graph edge '${fallbackIdentity}' verified in scan ${ctx.targetScanId}`;
+            }
           }
         }
         break;
@@ -570,25 +954,49 @@ export class EvidenceEvaluator {
       }
 
       case "diff": {
-        if (evidence.sourcePath && evidence.sourcePath !== "diff") {
-          if (ctx.filesByPath.has(evidence.sourcePath)) {
-            status = "VERIFIED";
-            reason = `Snapshot diff artifact '${evidence.sourcePath}' verified in scan ${ctx.targetScanId}`;
-          } else {
+        // DEFECT-EV-05: Diff evidence MUST anchor to a concrete target artifact and verify its hash/symbol;
+        // a comparison object alone never certifies unanchored diff evidence.
+        if (!evidence.sourcePath || evidence.sourcePath === "diff") {
+          status = "UNVERIFIED";
+          reason = `Unanchored diff evidence cannot be automatically verified against scan ${ctx.targetScanId}`;
+        } else {
+          const fileEntry = ctx.filesByPath.get(evidence.sourcePath);
+          if (!fileEntry) {
             status = "MISSING";
             reason = `Snapshot diff artifact '${evidence.sourcePath}' missing in scan ${ctx.targetScanId}`;
+          } else if (evidence.symbolIdentity) {
+            const sym = ctx.symbolsByIdentity.get(evidence.symbolIdentity);
+            if (!sym) {
+              status = "MISSING";
+              reason = `Snapshot diff symbol '${evidence.symbolIdentity}' missing in scan ${ctx.targetScanId}`;
+            } else if (evidence.sourceHash && sym.fingerprint !== evidence.sourceHash) {
+              status = "MISSING";
+              reason = `Snapshot diff symbol '${evidence.symbolIdentity}' fingerprint changed in scan ${ctx.targetScanId}`;
+            } else {
+              status = "VERIFIED";
+              reason = `Snapshot diff artifact '${evidence.sourcePath}' (${evidence.symbolIdentity}) verified in scan ${ctx.targetScanId}`;
+            }
+          } else if (evidence.sourceHash) {
+            if (fileEntry.contentHash === null) {
+              status = "UNVERIFIED";
+              reason = `Snapshot diff artifact '${evidence.sourcePath}' lacks stored content_hash in scan ${ctx.targetScanId}`;
+            } else if (fileEntry.contentHash !== evidence.sourceHash) {
+              status = "MISSING";
+              reason = `Snapshot diff artifact '${evidence.sourcePath}' hash changed (${evidence.sourceHash} -> ${fileEntry.contentHash}) in scan ${ctx.targetScanId}`;
+            } else {
+              status = "VERIFIED";
+              reason = `Snapshot diff artifact '${evidence.sourcePath}' hash-verified in scan ${ctx.targetScanId}`;
+            }
+          } else {
+            status = "VERIFIED";
+            reason = `Snapshot diff artifact '${evidence.sourcePath}' verified in scan ${ctx.targetScanId}`;
           }
-        } else if (ctx.hasComparison) {
-          status = "VERIFIED";
-          reason = `Snapshot diff evidence evaluated against comparison ending at scan ${ctx.targetScanId}`;
-        } else {
-          status = "UNVERIFIED";
-          reason = `Diff evidence lacks concrete sourcePath and comparison context in scan ${ctx.targetScanId}`;
         }
         break;
       }
 
       case "manual": {
+        // DEFECT-EV-04: Unanchored manual evidence returns UNVERIFIED; file-anchored checks path & sourceHash
         if (!evidence.sourcePath || evidence.sourcePath === "manual") {
           status = "UNVERIFIED";
           reason = `Unanchored manual evidence cannot be automatically verified against scan ${ctx.targetScanId}`;
@@ -612,7 +1020,7 @@ export class EvidenceEvaluator {
       }
     }
 
-    // DEFECT-EV-05: In PARTIAL snapshots, missing artifacts cannot prove staleness
+    // DEFECT-LC-03: In PARTIAL snapshots, missing artifacts cannot prove staleness
     if (ctx.isPartialSnapshot && status === "MISSING") {
       status = "UNVERIFIED";
       reason = `${reason} (downgraded from MISSING because scan ${ctx.targetScanId} is PARTIAL)`;
@@ -631,22 +1039,112 @@ export class EvidenceEvaluator {
     };
   }
 
-  private static isContradictoryArtifactPresent(
+  private static evaluateContradictoryEvidence(
     ctx: TargetSnapshotContext,
     evidence: MemoryEvidenceRecord,
-  ): boolean {
+  ): { status: EvidenceVerificationStatus; reason: string } {
     switch (evidence.evidenceType) {
       case "manual":
-      case "diff":
-        return evidence.sourcePath &&
-          evidence.sourcePath !== "manual" &&
-          evidence.sourcePath !== "diff"
-          ? ctx.filesByPath.has(evidence.sourcePath)
-          : false;
-      case "symbol":
-        return evidence.symbolIdentity
-          ? ctx.symbolsByIdentity.has(evidence.symbolIdentity)
-          : ctx.filesByPath.has(evidence.sourcePath);
+      case "diff": {
+        if (!evidence.sourcePath || evidence.sourcePath === evidence.evidenceType) {
+          return {
+            status: "UNVERIFIED",
+            reason: `Unanchored contradictory ${evidence.evidenceType} evidence cannot establish contradiction in scan ${ctx.targetScanId}`,
+          };
+        }
+        const fileEntry = ctx.filesByPath.get(evidence.sourcePath);
+        if (!fileEntry) {
+          return {
+            status: "MISSING",
+            reason: `Contradictory ${evidence.evidenceType} artifact '${evidence.sourcePath}' absent in scan ${ctx.targetScanId}`,
+          };
+        }
+        if (evidence.evidenceType === "diff" && evidence.symbolIdentity) {
+          const sym = ctx.symbolsByIdentity.get(evidence.symbolIdentity);
+          if (!sym || (evidence.sourceHash && sym.fingerprint !== evidence.sourceHash)) {
+            return {
+              status: "MISSING",
+              reason: `Contradictory diff symbol '${evidence.symbolIdentity}' absent or altered in scan ${ctx.targetScanId}`,
+            };
+          }
+          return {
+            status: "CONTRADICTED",
+            reason: `Contradictory diff symbol '${evidence.symbolIdentity}' active in scan ${ctx.targetScanId}`,
+          };
+        }
+        if (evidence.sourceHash) {
+          if (fileEntry.contentHash === null) {
+            return {
+              status: "UNVERIFIED",
+              reason: `Contradictory ${evidence.evidenceType} artifact '${evidence.sourcePath}' lacks stored content_hash in scan ${ctx.targetScanId}`,
+            };
+          }
+          if (fileEntry.contentHash !== evidence.sourceHash) {
+            return {
+              status: "MISSING",
+              reason: `Contradictory ${evidence.evidenceType} artifact '${evidence.sourcePath}' hash differs in scan ${ctx.targetScanId}`,
+            };
+          }
+        }
+        return {
+          status: "CONTRADICTED",
+          reason: `Contradictory ${evidence.evidenceType} evidence active in scan ${ctx.targetScanId}: ${evidence.description}`,
+        };
+      }
+
+      case "source_file": {
+        const fileEntry = ctx.filesByPath.get(evidence.sourcePath);
+        if (!fileEntry) {
+          return {
+            status: "MISSING",
+            reason: `Contradictory source_file '${evidence.sourcePath}' absent in scan ${ctx.targetScanId}`,
+          };
+        }
+        if (evidence.sourceHash) {
+          if (fileEntry.contentHash === null) {
+            return {
+              status: "UNVERIFIED",
+              reason: `Contradictory source_file '${evidence.sourcePath}' lacks content_hash in scan ${ctx.targetScanId}`,
+            };
+          }
+          if (fileEntry.contentHash !== evidence.sourceHash) {
+            return {
+              status: "MISSING",
+              reason: `Contradictory source_file '${evidence.sourcePath}' hash differs in scan ${ctx.targetScanId}`,
+            };
+          }
+        }
+        return {
+          status: "CONTRADICTED",
+          reason: `Contradictory source_file evidence active in scan ${ctx.targetScanId}: ${evidence.description}`,
+        };
+      }
+
+      case "symbol": {
+        if (!evidence.symbolIdentity) {
+          return ctx.filesByPath.has(evidence.sourcePath)
+            ? {
+                status: "UNVERIFIED",
+                reason: `Contradictory symbol evidence on '${evidence.sourcePath}' lacks symbolIdentity`,
+              }
+            : {
+                status: "MISSING",
+                reason: `Contradictory symbol file '${evidence.sourcePath}' absent in scan ${ctx.targetScanId}`,
+              };
+        }
+        const sym = ctx.symbolsByIdentity.get(evidence.symbolIdentity);
+        if (!sym || (evidence.sourceHash && sym.fingerprint !== evidence.sourceHash)) {
+          return {
+            status: "MISSING",
+            reason: `Contradictory symbol '${evidence.symbolIdentity}' absent or altered in scan ${ctx.targetScanId}`,
+          };
+        }
+        return {
+          status: "CONTRADICTED",
+          reason: `Contradictory symbol evidence active in scan ${ctx.targetScanId}: ${evidence.description}`,
+        };
+      }
+
       case "component": {
         const descMatch = evidence.description.match(/comp:([^\s,)]+)/);
         const compId = descMatch?.[1]
@@ -654,37 +1152,152 @@ export class EvidenceEvaluator {
           : evidence.sourcePath.startsWith("comp:")
             ? evidence.sourcePath
             : `comp:${evidence.sourcePath}`;
-        return ctx.componentsByIdentity.has(compId);
+        return ctx.componentsByIdentity.has(compId)
+          ? {
+              status: "CONTRADICTED",
+              reason: `Contradictory component '${compId}' active in scan ${ctx.targetScanId}`,
+            }
+          : {
+              status: "MISSING",
+              reason: `Contradictory component '${compId}' absent in scan ${ctx.targetScanId}`,
+            };
       }
+
       case "graph_edge": {
+        if (evidence.graphEdgeId !== null) {
+          const srcEdge = ctx.getGraphEdgeById(evidence.graphEdgeId);
+          if (
+            !srcEdge ||
+            srcEdge.repositoryId !== ctx.repositoryId ||
+            srcEdge.scanId !== evidence.scanId ||
+            srcEdge.sourceNodeRepoId !== ctx.repositoryId ||
+            srcEdge.targetNodeRepoId !== ctx.repositoryId ||
+            !srcEdge.sourceNodeIdentity ||
+            !srcEdge.targetNodeIdentity
+          ) {
+            return {
+              status: "UNVERIFIED",
+              reason: `Contradictory graph_edge ${evidence.graphEdgeId} ownership/scan could not be verified`,
+            };
+          }
+          const targetEdge = ctx.graphEdgesByIdentity.get(srcEdge.edgeIdentity);
+          if (
+            !targetEdge ||
+            targetEdge.sourceNodeIdentity !== srcEdge.sourceNodeIdentity ||
+            targetEdge.targetNodeIdentity !== srcEdge.targetNodeIdentity ||
+            targetEdge.relationshipType !== srcEdge.relationshipType
+          ) {
+            return {
+              status: "MISSING",
+              reason: `Contradictory graph_edge '${srcEdge.edgeIdentity}' absent in scan ${ctx.targetScanId}`,
+            };
+          }
+          if (
+            !targetEdge.hasValidOwnedEndpoints ||
+            targetEdge.relationshipStatus === "UNRESOLVED"
+          ) {
+            return {
+              status: "UNVERIFIED",
+              reason: `Contradictory graph_edge '${srcEdge.edgeIdentity}' unresolved in scan ${ctx.targetScanId}`,
+            };
+          }
+          return {
+            status: "CONTRADICTED",
+            reason: `Contradictory graph_edge '${srcEdge.edgeIdentity}' active in scan ${ctx.targetScanId}`,
+          };
+        }
         const edgeId =
-          (evidence.graphEdgeId !== null
-            ? ctx.sourceEdgeIdentitiesById.get(evidence.graphEdgeId)
-            : undefined) ?? evidence.description.match(/(edge:[^\s]+)/)?.[1];
-        return edgeId ? ctx.graphEdgesByIdentity.has(edgeId) : false;
+          evidence.symbolIdentity ??
+          evidence.description.match(
+            /(?:edge:[^\s]+|[a-z_]+:[^\s]+->[A-Z_]+->[a-z_]+:[^\s]+)/,
+          )?.[0];
+        if (!edgeId) {
+          return {
+            status: "UNVERIFIED",
+            reason: `Contradictory graph_edge lacks edge identity in scan ${ctx.targetScanId}`,
+          };
+        }
+        const targetEdge = ctx.graphEdgesByIdentity.get(edgeId);
+        if (!targetEdge) {
+          return {
+            status: "MISSING",
+            reason: `Contradictory graph_edge '${edgeId}' absent in scan ${ctx.targetScanId}`,
+          };
+        }
+        if (!targetEdge.hasValidOwnedEndpoints || targetEdge.relationshipStatus === "UNRESOLVED") {
+          return {
+            status: "UNVERIFIED",
+            reason: `Contradictory graph_edge '${edgeId}' unresolved in scan ${ctx.targetScanId}`,
+          };
+        }
+        return {
+          status: "CONTRADICTED",
+          reason: `Contradictory graph_edge '${edgeId}' active in scan ${ctx.targetScanId}`,
+        };
       }
+
       case "import": {
         const imports = ctx.importsBySource.get(evidence.sourcePath) ?? [];
         const specMatch = evidence.description.match(/import:([^\s]+)/i);
         const targetSpec = evidence.symbolIdentity ?? specMatch?.[1];
-        if (!targetSpec) {
-          return imports.length > 0;
-        }
-        return imports.some((i) => i.specifier === targetSpec || i.resolvedPath === targetSpec);
+        const matching = targetSpec
+          ? imports.filter((i) => i.specifier === targetSpec || i.resolvedPath === targetSpec)
+          : imports;
+        return matching.length > 0
+          ? {
+              status: "CONTRADICTED",
+              reason: `Contradictory import in '${evidence.sourcePath}' active in scan ${ctx.targetScanId}`,
+            }
+          : {
+              status: "MISSING",
+              reason: `Contradictory import in '${evidence.sourcePath}' absent in scan ${ctx.targetScanId}`,
+            };
       }
+
       case "adr": {
         const adrMatch = evidence.description.match(/\b(ADR-\d+)\b/i);
         const adrInfo =
           ctx.adrsByPath.get(evidence.sourcePath) ??
           (adrMatch ? ctx.adrsById.get(adrMatch[1].toUpperCase()) : undefined);
-        if (adrInfo && adrInfo.status && DEPRECATED_ADR_STATUS_RE.test(adrInfo.status)) {
-          return false;
+        if (!adrInfo) {
+          return ctx.filesByPath.has(evidence.sourcePath)
+            ? {
+                status: "UNVERIFIED",
+                reason: `Contradictory ADR '${evidence.sourcePath}' exists without verified metadata in scan ${ctx.targetScanId}`,
+              }
+            : {
+                status: "MISSING",
+                reason: `Contradictory ADR '${evidence.sourcePath}' absent in scan ${ctx.targetScanId}`,
+              };
         }
-        return ctx.filesByPath.has(evidence.sourcePath);
+        if (adrInfo.isFallback || !adrInfo.status) {
+          return {
+            status: "UNVERIFIED",
+            reason: `Contradictory ADR '${evidence.sourcePath}' historical status unverified in scan ${ctx.targetScanId}`,
+          };
+        }
+        if (DEPRECATED_ADR_STATUS_RE.test(adrInfo.status)) {
+          return {
+            status: "MISSING",
+            reason: `Contradictory ADR '${evidence.sourcePath}' is ${adrInfo.status} in scan ${ctx.targetScanId}`,
+          };
+        }
+        return {
+          status: "CONTRADICTED",
+          reason: `Contradictory ADR '${evidence.sourcePath}' (${adrInfo.status}) active in scan ${ctx.targetScanId}`,
+        };
       }
-      case "source_file":
+
       case "test":
-        return ctx.filesByPath.has(evidence.sourcePath);
+        return ctx.filesByPath.has(evidence.sourcePath)
+          ? {
+              status: "CONTRADICTED",
+              reason: `Contradictory test file '${evidence.sourcePath}' present in scan ${ctx.targetScanId}`,
+            }
+          : {
+              status: "MISSING",
+              reason: `Contradictory test file '${evidence.sourcePath}' absent in scan ${ctx.targetScanId}`,
+            };
     }
   }
 }

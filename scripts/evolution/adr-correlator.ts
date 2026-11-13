@@ -27,6 +27,168 @@ interface EffectiveAdr {
   evidenceDescription?: string;
 }
 
+const NEGATED_PROHIBITION_RE =
+  /\b(?:do\s+not|does\s+not|must\s+not|shall\s+not|never)\s+(?:forbid|prohibit|disallow|ban)\b/i;
+const PROHIBIT_DIRECTIVE_RE =
+  /\b(forbid[s]?|prohibit[s]?|disallow[s]?|ban[s]?|must\s+not|shall\s+not|cannot|can't|never\s+(?:allow|permit|import|use|access|enable|require)|do\s+not\s+(?:allow|permit|import|use|access|enable)|does\s+not\s+(?:allow|permit|import|use|access|enable)|no\s+direct)\b/i;
+const ALLOW_DIRECTIVE_RE =
+  /\b(allow[s]?|permit[s]?|enable[s]?|authorize[s]?|must\s+(?:use|import|access)|require[s]?\s+direct)\b/i;
+
+const GENERIC_GOVERNANCE_STOPWORDS = new Set([
+  "adr",
+  "decision",
+  "status",
+  "accepted",
+  "proposed",
+  "forbid",
+  "forbids",
+  "prohibit",
+  "prohibits",
+  "disallow",
+  "disallows",
+  "ban",
+  "bans",
+  "allow",
+  "allows",
+  "permit",
+  "permits",
+  "enable",
+  "enables",
+  "authorize",
+  "authorizes",
+  "must",
+  "not",
+  "shall",
+  "never",
+  "cannot",
+  "does",
+  "direct",
+  "directly",
+  "require",
+  "requires",
+  "between",
+  "from",
+  "into",
+  "with",
+  "without",
+  "that",
+  "this",
+  "the",
+  "and",
+  "for",
+  "are",
+  "use",
+  "using",
+  "component",
+  "components",
+  "module",
+  "modules",
+  "comp",
+  "src",
+  "policy",
+  "policies",
+  "rule",
+  "rules",
+  "standard",
+  "standards",
+  "context",
+  "summary",
+  "title",
+  "docs",
+  "parsed",
+  "inside",
+  "within",
+  "across",
+  "through",
+  "during",
+  "under",
+  "over",
+  "only",
+  "every",
+  "each",
+  "such",
+  "should",
+  "would",
+  "could",
+  "via",
+  "about",
+  "against",
+  "around",
+  "before",
+  "after",
+  "above",
+  "below",
+]);
+
+interface DirectiveClause {
+  polarity: "PROHIBIT" | "ALLOW";
+  subjectTokens: Set<string>;
+  mentionedComponents: Set<string>;
+}
+
+function extractDirectiveClauses(
+  plainText: string,
+  sharedComponents: string[],
+  excludeSingleComponentTokens: boolean,
+): DirectiveClause[] {
+  const excludedComponentTokens = new Set<string>();
+  if (excludeSingleComponentTokens) {
+    for (const compId of sharedComponents) {
+      const stripped = compId.replace(/^comp:/, "").toLowerCase();
+      for (const tok of stripped.split(/[^a-z0-9_]+/)) {
+        if (tok.length >= 2) excludedComponentTokens.add(tok);
+      }
+    }
+  }
+
+  const clauses = plainText
+    .split(/[.;!\n\r]+/)
+    .map((c) => c.trim())
+    .filter(
+      (c) =>
+        c.length > 0 &&
+        !/^(architecture decision record parsed from|snapshot adr metadata for)\b/i.test(c),
+    );
+
+  const extracted: DirectiveClause[] = [];
+  for (const clause of clauses) {
+    let polarity: "PROHIBIT" | "ALLOW" | null = null;
+    if (NEGATED_PROHIBITION_RE.test(clause)) {
+      polarity = "ALLOW";
+    } else if (PROHIBIT_DIRECTIVE_RE.test(clause)) {
+      polarity = "PROHIBIT";
+    } else if (ALLOW_DIRECTIVE_RE.test(clause)) {
+      polarity = "ALLOW";
+    }
+    if (!polarity) continue;
+
+    const lowerClause = clause.toLowerCase();
+    const subjectTokens = new Set<string>();
+    const rawTokens = lowerClause.match(/[a-z0-9_]{3,}/g) ?? [];
+    for (const tok of rawTokens) {
+      if (GENERIC_GOVERNANCE_STOPWORDS.has(tok)) continue;
+      if (excludedComponentTokens.has(tok)) continue;
+      subjectTokens.add(tok);
+    }
+
+    const mentionedComponents = new Set<string>();
+    for (const compId of sharedComponents) {
+      const bare = compId.replace(/^comp:/, "").toLowerCase();
+      const leaf = bare.split("/").pop() ?? bare;
+      if (
+        lowerClause.includes(compId.toLowerCase()) ||
+        lowerClause.includes(bare) ||
+        (leaf.length >= 2 && new RegExp(`\\b${leaf}\\b`, "i").test(lowerClause))
+      ) {
+        mentionedComponents.add(compId);
+      }
+    }
+
+    extracted.push({ polarity, subjectTokens, mentionedComponents });
+  }
+  return extracted;
+}
+
 export class AdrCorrelator {
   public static correlate(
     db: SqliteDatabase,
@@ -168,6 +330,8 @@ export class AdrCorrelator {
     }
 
     // 2b. Conflicting Accepted ADR governance detection (DECISION_CONFLICTING_GOVERNANCE)
+    // Conservatively excludes explicit supersession, disjoint component scopes, same-polarity negations,
+    // and unrelated subject topics; never claims CONFIRMED without deterministic rule conflict.
     acceptedVerifiedAdrs.sort((a, b) => a.adrId.localeCompare(b.adrId));
     for (let i = 0; i < acceptedVerifiedAdrs.length; i++) {
       for (let j = i + 1; j < acceptedVerifiedAdrs.length; j++) {
@@ -176,46 +340,70 @@ export class AdrCorrelator {
         const sharedComponents = adrA.governedComponents.filter((c) =>
           adrB.governedComponents.includes(c),
         );
-        const textA = `${adrA.title} ${adrA.rawContent ?? adrA.evidenceDescription ?? ""}`;
-        const textB = `${adrB.title} ${adrB.rawContent ?? adrB.evidenceDescription ?? ""}`;
+        if (sharedComponents.length === 0) continue;
 
-        const explicitSupersedeConflict =
+        const rawTextA = `${adrA.title}\n${adrA.rawContent ?? adrA.evidenceDescription ?? ""}`;
+        const rawTextB = `${adrB.title}\n${adrB.rawContent ?? adrB.evidenceDescription ?? ""}`;
+        const plainTextA = rawTextA.replace(/[*_`]/g, "");
+        const plainTextB = rawTextB.replace(/[*_`]/g, "");
+
+        const explicitSupersession =
           new RegExp(
-            `\\b(supersede[sd]?|replace[sd]?|conflict[s]?\\s+with)\\s+${adrA.adrId}\\b`,
+            `\\b(?:supersede[sd]?(?:\\s+by)?|replace[sd]?(?:\\s+by)?)\\s*:?\\s*${adrA.adrId}\\b`,
             "i",
-          ).test(textB) ||
+          ).test(plainTextB) ||
           new RegExp(
-            `\\b(supersede[sd]?|replace[sd]?|conflict[s]?\\s+with)\\s+${adrB.adrId}\\b`,
+            `\\b(?:supersede[sd]?(?:\\s+by)?|replace[sd]?(?:\\s+by)?)\\s*:?\\s*${adrB.adrId}\\b`,
             "i",
-          ).test(textA);
+          ).test(plainTextA);
+        if (explicitSupersession) continue;
 
-        const prohibitRe = /\b(forbid|prohibit|disallow|must\s+not|never\s+import|no\s+direct)\b/i;
-        const allowRe = /\b(allow|permit|direct\s+access|direct\s+import|require\s+direct)\b/i;
-        const stanceConflict =
-          sharedComponents.length > 0 &&
-          ((prohibitRe.test(textA) && allowRe.test(textB)) ||
-            (prohibitRe.test(textB) && allowRe.test(textA)));
+        const clausesA = extractDirectiveClauses(plainTextA, sharedComponents, true);
+        const clausesB = extractDirectiveClauses(plainTextB, sharedComponents, true);
+        if (clausesA.length === 0 || clausesB.length === 0) continue;
 
-        if (explicitSupersedeConflict || stanceConflict) {
+        let sharedSubjectTokens: string[] = [];
+        let matchedConflict = false;
+        for (const cA of clausesA) {
+          for (const cB of clausesB) {
+            if (cA.polarity === cB.polarity) continue;
+            const commonTokens = Array.from(cA.subjectTokens).filter((t) =>
+              cB.subjectTokens.has(t),
+            );
+            const commonBoundaryComps =
+              sharedComponents.length >= 2
+                ? Array.from(cA.mentionedComponents).filter((comp) =>
+                    cB.mentionedComponents.has(comp),
+                  )
+                : [];
+            if (commonTokens.length > 0 || commonBoundaryComps.length >= 2) {
+              matchedConflict = true;
+              sharedSubjectTokens = Array.from(
+                new Set([...sharedSubjectTokens, ...commonTokens]),
+              ).sort();
+            }
+          }
+        }
+
+        if (matchedConflict) {
+          const hasFullContent = Boolean(adrA.rawContent && adrB.rawContent);
           correlations.push({
             findingId: `decision:conflict:${adrA.adrId}:${adrB.adrId}`,
             correlationType: "DECISION_CONFLICTING_GOVERNANCE",
             adrId: adrA.adrId,
             componentIdentity: sharedComponents[0],
-            title: `Conflicting Accepted decisions: ${adrA.adrId} and ${adrB.adrId}`,
-            description: explicitSupersedeConflict
-              ? `Both '${adrA.adrId}' and '${adrB.adrId}' remain Accepted despite explicit supersession/conflict reference`
-              : `Accepted ADRs '${adrA.adrId}' and '${adrB.adrId}' contain opposing governance stances on shared component(s): ${sharedComponents.join(", ")}`,
+            title: `Potential conflicting Accepted decisions: ${adrA.adrId} and ${adrB.adrId}`,
+            description: `Accepted ADRs '${adrA.adrId}' and '${adrB.adrId}' appear to express opposing directives on shared component(s): ${sharedComponents.join(", ")}`,
             severity: "HIGH",
-            confidence: explicitSupersedeConflict ? 0.95 : 0.8,
-            confidenceTier: explicitSupersedeConflict ? "CONFIRMED" : "INFERRED",
+            confidence: hasFullContent ? 0.8 : 0.65,
+            confidenceTier: hasFullContent ? "INFERRED" : "CANDIDATE",
             relevantPaths: [adrA.filePath, adrB.filePath].sort(),
             details: {
               conflictingAdrIds: [adrA.adrId, adrB.adrId],
               sharedComponents,
-              conflictKind: explicitSupersedeConflict
-                ? "unretired_supersession"
-                : "opposing_stance",
+              sharedSubjectTokens,
+              conflictKind: "opposing_directive_heuristic",
+              verifiedMarkdownContent: hasFullContent,
             },
             evidenceIds: [],
           });

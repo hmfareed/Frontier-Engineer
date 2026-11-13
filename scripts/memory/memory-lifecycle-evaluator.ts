@@ -36,10 +36,7 @@ export class MemoryLifecycleEvaluator {
     comparison?: SnapshotComparison,
     options: EvaluateRepositoryOptions = {},
   ): MemoryLifecycleSummary {
-    const store = new MemoryStore(db);
-    const relManager = new RelationshipManager(db);
-    const memories = store.listMemories(repositoryId);
-    const relationships = relManager.getRelationships(repositoryId);
+    // DEFECT-LC-03: Validate target scan ownership/status and comparison before reading or mutating memories.
     const ctx = EvidenceEvaluator.createContext(
       db,
       repositoryId,
@@ -48,6 +45,10 @@ export class MemoryLifecycleEvaluator {
       options.workspaceRoot,
       { allowPartial: options.allowPartial, workspaceRoot: options.workspaceRoot },
     );
+    const store = new MemoryStore(db);
+    const relManager = new RelationshipManager(db);
+    const memories = store.listMemories(repositoryId);
+    const relationships = relManager.getRelationships(repositoryId);
 
     const evaluateAll = (): MemoryEvaluationResult[] => {
       const results: MemoryEvaluationResult[] = [];

@@ -399,7 +399,7 @@ describe("evolution-drift (Stage 4 Architectural Drift & ADR Correlation)", () =
     insertAdrMetadata(scan2, adrB, {
       adrId: "ADR-031",
       number: 31,
-      title: "Supersedes ADR-030: prohibit direct access between comp:src/ui and comp:src/db",
+      title: "Prohibit direct access between comp:src/ui and comp:src/db",
       status: "Accepted",
       governedComponents: ["comp:src/ui", "comp:src/db"],
     });
@@ -416,6 +416,140 @@ describe("evolution-drift (Stage 4 Architectural Drift & ADR Correlation)", () =
     );
     expect(conflict).toBeDefined();
     expect(conflict?.severity).toBe("HIGH");
+    expect(conflict?.confidenceTier).toBe("CANDIDATE");
+    expect(conflict?.confidence).toBe(0.65);
     expect(conflict?.details.conflictingAdrIds).toEqual(["ADR-030", "ADR-031"]);
+    expect(conflict?.details.verifiedMarkdownContent).toBe(false);
+  });
+
+  it("EVO-DRIFT-REMEDIATION-04: enforces clause-level ADR conflict precision, negation handling, supersession exclusion, and tamper fail-closed warnings", () => {
+    const adrDir = path.join(tmpDir, "docs", "adr");
+    fs.mkdirSync(adrDir, { recursive: true });
+
+    const writeHashedAdr = (fileName: string, body: string): string => {
+      const full = path.join(adrDir, fileName);
+      fs.writeFileSync(full, body, "utf8");
+      return createHash("sha256").update(body).digest("hex");
+    };
+
+    // Case 1: Genuine opposing directives on shared component with hash-verified markdown -> INFERRED (0.8), never CONFIRMED
+    const h101 = writeHashedAdr(
+      "ADR-101.md",
+      "# ADR-101: Allow Redis caching\n\n- **Status:** Accepted\n\nAllow Redis caching inside comp:src/cache.\n",
+    );
+    const h102 = writeHashedAdr(
+      "ADR-102.md",
+      "# ADR-102: Prohibit Redis caching\n\n- **Status:** Accepted\n\nProhibit Redis caching inside comp:src/cache.\n",
+    );
+
+    // Case 2: Explicit supersession on same component/topic must NOT be flagged as conflicting
+    const h103 = writeHashedAdr(
+      "ADR-103.md",
+      "# ADR-103: Allow REST retries\n\n- **Status:** Accepted\n\nAllow synchronous REST retries inside comp:src/client.\n",
+    );
+    const h104 = writeHashedAdr(
+      "ADR-104.md",
+      "# ADR-104: Replace REST retries\n\n- **Status:** Accepted\n- **Supersedes:** ADR-103\n\nProhibit synchronous REST retries inside comp:src/client.\n",
+    );
+
+    // Case 3: Same technology (Redis) across disjoint components (comp:src/cli vs comp:src/ui) -> excluded
+    const h105 = writeHashedAdr(
+      "ADR-105.md",
+      "# ADR-105: Allow Redis telemetry in CLI\n\n- **Status:** Accepted\n\nAllow Redis telemetry in comp:src/cli.\n",
+    );
+    const h106 = writeHashedAdr(
+      "ADR-106.md",
+      "# ADR-106: Prohibit Redis telemetry in UI\n\n- **Status:** Accepted\n\nProhibit Redis telemetry in comp:src/ui.\n",
+    );
+
+    // Case 4: Same-polarity negation ("Must not allow direct database queries" vs "Forbid direct database queries") on comp:src/ui -> excluded
+    const h107 = writeHashedAdr(
+      "ADR-107.md",
+      "# ADR-107: Disallow UI SQL access\n\n- **Status:** Accepted\n\nModules in comp:src/ui must not allow direct database queries.\n",
+    );
+    const h108 = writeHashedAdr(
+      "ADR-108.md",
+      "# ADR-108: Forbid UI SQL access\n\n- **Status:** Accepted\n\nForbid direct database queries in comp:src/ui.\n",
+    );
+
+    // Case 5: Unrelated subjects on same component (comp:src/ui) -> excluded
+    const h109 = writeHashedAdr(
+      "ADR-109.md",
+      "# ADR-109: Styling rules\n\n- **Status:** Accepted\n\nForbid inline CSS stylesheets inside comp:src/ui.\n",
+    );
+    const h110 = writeHashedAdr(
+      "ADR-110.md",
+      "# ADR-110: Accessibility rules\n\n- **Status:** Accepted\n\nAllow keyboard navigation shortcuts inside comp:src/ui.\n",
+    );
+
+    // Case 7: Post-snapshot live disk tamper (indexed hash mismatch) -> ignored safely
+    const h111Indexed = createHash("sha256")
+      .update("# ADR-111: Safe placeholder\n\n- **Status:** Proposed\n")
+      .digest("hex");
+    fs.writeFileSync(
+      path.join(adrDir, "ADR-111.md"),
+      "# ADR-111: Tampered\n\n- **Status:** Accepted\n\nProhibit Redis caching inside comp:src/cache.\n",
+      "utf8",
+    );
+
+    const scan1 = createScan("2026-11-01T10:00:00.000Z");
+    const scan2 = createScan("2026-11-02T10:00:00.000Z");
+    insertFile(scan1, "src/cache/store.ts", "hc1");
+    insertFile(scan2, "src/cache/store.ts", "hc1");
+    insertFile(scan2, "src/client/http.ts", "hcli");
+    insertFile(scan2, "src/cli/cmd.ts", "hcl");
+    insertFile(scan2, "src/ui/view.tsx", "hui");
+
+    const addIndexedAdr = (
+      fileName: string,
+      hash: string | null,
+      adrId: string,
+      num: number,
+      title: string,
+      components: string[],
+    ): void => {
+      const fid = insertFile(scan2, `docs/adr/${fileName}`, hash, "documentation");
+      if (hash !== null && adrId !== "ADR-111" && adrId !== "ADR-112") {
+        insertAdrMetadata(scan2, fid, {
+          adrId,
+          number: num,
+          title,
+          status: "Accepted",
+          governedComponents: components,
+        });
+      }
+    };
+
+    addIndexedAdr("ADR-101.md", h101, "ADR-101", 101, "Allow Redis caching", ["comp:src/cache"]);
+    addIndexedAdr("ADR-102.md", h102, "ADR-102", 102, "Prohibit Redis caching", ["comp:src/cache"]);
+    addIndexedAdr("ADR-103.md", h103, "ADR-103", 103, "Allow REST retries", ["comp:src/client"]);
+    addIndexedAdr("ADR-104.md", h104, "ADR-104", 104, "Replace REST retries", ["comp:src/client"]);
+    addIndexedAdr("ADR-105.md", h105, "ADR-105", 105, "Allow Redis telemetry", ["comp:src/cli"]);
+    addIndexedAdr("ADR-106.md", h106, "ADR-106", 106, "Prohibit Redis telemetry", ["comp:src/ui"]);
+    addIndexedAdr("ADR-107.md", h107, "ADR-107", 107, "Disallow UI SQL access", ["comp:src/ui"]);
+    addIndexedAdr("ADR-108.md", h108, "ADR-108", 108, "Forbid UI SQL access", ["comp:src/ui"]);
+    addIndexedAdr("ADR-109.md", h109, "ADR-109", 109, "Styling rules", ["comp:src/ui"]);
+    addIndexedAdr("ADR-110.md", h110, "ADR-110", 110, "Accessibility rules", ["comp:src/ui"]);
+
+    // Case 6 & 7: Missing-hash / missing-disk ADR-112 and tampered ADR-111
+    addIndexedAdr("ADR-111.md", h111Indexed, "ADR-111", 111, "Tampered", ["comp:src/cache"]);
+    addIndexedAdr("ADR-112.md", null, "ADR-112", 112, "Missing Hash", ["comp:src/cache"]);
+
+    const res = new EvolutionAnalyzer(db).analyze(scan1, scan2, { workspaceRoot: tmpDir });
+    const conflicts = res.decisions.correlations.filter(
+      (c) => c.correlationType === "DECISION_CONFLICTING_GOVERNANCE",
+    );
+
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0].details.conflictingAdrIds).toEqual(["ADR-101", "ADR-102"]);
+    expect(conflicts[0].confidenceTier).toBe("INFERRED");
+    expect(conflicts[0].confidence).toBe(0.8);
+    expect(conflicts[0].confidenceTier).not.toBe("CONFIRMED");
+    expect(conflicts[0].details.verifiedMarkdownContent).toBe(true);
+
+    // Tampered disk content and missing hash must emit explicit warnings and never fabricate Accepted status or conflicts
+    const limitationCodes = res.comparison.limitations.map((l) => l.code);
+    expect(limitationCodes).toContain("LIM_ADR_HISTORICAL_CONTENT_FALLBACK");
+    expect(limitationCodes).toContain("LIM_ADR_MISSING_HISTORICAL_HASH");
   });
 });
