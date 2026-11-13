@@ -236,13 +236,20 @@ npm run frontier -- query "<expression>" [--format text|json]
 npm run frontier -- deps <target> [--depth 3] [--limit 50] [--format text|json]  # alias for dependencies
 ```
 
-#### Snapshot Comparison Commands (Phase 7.5 Stage 3)
+#### Snapshot Comparison & Evolution Analysis Commands (Phase 7.5 Stages 3 & 4)
 
 ```bash
 npm run frontier -- compare <base-scan-id> <target-scan-id> [--persist-events] [--allow-partial] [--format text|json]
+npm run frontier -- evolution <base-scan-id> <target-scan-id> [--persist-events] [--apply-lifecycle] [--allow-partial] [--format text|json]
+npm run frontier -- drift <base-scan-id> <target-scan-id> [--allow-partial] [--format text|json]
+npm run frontier -- debt <base-scan-id> <target-scan-id> [--allow-partial] [--format text|json]
+npm run frontier -- memories [--scan-id <id>] [--apply-lifecycle] [--allow-partial] [--limit 50] [--format text|json]
+npm run frontier -- memory <memory_key_or_id> [--format text|json]
 ```
 
-All commands accept `--scan-id <id>` to target an explicit historical scan.
+- **Read-Only Default & Flag Restrictions:** `evolution`, `drift`, `debt`, and `memories` are read-only unless explicitly opted into mutations via `--persist-events` (permitted only on `compare` and `evolution`) or `--apply-lifecycle` (permitted only on `evolution` and `memories --scan-id <id>`). Misplaced mutation flags exit with code `2`.
+- **Workspace Repository Ownership:** `compare`, `evolution`, `drift`, and `debt` validate `expectedRepositoryId` against the resolved workspace repository before evaluating or persisting events, rejecting foreign scan IDs with exit code `2`.
+- All commands accept `--scan-id <id>` to target an explicit historical scan (and `memories`/`memory` preserve full repository-scoped version lookup).
 
 ### 3.2 Output Formats
 

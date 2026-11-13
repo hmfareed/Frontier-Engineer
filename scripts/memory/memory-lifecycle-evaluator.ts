@@ -21,13 +21,20 @@ import type {
   MemoryLifecycleSummary,
 } from "./types.ts";
 
+export interface EvaluateRepositoryOptions {
+  applyLifecycle?: boolean;
+  allowPartial?: boolean;
+  simulateFailure?: boolean;
+  workspaceRoot?: string;
+}
+
 export class MemoryLifecycleEvaluator {
   public static evaluateRepository(
     db: SqliteDatabase,
     repositoryId: number,
     targetScanId: number,
     comparison?: SnapshotComparison,
-    options: { applyLifecycle?: boolean; simulateFailure?: boolean; workspaceRoot?: string } = {},
+    options: EvaluateRepositoryOptions = {},
   ): MemoryLifecycleSummary {
     const store = new MemoryStore(db);
     const relManager = new RelationshipManager(db);
@@ -39,11 +46,27 @@ export class MemoryLifecycleEvaluator {
       targetScanId,
       comparison,
       options.workspaceRoot,
+      { allowPartial: options.allowPartial, workspaceRoot: options.workspaceRoot },
     );
 
     const evaluateAll = (): MemoryEvaluationResult[] => {
       const results: MemoryEvaluationResult[] = [];
       const memoryById = new Map<number, EngineeringMemoryRecord>(memories.map((m) => [m.id, m]));
+
+      // Pass 1: Evaluate evidence for all memories and compute positively verified candidates
+      const evaluatedByMemoryId = new Map<
+        number,
+        {
+          memory: EngineeringMemoryRecord;
+          evidenceEvaluations: EvidenceEvaluationItem[];
+          supportingCount: number;
+          verifiedCount: number;
+          missingCount: number;
+          contradictedCount: number;
+          unverifiedCount: number;
+        }
+      >();
+      const positivelyVerifiedIds = new Set<number>();
 
       for (const memory of memories) {
         const attachedEvidence = store.getMemoryEvidence(repositoryId, memory.id);
@@ -54,9 +77,46 @@ export class MemoryLifecycleEvaluator {
         const supporting = evidenceEvaluations.filter((e) => !e.isContradictory);
         const verifiedCount = supporting.filter((e) => e.status === "VERIFIED").length;
         const missingCount = supporting.filter((e) => e.status === "MISSING").length;
+        const unverifiedCount = supporting.filter((e) => e.status === "UNVERIFIED").length;
         const contradictedCount = evidenceEvaluations.filter(
           (e) => e.status === "CONTRADICTED",
         ).length;
+
+        evaluatedByMemoryId.set(memory.id, {
+          memory,
+          evidenceEvaluations,
+          supportingCount: supporting.length,
+          verifiedCount,
+          missingCount,
+          contradictedCount,
+          unverifiedCount,
+        });
+
+        // A memory can only act as an automatic superseder if it is ACTIVE,
+        // has no contradicted, missing, or unverified evidence, and either has verified evidence
+        // in targetScanId or was explicitly recorded at targetScanId with 0 supporting items.
+        if (
+          memory.status === "ACTIVE" &&
+          contradictedCount === 0 &&
+          missingCount === 0 &&
+          unverifiedCount === 0 &&
+          (verifiedCount > 0 || (supporting.length === 0 && memory.lastSeenScanId === targetScanId))
+        ) {
+          positivelyVerifiedIds.add(memory.id);
+        }
+      }
+
+      // Pass 2: Compute transitions deterministically and apply inside transaction if requested
+      for (const memory of memories) {
+        const evalData = evaluatedByMemoryId.get(memory.id)!;
+        const {
+          evidenceEvaluations,
+          supportingCount,
+          verifiedCount,
+          missingCount,
+          contradictedCount,
+          unverifiedCount,
+        } = evalData;
 
         if (memory.status === "SUPERSEDED" || memory.status === "ARCHIVED") {
           results.push({
@@ -70,18 +130,26 @@ export class MemoryLifecycleEvaluator {
             previousVersion: memory.version,
             newVersion: memory.version,
             supersededById: memory.supersededById,
-            supportingCount: supporting.length,
+            supportingCount,
             verifiedCount,
             missingCount,
             contradictedCount,
+            unverifiedCount,
             reason: `Memory '${memory.memoryKey}' is in terminal status ${memory.status}`,
             evidenceEvaluations,
           });
           continue;
         }
 
-        // Check incoming SUPERSEDES edge
-        const replacementId = this.findValidSuperseder(memory, memories, memoryById, relationships);
+        // Check incoming SUPERSEDES edge against verified ACTIVE candidates only
+        const replacementId = this.findValidSuperseder(
+          memory,
+          memories,
+          memoryById,
+          relationships,
+          positivelyVerifiedIds,
+          relManager,
+        );
 
         let proposedStatus: MemoryLifecycleStatus = memory.status;
         let action: MemoryLifecycleActionType = "NO_CHANGE_NON_TERMINAL";
@@ -92,7 +160,7 @@ export class MemoryLifecycleEvaluator {
           proposedStatus = "SUPERSEDED";
           action = "TRANSITION_SUPERSEDED";
           supersededById = replacementId;
-          reason = `Superseded by memory ID ${replacementId} via SUPERSEDES relationship in scan ${targetScanId}`;
+          reason = `Superseded by verified ACTIVE memory ID ${replacementId} via SUPERSEDES relationship in scan ${targetScanId}`;
         } else if (contradictedCount >= 1) {
           proposedStatus = "DISPUTED";
           if (memory.status !== "DISPUTED") {
@@ -102,33 +170,44 @@ export class MemoryLifecycleEvaluator {
             action = "NO_CHANGE_NON_TERMINAL";
             reason = `Remains DISPUTED (${contradictedCount} contradictory item(s)) in scan ${targetScanId}`;
           }
-        } else if (supporting.length > 0 && verifiedCount === 0) {
+        } else if (missingCount >= 1) {
+          // DEFECT-LC-01: Conjunctive evidence invariant — any missing supporting artifact makes memory STALE
           proposedStatus = "STALE";
           if (memory.status !== "STALE") {
             action = "TRANSITION_STALE";
-            reason = `All ${supporting.length} supporting evidence item(s) missing in scan ${targetScanId}`;
+            reason = `${missingCount}/${supportingCount} supporting evidence item(s) missing in scan ${targetScanId}`;
           } else {
             action = "NO_CHANGE_NON_TERMINAL";
-            reason = `Remains STALE (${supporting.length} supporting item(s) missing) in scan ${targetScanId}`;
+            reason = `Remains STALE (${missingCount}/${supportingCount} supporting item(s) missing) in scan ${targetScanId}`;
           }
         } else if (memory.status === "STALE" || memory.status === "DISPUTED") {
-          if (verifiedCount > 0) {
+          // DEFECT-LC-01 & DEFECT-LC-03: Recover ONLY when 100% of supporting evidence is VERIFIED
+          if (supportingCount > 0 && verifiedCount === supportingCount && unverifiedCount === 0) {
             proposedStatus = "ACTIVE";
             action = "RECOVER_ACTIVE";
-            reason = `Recovered to ACTIVE: ${verifiedCount}/${supporting.length} supporting evidence item(s) verified in scan ${targetScanId}`;
+            reason = `Recovered to ACTIVE: ${verifiedCount}/${supportingCount} supporting evidence item(s) verified in scan ${targetScanId}`;
           } else {
             proposedStatus = memory.status;
             action = "NO_CHANGE_NON_TERMINAL";
-            reason = `Remains ${memory.status} with zero supporting evidence items in scan ${targetScanId}`;
+            reason =
+              supportingCount === 0
+                ? `Remains ${memory.status} with zero supporting evidence items in scan ${targetScanId}`
+                : `Remains ${memory.status} (${verifiedCount} verified, ${unverifiedCount} unverified) in scan ${targetScanId}`;
           }
         } else {
-          // Currently ACTIVE with verifiedCount > 0 or 0 supporting items, and 0 contradictions
+          // Currently ACTIVE with 0 missing and 0 contradictions
           proposedStatus = "ACTIVE";
-          action = "VERIFIED_ACTIVE";
-          reason =
-            supporting.length > 0
-              ? `Verified ACTIVE (${verifiedCount}/${supporting.length} supporting items confirmed) in scan ${targetScanId}`
-              : `Remains ACTIVE (uncontradicted manual/context memory) in scan ${targetScanId}`;
+          if (supportingCount > 0 && verifiedCount === supportingCount && unverifiedCount === 0) {
+            action = "VERIFIED_ACTIVE";
+            reason = `Verified ACTIVE (${verifiedCount}/${supportingCount} supporting items confirmed) in scan ${targetScanId}`;
+          } else {
+            // DEFECT-LC-02 / DEFECT-LC-03: Do not recordScanVerification on 0-evidence or UNVERIFIED memories
+            action = "NO_CHANGE_NON_TERMINAL";
+            reason =
+              supportingCount === 0
+                ? `Remains ACTIVE (0 supporting evidence items; scan verification skipped) in scan ${targetScanId}`
+                : `Remains ACTIVE (${verifiedCount} verified, ${unverifiedCount} unverified; full scan verification withheld) in scan ${targetScanId}`;
+          }
         }
 
         const expectedNewVersion =
@@ -177,10 +256,11 @@ export class MemoryLifecycleEvaluator {
           previousVersion: memory.version,
           newVersion: finalVersion,
           supersededById: proposedStatus === "SUPERSEDED" ? supersededById : null,
-          supportingCount: supporting.length,
+          supportingCount,
           verifiedCount,
           missingCount,
           contradictedCount,
+          unverifiedCount,
           reason,
           evidenceEvaluations,
         });
@@ -209,6 +289,7 @@ export class MemoryLifecycleEvaluator {
         (e) => e.action === "NO_CHANGE_TERMINAL" || e.action === "NO_CHANGE_NON_TERMINAL",
       ).length,
       evaluations,
+      limitations: ctx.limitations.length > 0 ? ctx.limitations : undefined,
     };
   }
 
@@ -217,6 +298,8 @@ export class MemoryLifecycleEvaluator {
     allMemories: EngineeringMemoryRecord[],
     memoryById: Map<number, EngineeringMemoryRecord>,
     relationships: MemoryRelationshipRecord[],
+    positivelyVerifiedIds: Set<number>,
+    relManager: RelationshipManager,
   ): number | null {
     // Cannot supersede a memory that is already an active replacement for another SUPERSEDED memory
     const isActiveReplacement = allMemories.some(
@@ -229,13 +312,8 @@ export class MemoryLifecycleEvaluator {
     for (const rel of relationships) {
       if (rel.targetMemoryId === target.id && rel.relationshipType === "SUPERSEDES") {
         const candidate = memoryById.get(rel.sourceMemoryId);
-        if (
-          candidate &&
-          candidate.id !== target.id &&
-          candidate.status !== "SUPERSEDED" &&
-          candidate.status !== "ARCHIVED"
-        ) {
-          return candidate.id;
+        if (relManager.canSupersede(candidate, target.id, positivelyVerifiedIds)) {
+          return candidate!.id;
         }
       }
     }

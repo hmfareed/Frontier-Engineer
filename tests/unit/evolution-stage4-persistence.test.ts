@@ -5,7 +5,12 @@ import os from "node:os";
 import { ConnectionManager } from "../../scripts/storage/connection-manager.ts";
 import { SqliteDatabase } from "../../scripts/storage/database.ts";
 import { MemoryStore } from "../../scripts/storage/repositories/memory-store.ts";
-import { SnapshotComparator, EvolutionAnalyzer } from "../../scripts/evolution/index.ts";
+import {
+  SnapshotComparator,
+  EvolutionAnalyzer,
+  EvolutionEventWriter,
+  SnapshotComparisonError,
+} from "../../scripts/evolution/index.ts";
 
 describe("evolution-stage4-persistence (Coexistence, Idempotency & Atomic Rollback)", () => {
   let tmpDir: string;
@@ -169,5 +174,58 @@ describe("evolution-stage4-persistence (Coexistence, Idempotency & Atomic Rollba
       count: number;
     };
     expect(evCount.count).toBe(0);
+  });
+
+  it("EVO-PERSIST-REMEDIATION-01: keeps db.activeTransactionDepth balanced when BEGIN fails and blocks unvalidated EvolutionEventWriter writes", () => {
+    // DEFECT-TX-01: Force BEGIN IMMEDIATE failure while a read/locked connection or closed hook occurs
+    const originalExec = db.rawDb.exec.bind(db.rawDb);
+    let failFirstBegin = true;
+    db.rawDb.exec = ((sql: string) => {
+      if (failFirstBegin && sql.startsWith("BEGIN IMMEDIATE")) {
+        failFirstBegin = false;
+        throw new Error("SQLITE_BUSY: database is locked");
+      }
+      return originalExec(sql);
+    }) as typeof db.rawDb.exec;
+
+    expect(() => db.transaction(() => "never")).toThrow(/SQLITE_BUSY/);
+    expect(db.activeTransactionDepth).toBe(0);
+
+    // Subsequent transaction still opens a real top-level BEGIN IMMEDIATE and rolls back on error
+    expect(() =>
+      db.transaction(() => {
+        db.exec(
+          "INSERT INTO repositories (identity, root_path, display_name, created_at, updated_at, schema_version) VALUES ('tx_test', '/tx', 'TX', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', 3)",
+        );
+        throw new Error("Force rollback");
+      }),
+    ).toThrow(/Force rollback/);
+    expect(db.activeTransactionDepth).toBe(0);
+    const txRepo = db.prepare("SELECT id FROM repositories WHERE identity = 'tx_test'").get() as
+      { id: number } | undefined;
+    expect(txRepo).toBeUndefined();
+
+    // ISSUE-PERSIST-01: EvolutionEventWriter must validate repository ownership BEFORE deleting prior events
+    const scan1 = createScan("2026-11-01T10:00:00.000Z");
+    const scan2 = createScan("2026-11-02T10:00:00.000Z");
+    insertFile(scan1, "src/a.ts", "a1");
+    insertFile(scan2, "src/a.ts", "a2");
+
+    const analyzer = new EvolutionAnalyzer(db);
+    const validAnalysis = analyzer.analyze(scan1, scan2, { persistEvents: true });
+    const countBefore = (
+      db.prepare("SELECT COUNT(*) AS count FROM evolution_events").get() as { count: number }
+    ).count;
+    expect(countBefore).toBeGreaterThan(0);
+
+    const forgedAnalysis = {
+      ...validAnalysis,
+      repositoryId: repoId + 999,
+    };
+    expect(() => EvolutionEventWriter.persist(db, forgedAnalysis)).toThrow(SnapshotComparisonError);
+    const countAfter = (
+      db.prepare("SELECT COUNT(*) AS count FROM evolution_events").get() as { count: number }
+    ).count;
+    expect(countAfter).toBe(countBefore);
   });
 });

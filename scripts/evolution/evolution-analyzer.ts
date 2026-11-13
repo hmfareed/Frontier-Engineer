@@ -108,6 +108,7 @@ export class EvolutionAnalyzer {
           comparison,
           {
             applyLifecycle: Boolean(options.applyLifecycle),
+            allowPartial: Boolean(options.allowPartial),
             simulateFailure: Boolean(options.simulateFailure),
             workspaceRoot: options.workspaceRoot,
           },
@@ -131,6 +132,7 @@ export class EvolutionAnalyzer {
       comparison,
       {
         applyLifecycle: false,
+        allowPartial: Boolean(options.allowPartial),
         workspaceRoot: options.workspaceRoot,
       },
     );

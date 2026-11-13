@@ -9,6 +9,7 @@ import type { EvolutionSeverity } from "../storage/types.ts";
 import { ComponentDetector } from "../architecture/component-detector.ts";
 import { CycleAnalyzer } from "../architecture/cycle-analyzer.ts";
 import type { ArchitectureComponent } from "../architecture/types.ts";
+import { AdrDiffEngine, type ResolvedAdrEntry } from "./adr-diff.ts";
 import type { DriftFinding, EvolutionAnalyzerOptions, SnapshotComparison } from "./types.ts";
 
 export interface ComponentBoundaryEdge {
@@ -144,6 +145,36 @@ export function extractComponentBoundaryEdges(
   return { components, edges, fileFanOut };
 }
 
+export function findCorroboratingAcceptedAdr(
+  acceptedAdrs: ResolvedAdrEntry[],
+  sourceComponentId: string,
+  targetComponentId: string,
+  sourceCategory: string,
+  targetCategory: string,
+): ResolvedAdrEntry | undefined {
+  for (const adr of acceptedAdrs) {
+    if (adr.isFallback) continue;
+    const governsEndpoint =
+      adr.governedComponents.includes(sourceComponentId) ||
+      adr.governedComponents.includes(targetComponentId);
+    if (!governsEndpoint) continue;
+    const text = `${adr.title} ${adr.evidenceDescription} ${adr.rawContent ?? ""}`.toLowerCase();
+    const mentionsBoundaryConstraint =
+      /\b(layer|boundary|forbid|prohibit|disallow|must not|cannot import|bypass|no direct)\b/i.test(
+        text,
+      );
+    const mentionsCategories =
+      text.includes(sourceCategory.toLowerCase()) ||
+      text.includes(targetCategory.toLowerCase()) ||
+      text.includes(sourceComponentId.replace(/^comp:/, "").toLowerCase()) ||
+      text.includes(targetComponentId.replace(/^comp:/, "").toLowerCase());
+    if (mentionsBoundaryConstraint && mentionsCategories) {
+      return adr;
+    }
+  }
+  return undefined;
+}
+
 export class DriftDetector {
   public static detect(
     db: SqliteDatabase,
@@ -156,6 +187,16 @@ export class DriftDetector {
     const findings: DriftFinding[] = [];
     const baseData = extractComponentBoundaryEdges(db, repositoryId, baseScanId);
     const targetData = extractComponentBoundaryEdges(db, repositoryId, targetScanId);
+
+    const historicalAdrs = AdrDiffEngine.resolveHistoricalAdrs(
+      db,
+      repositoryId,
+      targetScanId,
+      options.workspaceRoot,
+    );
+    const acceptedAdrs = historicalAdrs.adrs.filter(
+      (a) => !a.isFallback && a.status && /\baccepted\b/i.test(a.status),
+    );
 
     const baseCompById = new Map(baseData.components.map((c) => [c.componentIdentity, c]));
     const targetCompById = new Map(targetData.components.map((c) => [c.componentIdentity, c]));
@@ -214,13 +255,10 @@ export class DriftDetector {
             findingId: `drift:comp_reclass:${compDiff.componentIdentity}`,
             driftType: "DRIFT_COMPONENT_RECLASSIFIED",
             title: `Component reclassified: ${compDiff.componentIdentity} (${baseComp.category} -> ${targetComp.category})`,
-            description: `Component '${compDiff.componentIdentity}' shifted architectural category from '${baseComp.category}' to '${targetComp.category}'`,
+            description: `Component '${compDiff.componentIdentity}' shifted inferred category from '${baseComp.category}' to '${targetComp.category}'`,
             severity: "MEDIUM",
-            confidence: Math.min(baseComp.confidence, targetComp.confidence),
-            confidenceTier:
-              baseComp.status === "CONFIRMED" && targetComp.status === "CONFIRMED"
-                ? "CONFIRMED"
-                : "INFERRED",
+            confidence: Math.min(0.85, baseComp.confidence, targetComp.confidence),
+            confidenceTier: "INFERRED",
             subjectEntity: compDiff.componentIdentity,
             relevantPaths: [...targetComp.filePaths],
             details: {
@@ -229,6 +267,7 @@ export class DriftDetector {
               targetCategory: targetComp.category,
               baseStatus: baseComp.status,
               targetStatus: targetComp.status,
+              basis: "directory_classification_heuristic",
             },
             evidenceIds: compDiff.evidenceId ? [compDiff.evidenceId] : [],
           });
@@ -273,14 +312,26 @@ export class DriftDetector {
 
         const violation = checkLayerViolation(targetEdge.sourceCategory, targetEdge.targetCategory);
         if (violation) {
+          const governingAdr = findCorroboratingAcceptedAdr(
+            acceptedAdrs,
+            targetEdge.sourceComponentId,
+            targetEdge.targetComponentId,
+            targetEdge.sourceCategory,
+            targetEdge.targetCategory,
+          );
+          const isAdrConfirmed = Boolean(
+            governingAdr && targetEdge.sourceConfirmed && targetEdge.targetConfirmed,
+          );
           findings.push({
             findingId: `drift:layer_violation:${edgeKey}`,
             driftType: "DRIFT_LAYER_VIOLATION_INTRODUCED",
             title: `Layer violation introduced: ${edgeKey}`,
-            description: `${violation.reason} (${edgeKey})`,
+            description: isAdrConfirmed
+              ? `${violation.reason} (${edgeKey}; governed by Accepted ${governingAdr!.adrId})`
+              : `Heuristic layer rule: ${violation.reason} (${edgeKey}; uncorroborated by an Accepted ADR)`,
             severity: violation.severity,
-            confidence: bothConfirmed ? 0.95 : 0.75,
-            confidenceTier: bothConfirmed ? "CONFIRMED" : "INFERRED",
+            confidence: isAdrConfirmed ? 0.95 : bothConfirmed ? 0.8 : 0.65,
+            confidenceTier: isAdrConfirmed ? "CONFIRMED" : "INFERRED",
             subjectEntity: edgeKey,
             relevantPaths: paths,
             details: {
@@ -289,6 +340,8 @@ export class DriftDetector {
               sourceCategory: targetEdge.sourceCategory,
               targetCategory: targetEdge.targetCategory,
               fileEdges: targetEdge.fileEdges,
+              basis: isAdrConfirmed ? "accepted_adr_rule" : "heuristic_layer_rule",
+              governingAdrId: governingAdr?.adrId,
             },
             evidenceIds: [],
           });
@@ -491,8 +544,20 @@ export class DriftDetector {
       }
     }
 
-    // 5. Unresolved import spike
-    if (comparison.summary.dependencies.unresolved > 0) {
+    // 5. Unresolved import spike (ISSUE-DRIFT-02: only emit when net unresolved imports grew in targetScanId)
+    const countUnresolved = (scanId: number): number => {
+      const row = db
+        .prepare(
+          `SELECT COUNT(*) AS count FROM imports WHERE repository_id = ? AND scan_id = ? AND resolution_status = 'UNRESOLVED'`,
+        )
+        .get(repositoryId, scanId) as { count: number };
+      return row.count;
+    };
+    const baseUnresolvedTotal = countUnresolved(baseScanId);
+    const targetUnresolvedTotal = countUnresolved(targetScanId);
+    const unresolvedGrowth = targetUnresolvedTotal - baseUnresolvedTotal;
+
+    if (unresolvedGrowth > 0 && comparison.summary.dependencies.unresolved > 0) {
       const unresolvedPaths = Array.from(
         new Set(
           comparison.dependencies.changes
@@ -504,15 +569,18 @@ export class DriftDetector {
       findings.push({
         findingId: `drift:unresolved_spike:${baseScanId}:${targetScanId}`,
         driftType: "DRIFT_UNRESOLVED_IMPORT_SPIKE",
-        title: `Unresolved imports detected (${comparison.summary.dependencies.unresolved})`,
-        description: `${comparison.summary.dependencies.unresolved} import dependency change(s) remained UNRESOLVED in scan ${targetScanId}`,
-        severity: comparison.summary.dependencies.unresolved >= 3 ? "HIGH" : "MEDIUM",
+        title: `Unresolved imports spiked (${baseUnresolvedTotal} -> ${targetUnresolvedTotal}, +${unresolvedGrowth})`,
+        description: `Unresolved imports grew from ${baseUnresolvedTotal} in scan ${baseScanId} to ${targetUnresolvedTotal} in scan ${targetScanId}`,
+        severity: unresolvedGrowth >= 3 ? "HIGH" : "MEDIUM",
         confidence: 1.0,
         confidenceTier: "CONFIRMED",
         subjectEntity: `unresolved:${targetScanId}`,
         relevantPaths: unresolvedPaths,
         details: {
-          unresolvedCount: comparison.summary.dependencies.unresolved,
+          baseUnresolvedTotal,
+          targetUnresolvedTotal,
+          unresolvedGrowth,
+          unresolvedDiffCount: comparison.summary.dependencies.unresolved,
         },
         evidenceIds: [],
       });

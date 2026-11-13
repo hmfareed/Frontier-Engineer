@@ -210,6 +210,35 @@ export async function runCli(argv: string[]): Promise<number> {
     return 2;
   }
 
+  // ISSUE-CLI-02: Enforce flag compatibility with selected subcommand
+  if (persistEvents && subcommand !== "compare" && subcommand !== "evolution") {
+    outputError(
+      `--persist-events is only supported for 'compare' and 'evolution' subcommands (got '${subcommand}').`,
+      2,
+      format,
+    );
+    return 2;
+  }
+
+  if (applyLifecycle) {
+    if (subcommand !== "evolution" && subcommand !== "memories") {
+      outputError(
+        `--apply-lifecycle is only supported for 'evolution' and 'memories --scan-id <id>' subcommands (got '${subcommand}').`,
+        2,
+        format,
+      );
+      return 2;
+    }
+    if (subcommand === "memories" && scanId === undefined) {
+      outputError(
+        `--apply-lifecycle on 'memories' requires an explicit --scan-id <id>.`,
+        2,
+        format,
+      );
+      return 2;
+    }
+  }
+
   // Validate workspace and database availability
   if (!fs.existsSync(workspaceRoot)) {
     outputError(`Workspace root does not exist: ${workspaceRoot}`, 3, format);
@@ -357,6 +386,7 @@ export async function runCli(argv: string[]): Promise<number> {
           persistEvents,
           allowPartial,
           workspaceRoot,
+          expectedRepositoryId: repo.id,
         });
 
         if (format === "json") {
@@ -387,6 +417,7 @@ export async function runCli(argv: string[]): Promise<number> {
           allowPartial,
           workspaceRoot,
           maxRecordsPerDomain: limit,
+          expectedRepositoryId: repo.id,
         });
 
         if (subcommand === "evolution") {
@@ -443,6 +474,7 @@ export async function runCli(argv: string[]): Promise<number> {
           scanId !== undefined
             ? MemoryLifecycleEvaluator.evaluateRepository(db, repo.id, scanId, undefined, {
                 applyLifecycle,
+                allowPartial,
                 workspaceRoot,
               })
             : null;
@@ -479,7 +511,7 @@ export async function runCli(argv: string[]): Promise<number> {
           );
           return 4;
         }
-        const versions = memStore.getMemoryVersions(memory.id);
+        const versions = memStore.getMemoryVersions(repo.id, memory.id);
         const evidence = memStore.getMemoryEvidence(repo.id, memory.id);
         const relationships = memStore.getRelationships(repo.id, memory.id);
         const payload = {
@@ -520,7 +552,8 @@ export async function runCli(argv: string[]): Promise<number> {
       if (
         err.code === "ERR_BASE_SNAPSHOT_NOT_FOUND" ||
         err.code === "ERR_TARGET_SNAPSHOT_NOT_FOUND" ||
-        err.code === "ERR_SNAPSHOT_NOT_FOUND"
+        err.code === "ERR_SNAPSHOT_NOT_FOUND" ||
+        err.code === "ERR_SCAN_NOT_FOUND"
       ) {
         outputError(err.message, 4, format);
         return 4;

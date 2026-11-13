@@ -247,6 +247,7 @@ export interface ComparatorOptions {
   maxRecordsPerDomain?: number;
   persistEvents?: boolean;
   workspaceRoot?: string;
+  expectedRepositoryId?: number;
 }
 
 // --- Phase 7.5 Stage 4: Evolution Analyzer, Drift, ADR Correlation & Debt Types ---
@@ -283,6 +284,7 @@ export type AdrCorrelationType =
   | "DECISION_GOVERNED_COMPONENT_REMOVED"
   | "DECISION_GOVERNED_BOUNDARY_DRIFT"
   | "DECISION_STATUS_SUPERSEDED_OR_DEPRECATED"
+  | "DECISION_CONFLICTING_GOVERNANCE"
   | "DECISION_UNLINKED_ARCHITECTURAL_CHANGE";
 
 export interface AdrCorrelationFinding {

@@ -7,8 +7,9 @@ import type {
   MemoryEvidenceType,
   MemoryLifecycleStatus,
 } from "../storage/types.ts";
+import type { ComparisonLimitation } from "../evolution/types.ts";
 
-export type EvidenceVerificationStatus = "VERIFIED" | "MISSING" | "CONTRADICTED";
+export type EvidenceVerificationStatus = "VERIFIED" | "MISSING" | "CONTRADICTED" | "UNVERIFIED";
 
 export interface EvidenceEvaluationItem {
   evidenceId: number;
@@ -46,6 +47,7 @@ export interface MemoryEvaluationResult {
   verifiedCount: number;
   missingCount: number;
   contradictedCount: number;
+  unverifiedCount: number;
   reason: string;
   evidenceEvaluations: EvidenceEvaluationItem[];
 }
@@ -59,4 +61,5 @@ export interface MemoryLifecycleSummary {
   recoveredToActive: number;
   unchanged: number;
   evaluations: MemoryEvaluationResult[];
+  limitations?: ComparisonLimitation[];
 }

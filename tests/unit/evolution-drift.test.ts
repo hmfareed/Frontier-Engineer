@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
@@ -181,7 +182,8 @@ describe("evolution-drift (Stage 4 Architectural Drift & ADR Correlation)", () =
     );
     expect(layerViolation).toBeDefined();
     expect(layerViolation?.severity).toBe("HIGH");
-    expect(layerViolation?.confidenceTier).toBe("CONFIRMED");
+    expect(layerViolation?.confidenceTier).toBe("INFERRED");
+    expect(layerViolation?.details.basis).toBe("heuristic_layer_rule");
   });
 
   it("EVO-DRIFT-03: detects cycle resolution, introduction, expansion, and SCC growth", () => {
@@ -290,5 +292,130 @@ describe("evolution-drift (Stage 4 Architectural Drift & ADR Correlation)", () =
     expect(orphan).toBeDefined();
     expect(orphan?.severity).toBe("HIGH");
     expect(orphan?.confidenceTier).toBe("CONFIRMED");
+  });
+
+  it("EVO-DRIFT-REMEDIATION-01: promotes layer violation to CONFIRMED only with Accepted ADR and keeps component reclassification INFERRED", () => {
+    const scan1 = createScan("2026-11-01T10:00:00.000Z");
+    const scan2 = createScan("2026-11-02T10:00:00.000Z");
+
+    const ui1 = insertFile(scan1, "src/ui/App.tsx", "ui1");
+    insertFile(scan1, "src/db/schema.sql", "sql1");
+    const adr1 = insertFile(scan1, "docs/adr/ADR-010.md", "adr10", "documentation");
+    insertAdrMetadata(scan1, adr1, {
+      adrId: "ADR-010",
+      number: 10,
+      title: "Forbid direct frontend database imports across layer boundary",
+      status: "Accepted",
+      governedComponents: ["comp:src/ui", "comp:src/db"],
+    });
+
+    const ui2 = insertFile(scan2, "src/ui/App.tsx", "ui2");
+    const db2 = insertFile(scan2, "src/db/connection.ts", "db2");
+    insertFile(scan2, "src/db/schema.sql", "sql1");
+    insertImport(scan2, ui2, "../db/connection", db2, "RESOLVED", 1);
+    const adr2 = insertFile(scan2, "docs/adr/ADR-010.md", "adr10", "documentation");
+    insertAdrMetadata(scan2, adr2, {
+      adrId: "ADR-010",
+      number: 10,
+      title: "Forbid direct frontend database imports across layer boundary",
+      status: "Accepted",
+      governedComponents: ["comp:src/ui", "comp:src/db"],
+    });
+
+    const res = new EvolutionAnalyzer(db).analyze(scan1, scan2);
+    const layerViolation = res.drift.findings.find(
+      (f) => f.driftType === "DRIFT_LAYER_VIOLATION_INTRODUCED",
+    );
+    expect(layerViolation).toBeDefined();
+    expect(layerViolation?.confidenceTier).toBe("CONFIRMED");
+    expect(layerViolation?.details.governingAdrId).toBe("ADR-010");
+  });
+
+  it("EVO-DRIFT-REMEDIATION-02: suppresses DRIFT_UNRESOLVED_IMPORT_SPIKE when unresolved imports do not grow and detects net spike", () => {
+    const scan1 = createScan("2026-11-01T10:00:00.000Z");
+    const scan2 = createScan("2026-11-02T10:00:00.000Z");
+    const scan3 = createScan("2026-11-03T10:00:00.000Z");
+
+    const f1 = insertFile(scan1, "src/app.ts", "h1");
+    insertImport(scan1, f1, "./missing_a", null, "UNRESOLVED", 1);
+    insertImport(scan1, f1, "./missing_b", null, "UNRESOLVED", 2);
+
+    // Scan 2 modifies another line so edge changes in diff, but total unresolved drops (2 -> 1)
+    const f2 = insertFile(scan2, "src/app.ts", "h2");
+    insertImport(scan2, f2, "./missing_c", null, "UNRESOLVED", 5);
+
+    const noSpike = new EvolutionAnalyzer(db).analyze(scan1, scan2);
+    expect(
+      noSpike.drift.findings.some((f) => f.driftType === "DRIFT_UNRESOLVED_IMPORT_SPIKE"),
+    ).toBe(false);
+
+    // Scan 3 grows unresolved imports (1 -> 3)
+    const f3 = insertFile(scan3, "src/app.ts", "h3");
+    insertImport(scan3, f3, "./missing_c", null, "UNRESOLVED", 5);
+    insertImport(scan3, f3, "./missing_d", null, "UNRESOLVED", 6);
+    insertImport(scan3, f3, "./missing_e", null, "UNRESOLVED", 7);
+
+    const spike = new EvolutionAnalyzer(db).analyze(scan2, scan3);
+    const spikeFinding = spike.drift.findings.find(
+      (f) => f.driftType === "DRIFT_UNRESOLVED_IMPORT_SPIKE",
+    );
+    expect(spikeFinding).toBeDefined();
+    expect(spikeFinding?.details.unresolvedGrowth).toBe(2);
+  });
+
+  it("EVO-DRIFT-REMEDIATION-03: blocks live disk ADR leakage on hash mismatch and detects DECISION_CONFLICTING_GOVERNANCE", () => {
+    const adrDir = path.join(tmpDir, "docs", "adr");
+    fs.mkdirSync(adrDir, { recursive: true });
+    const adr1Path = path.join(adrDir, "ADR-020.md");
+    const adr1Original = "# ADR-020: Legacy Auth\n\n- **Status:** Proposed\n";
+    fs.writeFileSync(adr1Path, adr1Original, "utf8");
+    const adr1Hash = createHash("sha256").update(adr1Original).digest("hex");
+
+    // Tamper disk file AFTER indexing so live disk pretends ADR-020 is Accepted & governs auth
+    fs.writeFileSync(
+      adr1Path,
+      "# ADR-020: Legacy Auth\n\n- **Status:** Accepted\n\nGoverns src/auth.\n",
+      "utf8",
+    );
+
+    const scan1 = createScan("2026-11-01T10:00:00.000Z");
+    const scan2 = createScan("2026-11-02T10:00:00.000Z");
+
+    insertFile(scan1, "src/auth/login.ts", "a1");
+    insertFile(scan1, "docs/adr/ADR-020.md", adr1Hash, "documentation");
+    // Scan 2 removes src/auth; live tampered disk must NOT trigger Accepted orphan correlation!
+    insertFile(scan2, "docs/adr/ADR-020.md", adr1Hash, "documentation");
+
+    // Two conflicting hash-verified Accepted ADRs in scan 2 via ADR_METADATA_JSON
+    const adrA = insertFile(scan2, "docs/adr/ADR-030.md", "h30", "documentation");
+    const adrB = insertFile(scan2, "docs/adr/ADR-031.md", "h31", "documentation");
+    insertAdrMetadata(scan2, adrA, {
+      adrId: "ADR-030",
+      number: 30,
+      title: "Allow direct access between comp:src/ui and comp:src/db",
+      status: "Accepted",
+      governedComponents: ["comp:src/ui", "comp:src/db"],
+    });
+    insertAdrMetadata(scan2, adrB, {
+      adrId: "ADR-031",
+      number: 31,
+      title: "Supersedes ADR-030: prohibit direct access between comp:src/ui and comp:src/db",
+      status: "Accepted",
+      governedComponents: ["comp:src/ui", "comp:src/db"],
+    });
+
+    const res = new EvolutionAnalyzer(db).analyze(scan1, scan2, { workspaceRoot: tmpDir });
+    expect(
+      res.decisions.correlations.some(
+        (c) => c.adrId === "ADR-020" && c.correlationType === "DECISION_GOVERNED_COMPONENT_REMOVED",
+      ),
+    ).toBe(false);
+
+    const conflict = res.decisions.correlations.find(
+      (c) => c.correlationType === "DECISION_CONFLICTING_GOVERNANCE",
+    );
+    expect(conflict).toBeDefined();
+    expect(conflict?.severity).toBe("HIGH");
+    expect(conflict?.details.conflictingAdrIds).toEqual(["ADR-030", "ADR-031"]);
   });
 });

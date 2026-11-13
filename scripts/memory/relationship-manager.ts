@@ -5,7 +5,11 @@
 
 import type { SqliteDatabase } from "../storage/database.ts";
 import { MemoryStore } from "../storage/repositories/memory-store.ts";
-import type { CreateMemoryRelationshipInput, MemoryRelationshipRecord } from "../storage/types.ts";
+import type {
+  CreateMemoryRelationshipInput,
+  EngineeringMemoryRecord,
+  MemoryRelationshipRecord,
+} from "../storage/types.ts";
 
 export class RelationshipManager {
   private store: MemoryStore;
@@ -23,15 +27,40 @@ export class RelationshipManager {
   }
 
   /**
-   * Finds an active incoming SUPERSEDES replacement for a target memory, if any.
+   * DEFECT-REL-02: Only an ACTIVE (and, when supplied, positively verified) memory
+   * may automatically supersede another memory.
    */
-  public findSupersedingReplacementId(repositoryId: number, targetMemoryId: number): number | null {
+  public canSupersede(
+    candidate: EngineeringMemoryRecord | null | undefined,
+    targetMemoryId: number,
+    positivelyVerifiedIds?: Set<number>,
+  ): boolean {
+    if (!candidate || candidate.id === targetMemoryId) {
+      return false;
+    }
+    if (candidate.status !== "ACTIVE") {
+      return false;
+    }
+    if (positivelyVerifiedIds !== undefined && !positivelyVerifiedIds.has(candidate.id)) {
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Finds an ACTIVE (and optionally positively verified) incoming SUPERSEDES replacement for a target memory.
+   */
+  public findSupersedingReplacementId(
+    repositoryId: number,
+    targetMemoryId: number,
+    positivelyVerifiedIds?: Set<number>,
+  ): number | null {
     const rels = this.store.getRelationships(repositoryId, targetMemoryId);
     for (const rel of rels) {
       if (rel.targetMemoryId === targetMemoryId && rel.relationshipType === "SUPERSEDES") {
         const candidate = this.store.getMemory(repositoryId, rel.sourceMemoryId);
-        if (candidate && candidate.status !== "SUPERSEDED" && candidate.status !== "ARCHIVED") {
-          return candidate.id;
+        if (this.canSupersede(candidate, targetMemoryId, positivelyVerifiedIds)) {
+          return candidate!.id;
         }
       }
     }

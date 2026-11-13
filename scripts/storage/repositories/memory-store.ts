@@ -175,7 +175,23 @@ export class MemoryStore {
   /**
    * Retrieves the immutable historical version records for a memory.
    */
-  public getMemoryVersions(memoryId: number): MemoryVersionRecord[] {
+  public getMemoryVersions(memoryId: number): MemoryVersionRecord[];
+  public getMemoryVersions(repositoryId: number, memoryId: number): MemoryVersionRecord[];
+  public getMemoryVersions(idOrRepoId: number, maybeMemoryId?: number): MemoryVersionRecord[] {
+    if (maybeMemoryId !== undefined) {
+      return this.db
+        .prepare(
+          `SELECT
+            id, repository_id AS repositoryId, memory_id AS memoryId,
+            version, title, content, status,
+            previous_content_hash AS previousContentHash, new_content_hash AS newContentHash,
+            change_reason AS changeReason, source_scan_id AS sourceScanId, created_at AS createdAt
+          FROM memory_versions
+          WHERE repository_id = ? AND memory_id = ?
+          ORDER BY version ASC`,
+        )
+        .all(idOrRepoId, maybeMemoryId) as unknown as MemoryVersionRecord[];
+    }
     return this.db
       .prepare(
         `SELECT
@@ -187,7 +203,7 @@ export class MemoryStore {
         WHERE memory_id = ?
         ORDER BY version ASC`,
       )
-      .all(memoryId) as unknown as MemoryVersionRecord[];
+      .all(idOrRepoId) as unknown as MemoryVersionRecord[];
   }
 
   /**
@@ -312,6 +328,9 @@ export class MemoryStore {
       const supersededById: number | null =
         params.targetStatus === "SUPERSEDED" ? (params.supersededById ?? null) : null;
 
+      // DEFECT-LC-02: Only positively verified ACTIVE transitions advance last_verified_at / last_seen_scan_id.
+      const isVerifiedActive = params.targetStatus === "ACTIVE" ? 1 : 0;
+
       this.db
         .prepare(
           `UPDATE engineering_memories SET
@@ -323,8 +342,8 @@ export class MemoryStore {
             confidence = ?,
             confidence_tier = ?,
             updated_at = ?,
-            last_verified_at = ?,
-            last_seen_scan_id = COALESCE(?, last_seen_scan_id)
+            last_verified_at = CASE WHEN ? = 1 THEN ? ELSE last_verified_at END,
+            last_seen_scan_id = CASE WHEN ? = 1 THEN COALESCE(?, last_seen_scan_id) ELSE last_seen_scan_id END
           WHERE repository_id = ? AND id = ?`,
         )
         .run(
@@ -336,7 +355,9 @@ export class MemoryStore {
           newConfidence,
           newConfidenceTier,
           now,
+          isVerifiedActive,
           now,
+          isVerifiedActive,
           sourceScanId,
           params.repositoryId,
           current.id,
@@ -583,7 +604,7 @@ export class MemoryStore {
               `ERR_MEMORY_RELATIONSHIP_CYCLE: Cycle detected in ${params.relationshipType} relationship graph`,
             );
           }
-          if (visited.has(item.id) || item.depth >= MAX_DEPTH) {
+          if (visited.has(item.id)) {
             continue;
           }
           visited.add(item.id);
@@ -599,6 +620,11 @@ export class MemoryStore {
               );
             }
             if (!visited.has(nr.targetMemoryId)) {
+              if (item.depth + 1 > MAX_DEPTH) {
+                throw new Error(
+                  `ERR_MEMORY_RELATIONSHIP_DEPTH_EXCEEDED: Cycle check for ${params.relationshipType} relationship exceeded MAX_DEPTH=${MAX_DEPTH}; failing closed`,
+                );
+              }
               queue.push({ id: nr.targetMemoryId, depth: item.depth + 1 });
             }
           }

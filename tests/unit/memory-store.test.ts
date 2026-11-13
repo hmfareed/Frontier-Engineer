@@ -532,4 +532,29 @@ describe("memory-store (Atomic Lifecycle & Historical Consistency)", () => {
     expect(reactivatedB.version).toBe(3);
     expect(store.getMemoryVersions(memB.id)).toHaveLength(2);
   });
+
+  it("13. enforces repository isolation on two-argument getMemoryVersions(repositoryId, memoryId)", () => {
+    const otherRepoId = Number(
+      db.rawDb
+        .prepare(
+          "INSERT INTO repositories (identity, root_path, display_name, created_at, updated_at, schema_version) VALUES ('repo_iso_ver', '/iso', 'Iso', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', 3)",
+        )
+        .run().lastInsertRowid,
+    );
+    const mem = store.createMemory({
+      repositoryId: repoId,
+      memoryKey: "scoped_ver_mem",
+      category: "project_context",
+      title: "Scoped Version",
+      content: "v1",
+    });
+    store.transitionLifecycle({
+      repositoryId: repoId,
+      memoryId: mem.id,
+      targetStatus: "STALE",
+      changeReason: "test isolation",
+    });
+    expect(store.getMemoryVersions(repoId, mem.id)).toHaveLength(1);
+    expect(store.getMemoryVersions(otherRepoId, mem.id)).toHaveLength(0);
+  });
 });

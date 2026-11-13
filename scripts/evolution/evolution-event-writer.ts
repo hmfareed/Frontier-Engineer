@@ -6,6 +6,8 @@
 
 import type { SqliteDatabase } from "../storage/database.ts";
 import type { EvolutionEventRecord } from "../storage/types.ts";
+import { SnapshotComparisonError } from "./snapshot-comparator.ts";
+import { SnapshotValidator } from "./snapshot-validator.ts";
 import type { EvolutionAnalysisResult } from "./types.ts";
 
 export class EvolutionEventWriter {
@@ -16,6 +18,31 @@ export class EvolutionEventWriter {
     const repositoryId = analysis.repositoryId;
     const baseScanId = analysis.baseSnapshot.scanId;
     const targetScanId = analysis.targetSnapshot.scanId;
+
+    // ISSUE-PERSIST-01: Validate snapshot existence, status, and repository ownership before mutating evolution_events
+    if (
+      analysis.comparison.repositoryId !== repositoryId ||
+      analysis.comparison.baseSnapshot.scanId !== baseScanId ||
+      analysis.comparison.targetSnapshot.scanId !== targetScanId
+    ) {
+      throw new SnapshotComparisonError(
+        "Evolution analysis metadata is inconsistent with its underlying snapshot comparison.",
+        "ERR_EVOLUTION_OWNERSHIP_MISMATCH",
+      );
+    }
+
+    const validation = SnapshotValidator.validate(db, baseScanId, targetScanId, {
+      allowPartial: analysis.status === "PARTIAL",
+      expectedRepositoryId: repositoryId,
+    });
+    if (!validation.isValid) {
+      throw new SnapshotComparisonError(
+        validation.errorMessage ?? "Evolution analysis persistence validation failed.",
+        validation.errorCode ?? "ERR_SNAPSHOT_VALIDATION_FAILED",
+        validation,
+      );
+    }
+
     const now = new Date().toISOString();
 
     const deleteStmt = db.prepare(

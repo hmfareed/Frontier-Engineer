@@ -23,7 +23,7 @@ interface AdrFileRecord {
   contentHash: string | null;
 }
 
-interface ResolvedAdrEntry {
+export interface ResolvedAdrEntry {
   adrId: string;
   number: number;
   title: string;
@@ -35,6 +35,14 @@ interface ResolvedAdrEntry {
   confidence: number;
   isFallback: boolean;
   contentHash: string | null;
+  rawContent?: string;
+}
+
+export interface HistoricalAdrResolution {
+  adrs: ResolvedAdrEntry[];
+  byId: Map<string, ResolvedAdrEntry>;
+  byPath: Map<string, ResolvedAdrEntry>;
+  limitations: ComparisonLimitation[];
 }
 
 export class AdrDiffEngine {
@@ -291,6 +299,132 @@ export class AdrDiffEngine {
     };
   }
 
+  /**
+   * Resolves historical ADRs strictly for the given snapshot without falling back
+   * to unverified workspace disk content.
+   */
+  public static resolveHistoricalAdrs(
+    db: SqliteDatabase,
+    repositoryId: number,
+    scanId: number,
+    workspaceRoot?: string,
+  ): HistoricalAdrResolution {
+    let rootPath = workspaceRoot;
+    if (!rootPath) {
+      const repoRow = db
+        .prepare("SELECT root_path AS rootPath FROM repositories WHERE id = ?")
+        .get(repositoryId) as { rootPath: string } | undefined;
+      rootPath = repoRow?.rootPath ?? process.cwd();
+    }
+
+    const files = this.queryAdrFiles(db, repositoryId, scanId);
+    const components = this.loadScanComponents(db, repositoryId, scanId);
+    const limitations: ComparisonLimitation[] = [];
+    let fallbackCount = 0;
+    let missingHashCount = 0;
+
+    const map = this.resolveAdrMap(
+      scanId,
+      files,
+      components,
+      rootPath,
+      () => {
+        fallbackCount++;
+      },
+      () => {
+        missingHashCount++;
+      },
+    );
+
+    const byId = new Map<string, ResolvedAdrEntry>(map);
+    const byPath = new Map<string, ResolvedAdrEntry>();
+    for (const entry of byId.values()) {
+      byPath.set(entry.filePath, entry);
+    }
+
+    // Snapshot-scoped ADR_METADATA_JSON rows in source_evidence take precedence when present
+    // for offline/synthetic DB snapshots, without overwriting verified rawContent.
+    const adrMetaRows = db
+      .prepare(
+        `SELECT f.normalized_path AS filePath, f.content_hash AS contentHash, se.evidence_description AS description
+         FROM source_evidence se
+         JOIN files f ON f.id = se.file_id
+         WHERE se.repository_id = ? AND se.scan_id = ? AND se.evidence_type = 'ADR_METADATA_JSON'
+         ORDER BY f.normalized_path ASC, se.id ASC`,
+      )
+      .all(repositoryId, scanId) as unknown as {
+      filePath: string;
+      contentHash: string | null;
+      description: string;
+    }[];
+
+    let resolvedFromMeta = 0;
+    for (const row of adrMetaRows) {
+      try {
+        const meta = JSON.parse(row.description) as {
+          adrId?: string;
+          number?: number;
+          title?: string;
+          status?: string;
+          date?: string;
+          governedComponents?: string[];
+        };
+        if (!meta.adrId) continue;
+        const normalizedId = meta.adrId.toUpperCase();
+        const existing = byId.get(normalizedId) ?? byPath.get(row.filePath);
+        const numMatch = normalizedId.match(/ADR-(\d+)/i);
+        const num = meta.number ?? existing?.number ?? (numMatch ? parseInt(numMatch[1], 10) : 0);
+        const entry: ResolvedAdrEntry = {
+          adrId: normalizedId,
+          number: num,
+          title: meta.title ?? existing?.title ?? normalizedId,
+          status: meta.status ?? existing?.status,
+          date: meta.date ?? existing?.date,
+          filePath: row.filePath,
+          governedComponents: meta.governedComponents ?? existing?.governedComponents ?? [],
+          evidenceDescription:
+            existing?.evidenceDescription ??
+            `Snapshot ADR metadata for ${normalizedId} from ${row.filePath}`,
+          confidence: 1.0,
+          isFallback: false,
+          contentHash: row.contentHash ?? existing?.contentHash ?? null,
+          rawContent: existing?.rawContent,
+        };
+        byId.set(normalizedId, entry);
+        byPath.set(row.filePath, entry);
+        resolvedFromMeta++;
+      } catch {
+        // Ignore malformed metadata JSON
+      }
+    }
+
+    // Only emit fallback/missing-hash limitations for ADRs that were NOT satisfied by snapshot metadata
+    const unresolvedFallbacks = Math.max(0, fallbackCount - resolvedFromMeta);
+    if (missingHashCount > 0 && unresolvedFallbacks > 0) {
+      limitations.push({
+        code: "LIM_ADR_MISSING_HISTORICAL_HASH",
+        description:
+          "One or more indexed ADR files lacked a stored historical content hash; disk hash verification was withheld.",
+        domain: "adr",
+        affectedEntityCount: missingHashCount,
+      });
+    }
+    if (unresolvedFallbacks > 0) {
+      limitations.push({
+        code: "LIM_ADR_HISTORICAL_CONTENT_FALLBACK",
+        description:
+          "Historical ADR markdown content on disk was missing or failed SHA-256 verification against the indexed snapshot hash; ADR status and content rules could not be confirmed.",
+        domain: "adr",
+        affectedEntityCount: unresolvedFallbacks,
+      });
+    }
+
+    const adrs = Array.from(byId.values()).sort(
+      (a, b) => a.number - b.number || a.adrId.localeCompare(b.adrId),
+    );
+    return { adrs, byId, byPath, limitations };
+  }
+
   private static queryAdrFiles(
     db: SqliteDatabase,
     repositoryId: number,
@@ -358,22 +492,28 @@ export class AdrDiffEngine {
     for (const file of files) {
       const contentHash = file.contentHash ?? null;
       let parsed: AdrFinding | null = null;
+      let verifiedContent: { content: string | null; reason?: string } | null = null;
       let mismatchReason = "historical content unavailable on disk";
 
       if (!contentHash) {
         onMissingHash();
         mismatchReason = "missing indexed content hash";
       } else {
-        const verifiedContent = this.readHashVerifiedDiskFile(
+        const verifiedContentResult = this.readHashVerifiedDiskFile(
           realWsRoot,
           rootPath,
           file.normalizedPath,
           contentHash,
         );
-        if (verifiedContent.content !== null) {
-          parsed = this.parseAdrContent(file.normalizedPath, verifiedContent.content, components);
-        } else if (verifiedContent.reason) {
-          mismatchReason = verifiedContent.reason;
+        if (verifiedContentResult.content !== null) {
+          parsed = this.parseAdrContent(
+            file.normalizedPath,
+            verifiedContentResult.content,
+            components,
+          );
+          verifiedContent = verifiedContentResult;
+        } else if (verifiedContentResult.reason) {
+          mismatchReason = verifiedContentResult.reason;
         }
       }
 
@@ -390,6 +530,7 @@ export class AdrDiffEngine {
           confidence: parsed.confidence,
           isFallback: false,
           contentHash,
+          rawContent: verifiedContent?.content ?? undefined,
         });
         continue;
       }

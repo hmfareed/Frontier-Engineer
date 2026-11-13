@@ -80,11 +80,15 @@ export class SqliteDatabase {
    * Executes a synchronous block inside an immediate transaction (or nested savepoint).
    * Automatically rolls back on exception.
    */
+  public get activeTransactionDepth(): number {
+    return this.transactionDepth;
+  }
+
   public transaction<T>(fn: () => T): T {
     this.ensureOpen();
     if (this.transactionDepth === 0) {
-      this.transactionDepth++;
       this.db.exec("BEGIN IMMEDIATE;");
+      this.transactionDepth++;
       try {
         const result = fn();
         this.db.exec("COMMIT;");
@@ -97,13 +101,13 @@ export class SqliteDatabase {
         }
         throw err;
       } finally {
-        this.transactionDepth--;
+        this.transactionDepth = Math.max(0, this.transactionDepth - 1);
       }
     }
 
-    const spName = `sp_nested_${this.transactionDepth}`;
-    this.transactionDepth++;
+    const spName = `sp_nested_${this.transactionDepth + 1}`;
     this.db.exec(`SAVEPOINT ${spName};`);
+    this.transactionDepth++;
     try {
       const result = fn();
       this.db.exec(`RELEASE SAVEPOINT ${spName};`);
@@ -117,7 +121,7 @@ export class SqliteDatabase {
       }
       throw err;
     } finally {
-      this.transactionDepth--;
+      this.transactionDepth = Math.max(0, this.transactionDepth - 1);
     }
   }
 

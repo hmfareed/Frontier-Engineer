@@ -104,6 +104,26 @@ export class SnapshotValidator {
     passedChecks.push("REPOSITORY_IDENTITY_MATCH");
     const repositoryId = baseRow.repositoryId;
 
+    if (
+      options.expectedRepositoryId !== undefined &&
+      repositoryId !== options.expectedRepositoryId
+    ) {
+      failedChecks.push("EXPECTED_REPOSITORY_MATCH");
+      return {
+        isValid: false,
+        repositoryId,
+        baseScanId,
+        targetScanId,
+        passedChecks,
+        failedChecks,
+        errorCode: "ERR_REPOSITORY_MISMATCH",
+        errorMessage: `Snapshots belong to repository ${repositoryId}, expected active workspace repository ${options.expectedRepositoryId}.`,
+      };
+    }
+    if (options.expectedRepositoryId !== undefined) {
+      passedChecks.push("EXPECTED_REPOSITORY_MATCH");
+    }
+
     // Verify repository record exists
     const repoRow = db
       .prepare("SELECT id, identity, root_path AS rootPath FROM repositories WHERE id = ?")

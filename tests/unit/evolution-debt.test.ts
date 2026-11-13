@@ -206,4 +206,40 @@ describe("evolution-debt (Stage 4 Deterministic Engineering Debt Intelligence)",
       ),
     ).toBe(true);
   });
+
+  it("EVO-DEBT-REMEDIATION-01: keeps static fanout hotspots and uncorroborated layer violations below CONFIRMED and downgrades barrel index files to CANDIDATE", () => {
+    const scan1 = createScan("2026-11-01T10:00:00.000Z");
+    const scan2 = createScan("2026-11-02T10:00:00.000Z");
+
+    insertFile(scan1, "src/ui/App.tsx", "u1");
+    insertFile(scan1, "src/db/schema.sql", "d1", "database");
+
+    const ui2 = insertFile(scan2, "src/ui/App.tsx", "u2");
+    const db2 = insertFile(scan2, "src/db/conn.ts", "d2");
+    insertFile(scan2, "src/db/schema.sql", "d1", "database");
+    insertImport(scan2, ui2, "../db/conn", db2, "RESOLVED", 1);
+
+    const svc2 = insertFile(scan2, "src/core/service.ts", "s2");
+    const barrel2 = insertFile(scan2, "src/core/index.ts", "b2");
+    for (let i = 1; i <= 11; i++) {
+      const leaf = insertFile(scan2, `src/core/leaf${i}.ts`, `l${i}`);
+      insertImport(scan2, svc2, `./leaf${i}`, leaf, "RESOLVED", i);
+      insertImport(scan2, barrel2, `./leaf${i}`, leaf, "RESOLVED", i);
+    }
+
+    const res = new EvolutionAnalyzer(db).analyze(scan1, scan2);
+    const svcHotspot = res.debt.items.find(
+      (d) => d.category === "DEBT_HIGH_FANOUT_HOTSPOT" && d.subjectEntity === "src/core/service.ts",
+    );
+    const barrelHotspot = res.debt.items.find(
+      (d) => d.category === "DEBT_HIGH_FANOUT_HOTSPOT" && d.subjectEntity === "src/core/index.ts",
+    );
+    const layerDebt = res.debt.items.find((d) => d.category === "DEBT_LAYER_BOUNDARY_VIOLATION");
+
+    expect(svcHotspot?.confidenceTier).toBe("INFERRED");
+    expect(barrelHotspot?.confidenceTier).toBe("CANDIDATE");
+    expect(barrelHotspot?.severity).toBe("LOW");
+    expect(barrelHotspot?.details.aggregatorOrEntrypoint).toBe(true);
+    expect(layerDebt?.confidenceTier).toBe("INFERRED");
+  });
 });

@@ -188,4 +188,119 @@ describe("cli-evolution (Phase 7.5 Stage 4 CLI Integration)", () => {
     const missingMem = runSubprocess(["--workspace", ws, "memory", "nonexistent_key"], ws);
     expect(missingMem.status).toBe(4);
   });
+
+  it("EVO-CLI-02: rejects misplaced mutation flags (ISSUE-CLI-02) and cross-repository scan IDs (DEFECT-CLI-01)", async () => {
+    const ws = createWorkspace();
+    const cm = new ConnectionManager({ workspaceRoot: ws });
+    const sm = new StorageManager(cm);
+    let s1ScanId: number;
+    let s2ScanId: number;
+    try {
+      await sm.initialize();
+
+      const s1 = await sm.persistSnapshot({
+        repositoryIdentity: cm.getRepository().identity,
+        rootPath: ws,
+        displayName: "cli-evo4-flags",
+        inventory: makeInventory(ws, ["src/a.ts"]),
+        extractions: new Map(),
+        scannerVersion: "0.6.3",
+        extractorVersion: "0.6.3",
+      });
+      const s2 = await sm.persistSnapshot({
+        repositoryIdentity: cm.getRepository().identity,
+        rootPath: ws,
+        displayName: "cli-evo4-flags",
+        inventory: makeInventory(ws, ["src/b.ts"]),
+        extractions: new Map(),
+        scannerVersion: "0.6.3",
+        extractorVersion: "0.6.3",
+      });
+      s1ScanId = s1.scanId;
+      s2ScanId = s2.scanId;
+    } finally {
+      cm.close();
+    }
+
+    // ISSUE-CLI-02: Mutation flags must fail closed with exit 2 on unsupported subcommands
+    const badApplyDrift = runSubprocess(
+      ["--workspace", ws, "drift", String(s1ScanId), String(s2ScanId), "--apply-lifecycle"],
+      ws,
+    );
+    expect(badApplyDrift.status).toBe(2);
+
+    const badApplyDebt = runSubprocess(
+      ["--workspace", ws, "debt", String(s1ScanId), String(s2ScanId), "--apply-lifecycle"],
+      ws,
+    );
+    expect(badApplyDebt.status).toBe(2);
+
+    const badApplyMemoriesNoScan = runSubprocess(
+      ["--workspace", ws, "memories", "--apply-lifecycle"],
+      ws,
+    );
+    expect(badApplyMemoriesNoScan.status).toBe(2);
+
+    const badPersistDrift = runSubprocess(
+      ["--workspace", ws, "drift", String(s1ScanId), String(s2ScanId), "--persist-events"],
+      ws,
+    );
+    expect(badPersistDrift.status).toBe(2);
+
+    const badPersistMemories = runSubprocess(
+      ["--workspace", ws, "memories", "--persist-events"],
+      ws,
+    );
+    expect(badPersistMemories.status).toBe(2);
+
+    // DEFECT-CLI-01: Reject scans belonging to a different repository (exit code 2)
+    const dbPath = path.join(ws, ".frontier", "intelligence", "index.sqlite");
+    const { SqliteDatabase } = await import("../../scripts/storage/database.ts");
+    const rawDb = new SqliteDatabase({ path: dbPath });
+    let foreignS1: number;
+    let foreignS2: number;
+    try {
+      const otherRepoId = Number(
+        rawDb
+          .prepare(
+            "INSERT INTO repositories (identity, root_path, display_name, created_at, updated_at, schema_version) VALUES ('foreign_cli_repo', '/foreign', 'Foreign', '2026-11-01T00:00:00Z', '2026-11-01T00:00:00Z', 3)",
+          )
+          .run().lastInsertRowid,
+      );
+      foreignS1 = Number(
+        rawDb
+          .prepare(
+            "INSERT INTO scan_runs (repository_id, started_at, completed_at, status, files_discovered, files_indexed, files_skipped, files_failed, diagnostic_count, scanner_version, extractor_version, is_active) VALUES (?, '2026-11-01T10:00:00Z', '2026-11-01T10:01:00Z', 'COMPLETE', 0, 0, 0, 0, 0, '0.6.3', '0.6.3', 0)",
+          )
+          .run(otherRepoId).lastInsertRowid,
+      );
+      foreignS2 = Number(
+        rawDb
+          .prepare(
+            "INSERT INTO scan_runs (repository_id, started_at, completed_at, status, files_discovered, files_indexed, files_skipped, files_failed, diagnostic_count, scanner_version, extractor_version, is_active) VALUES (?, '2026-11-02T10:00:00Z', '2026-11-02T10:01:00Z', 'COMPLETE', 0, 0, 0, 0, 0, '0.6.3', '0.6.3', 0)",
+          )
+          .run(otherRepoId).lastInsertRowid,
+      );
+    } finally {
+      rawDb.close();
+    }
+
+    const crossRepoCompare = runSubprocess(
+      ["--workspace", ws, "compare", String(foreignS1), String(foreignS2), "--format", "json"],
+      ws,
+    );
+    expect(crossRepoCompare.status).toBe(2);
+
+    const crossRepoEvo = runSubprocess(
+      ["--workspace", ws, "evolution", String(foreignS1), String(foreignS2), "--format", "json"],
+      ws,
+    );
+    expect(crossRepoEvo.status).toBe(2);
+
+    const crossRepoMemories = runSubprocess(
+      ["--workspace", ws, "memories", "--scan-id", String(foreignS2), "--format", "json"],
+      ws,
+    );
+    expect(crossRepoMemories.status).toBe(2);
+  });
 });

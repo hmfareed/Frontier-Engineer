@@ -4,8 +4,8 @@
  */
 
 import type { SqliteDatabase } from "../storage/database.ts";
-import { AdrDetector } from "../architecture/adr-detector.ts";
 import { ComponentDetector } from "../architecture/component-detector.ts";
+import { AdrDiffEngine } from "./adr-diff.ts";
 import type {
   AdrCorrelationFinding,
   DriftFinding,
@@ -23,6 +23,8 @@ interface EffectiveAdr {
   isAddedInTarget: boolean;
   isFallback: boolean;
   contentHash?: string | null;
+  rawContent?: string;
+  evidenceDescription?: string;
 }
 
 export class AdrCorrelator {
@@ -41,93 +43,56 @@ export class AdrCorrelator {
       .get(repositoryId) as { rootPath: string } | undefined;
     const rootPath = options.workspaceRoot ?? repoRow?.rootPath ?? process.cwd();
 
-    // Build effective target ADR map combining comparison diff and detector/source_evidence
+    // DEFECT-ADR-01: Resolve target ADRs strictly via hash-verified historical snapshot state
+    const historicalTarget = AdrDiffEngine.resolveHistoricalAdrs(
+      db,
+      repositoryId,
+      targetScanId,
+      rootPath,
+    );
+    const diffById = new Map(comparison.adrs.changes.map((c) => [c.adrId.toUpperCase(), c]));
     const effectiveAdrs = new Map<string, EffectiveAdr>();
-    for (const item of comparison.adrs.changes) {
-      if (item.changeType === "REMOVED" || !item.targetPath) continue;
-      effectiveAdrs.set(item.adrId, {
-        adrId: item.adrId,
-        title: item.title,
-        status: item.targetStatus ?? "Proposed",
-        filePath: item.targetPath,
-        governedComponents: item.governedComponents ?? [],
-        isModifiedInTarget: item.changeType === "MODIFIED",
-        isAddedInTarget: item.changeType === "ADDED",
-        isFallback: Boolean(item.isFallback),
-        contentHash: item.targetContentHash,
+
+    for (const adr of historicalTarget.adrs) {
+      const diffItem = diffById.get(adr.adrId.toUpperCase());
+      effectiveAdrs.set(adr.adrId, {
+        adrId: adr.adrId,
+        title: adr.title,
+        status: adr.status ?? "Unknown",
+        filePath: adr.filePath,
+        governedComponents: [...adr.governedComponents],
+        isModifiedInTarget: diffItem?.changeType === "MODIFIED",
+        isAddedInTarget: diffItem?.changeType === "ADDED",
+        isFallback: adr.isFallback,
+        contentHash: adr.contentHash,
+        rawContent: adr.rawContent,
+        evidenceDescription: adr.evidenceDescription,
       });
     }
 
-    // Load unchanged ADRs present in target scan if includeUnchanged was false
-    const detectedTargetAdrs = AdrDetector.detect(db, repositoryId, targetScanId, rootPath);
-    for (const adr of detectedTargetAdrs) {
-      if (!effectiveAdrs.has(adr.adrId)) {
-        effectiveAdrs.set(adr.adrId, {
-          adrId: adr.adrId,
-          title: adr.title,
-          status: adr.status,
-          filePath: adr.filePath,
-          governedComponents: adr.governedComponents,
-          isModifiedInTarget: false,
-          isAddedInTarget: false,
-          isFallback: false,
+    for (const item of comparison.adrs.changes) {
+      if (item.changeType === "REMOVED" || !item.targetPath) continue;
+      if (!effectiveAdrs.has(item.adrId)) {
+        effectiveAdrs.set(item.adrId, {
+          adrId: item.adrId,
+          title: item.title,
+          status: item.targetStatus ?? "Unknown",
+          filePath: item.targetPath,
+          governedComponents: item.governedComponents ?? [],
+          isModifiedInTarget: item.changeType === "MODIFIED",
+          isAddedInTarget: item.changeType === "ADDED",
+          isFallback: Boolean(item.isFallback),
+          contentHash: item.targetContentHash,
+          evidenceDescription: item.evidenceDescription,
         });
       }
     }
 
-    // Fallback: inspect snapshot source_evidence ADR_METADATA_JSON when offline/synthetic
-    const metaRows = db
-      .prepare(
-        `SELECT f.normalized_path AS filePath, f.content_hash AS contentHash, se.evidence_description AS description
-         FROM source_evidence se
-         JOIN files f ON f.id = se.file_id
-         WHERE se.repository_id = ? AND se.scan_id = ? AND se.evidence_type = 'ADR_METADATA_JSON'`,
-      )
-      .all(repositoryId, targetScanId) as unknown as {
-      filePath: string;
-      contentHash: string | null;
-      description: string;
-    }[];
     const baseComponents = ComponentDetector.detect(db, repositoryId, baseScanId);
     const targetComponents = ComponentDetector.detect(db, repositoryId, targetScanId);
     const allCompsById = new Map(
       [...baseComponents, ...targetComponents].map((c) => [c.componentIdentity, c]),
     );
-
-    for (const row of metaRows) {
-      try {
-        const meta = JSON.parse(row.description) as {
-          adrId?: string;
-          title?: string;
-          status?: string;
-          governedComponents?: string[];
-        };
-        if (!meta.adrId) continue;
-        const diffItem = comparison.adrs.changes.find((a) => a.adrId === meta.adrId);
-        const existing = effectiveAdrs.get(meta.adrId);
-        const governed =
-          meta.governedComponents && meta.governedComponents.length > 0
-            ? meta.governedComponents
-            : (existing?.governedComponents ?? []);
-        if (!existing) {
-          effectiveAdrs.set(meta.adrId, {
-            adrId: meta.adrId,
-            title: meta.title ?? meta.adrId,
-            status: meta.status ?? "Proposed",
-            filePath: row.filePath,
-            governedComponents: governed,
-            isModifiedInTarget: diffItem?.changeType === "MODIFIED",
-            isAddedInTarget: diffItem?.changeType === "ADDED",
-            isFallback: false,
-            contentHash: row.contentHash,
-          });
-        } else if (existing.governedComponents.length === 0 && governed.length > 0) {
-          existing.governedComponents = governed;
-        }
-      } catch {
-        // Ignore malformed metadata JSON
-      }
-    }
 
     const removedComponents = new Map(
       comparison.components.changes
@@ -135,10 +100,13 @@ export class AdrCorrelator {
         .map((c) => [c.componentIdentity, c]),
     );
 
-    // 1 & 2. Accepted ADRs governing removed or drifted components
+    // 1 & 2. Accepted (and hash-verified, non-fallback) ADRs governing removed or drifted components
+    const acceptedVerifiedAdrs: EffectiveAdr[] = [];
     for (const adr of effectiveAdrs.values()) {
+      if (adr.isFallback) continue;
       const isAccepted = /\baccepted\b/i.test(adr.status);
       if (!isAccepted) continue;
+      acceptedVerifiedAdrs.push(adr);
 
       for (const compId of adr.governedComponents) {
         const removed = removedComponents.get(compId);
@@ -174,6 +142,7 @@ export class AdrCorrelator {
                 d.details.targetComponentId === compId),
           );
           for (const drift of boundaryDrifts) {
+            const tier = drift.confidenceTier === "CONFIRMED" ? "CONFIRMED" : "INFERRED";
             correlations.push({
               findingId: `decision:boundary_drift:${adr.adrId}:${drift.findingId}`,
               correlationType: "DECISION_GOVERNED_BOUNDARY_DRIFT",
@@ -182,8 +151,8 @@ export class AdrCorrelator {
               title: `Boundary drift affects Accepted ${adr.adrId} (${compId})`,
               description: `Unchanged Accepted ADR '${adr.adrId}' governs '${compId}', which experienced '${drift.driftType}'`,
               severity: "MEDIUM",
-              confidence: 0.8,
-              confidenceTier: "INFERRED",
+              confidence: tier === "CONFIRMED" ? 0.9 : 0.75,
+              confidenceTier: tier,
               relevantPaths: Array.from(new Set([adr.filePath, ...drift.relevantPaths])).sort(),
               details: {
                 adrId: adr.adrId,
@@ -194,6 +163,62 @@ export class AdrCorrelator {
               evidenceIds: [...drift.evidenceIds],
             });
           }
+        }
+      }
+    }
+
+    // 2b. Conflicting Accepted ADR governance detection (DECISION_CONFLICTING_GOVERNANCE)
+    acceptedVerifiedAdrs.sort((a, b) => a.adrId.localeCompare(b.adrId));
+    for (let i = 0; i < acceptedVerifiedAdrs.length; i++) {
+      for (let j = i + 1; j < acceptedVerifiedAdrs.length; j++) {
+        const adrA = acceptedVerifiedAdrs[i];
+        const adrB = acceptedVerifiedAdrs[j];
+        const sharedComponents = adrA.governedComponents.filter((c) =>
+          adrB.governedComponents.includes(c),
+        );
+        const textA = `${adrA.title} ${adrA.rawContent ?? adrA.evidenceDescription ?? ""}`;
+        const textB = `${adrB.title} ${adrB.rawContent ?? adrB.evidenceDescription ?? ""}`;
+
+        const explicitSupersedeConflict =
+          new RegExp(
+            `\\b(supersede[sd]?|replace[sd]?|conflict[s]?\\s+with)\\s+${adrA.adrId}\\b`,
+            "i",
+          ).test(textB) ||
+          new RegExp(
+            `\\b(supersede[sd]?|replace[sd]?|conflict[s]?\\s+with)\\s+${adrB.adrId}\\b`,
+            "i",
+          ).test(textA);
+
+        const prohibitRe = /\b(forbid|prohibit|disallow|must\s+not|never\s+import|no\s+direct)\b/i;
+        const allowRe = /\b(allow|permit|direct\s+access|direct\s+import|require\s+direct)\b/i;
+        const stanceConflict =
+          sharedComponents.length > 0 &&
+          ((prohibitRe.test(textA) && allowRe.test(textB)) ||
+            (prohibitRe.test(textB) && allowRe.test(textA)));
+
+        if (explicitSupersedeConflict || stanceConflict) {
+          correlations.push({
+            findingId: `decision:conflict:${adrA.adrId}:${adrB.adrId}`,
+            correlationType: "DECISION_CONFLICTING_GOVERNANCE",
+            adrId: adrA.adrId,
+            componentIdentity: sharedComponents[0],
+            title: `Conflicting Accepted decisions: ${adrA.adrId} and ${adrB.adrId}`,
+            description: explicitSupersedeConflict
+              ? `Both '${adrA.adrId}' and '${adrB.adrId}' remain Accepted despite explicit supersession/conflict reference`
+              : `Accepted ADRs '${adrA.adrId}' and '${adrB.adrId}' contain opposing governance stances on shared component(s): ${sharedComponents.join(", ")}`,
+            severity: "HIGH",
+            confidence: explicitSupersedeConflict ? 0.95 : 0.8,
+            confidenceTier: explicitSupersedeConflict ? "CONFIRMED" : "INFERRED",
+            relevantPaths: [adrA.filePath, adrB.filePath].sort(),
+            details: {
+              conflictingAdrIds: [adrA.adrId, adrB.adrId],
+              sharedComponents,
+              conflictKind: explicitSupersedeConflict
+                ? "unretired_supersession"
+                : "opposing_stance",
+            },
+            evidenceIds: [],
+          });
         }
       }
     }

@@ -418,13 +418,17 @@ stateDiagram-v2
    - **Terminal Status**: A `SUPERSEDED` memory cannot be reactivated or transitioned to any other status.
    - **Replacement Retention**: A memory acting as a replacement for superseded memories cannot be deleted directly while referenced (`trg_engineering_memories_no_delete_replacement`).
 
-3. **Atomic Historical Version History**:
+3. **Atomic Historical Version History & Stage 4 Evaluation Rules**:
    - Direct SQL mutations that bypass the storage API do not automatically create version records. All production lifecycle writes must route through `MemoryStore.transitionLifecycle()`.
    - `MemoryStore.transitionLifecycle()` executes an immediate transaction:
      1. Validates requested transition and checks for no-op requests.
      2. Snapshots prior state into `memory_versions` with SHA-256 content hashes and change reason.
-     3. Applies new status, version increment (`version = version + 1`), and updated timestamps.
+     3. Applies new status and version increment (`version = version + 1`), updating `last_verified_at` and `last_seen_scan_id` **only** on positive `ACTIVE` transitions (preserving last verified scan provenance when transitioning to `STALE`, `DISPUTED`, `SUPERSEDED`, or `ARCHIVED`).
      4. Commits atomically or rolls back all changes if any step or trigger fails.
+   - **Stage 4 Evidence Evaluation Outcomes:** Supporting evidence evaluates to `VERIFIED`, `MISSING`, `CONTRADICTED`, or `UNVERIFIED` (e.g., unanchored `manual`/`diff` records, ambiguous symbol relocations, `UNRESOLVED` imports without a confirmed target, missing/mismatched historical ADR content hashes, or missing artifacts during an explicit `PARTIAL` scan).
+   - **Conjunctive Support & Safe Recovery:** Any `MISSING` supporting artifact (`missingCount >= 1`) transitions an `ACTIVE` memory to `STALE`; recovery (`STALE`/`DISPUTED` -> `ACTIVE`) requires 100% of supporting evidence items to be `VERIFIED` with zero `MISSING`, `UNVERIFIED`, or `CONTRADICTED` items. Zero-evidence or `UNVERIFIED`-only memories never receive false `recordScanVerification()` stamps.
+   - **Fail-Closed Cycle Guard & Superseder Eligibility:** `MemoryStore.createRelationship()` enforces bounded BFS cycle checking up to `MAX_DEPTH = 32` and fails closed with `ERR_MEMORY_RELATIONSHIP_DEPTH_EXCEEDED` if unexplored edges exceed depth 32. Automatic supersession (`MemoryLifecycleEvaluator` / `RelationshipManager`) requires the superseder to be an `ACTIVE` memory with no contradicted, missing, or unverified evidence in the target snapshot.
+   - **Hash-Verified Historical ADR & Drift Confidence:** Historical ADR evaluation (`EvidenceEvaluator`, `AdrCorrelator`, `DriftDetector`) uses `AdrDiffEngine.resolveHistoricalAdrs()` (`ADR_METADATA_JSON` plus SHA-256 content-hash verification against `files.content_hash`) without falling back to unverified live disk reads. Uncorroborated generic layer rules, component reclassifications, and static fan-out hotspots emit `INFERRED`/`CANDIDATE` confidence unless backed by an Accepted historical ADR.
 
 ---
 

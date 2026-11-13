@@ -4,13 +4,21 @@
  *   INTRODUCED | WORSENED | PERSISTING | RESOLVED
  */
 
+import path from "node:path";
 import type { SqliteDatabase } from "../storage/database.ts";
 import { CycleAnalyzer } from "../architecture/cycle-analyzer.ts";
 import { ComponentDetector } from "../architecture/component-detector.ts";
 import { TestAssociationEngine } from "../architecture/test-association.ts";
 import type { MemoryLifecycleSummary } from "../memory/types.ts";
-import { checkLayerViolation, extractComponentBoundaryEdges } from "./drift-detector.ts";
+import { AdrDiffEngine } from "./adr-diff.ts";
+import {
+  checkLayerViolation,
+  extractComponentBoundaryEdges,
+  findCorroboratingAcceptedAdr,
+} from "./drift-detector.ts";
 import type { AdrCorrelationFinding, DebtFinding, EvolutionAnalyzerOptions } from "./types.ts";
+
+const AGGREGATOR_ENTRYPOINT_RE = /^(index|main|app|cli|server|routes?|registry|bootstrap)\./i;
 
 const PRODUCTION_COMPONENT_CATEGORIES = new Set([
   "frontend",
@@ -212,20 +220,37 @@ export class DebtAnalyzer {
               ? "RESOLVED"
               : "PERSISTING";
 
+      const isAggregatorOrEntrypoint = AGGREGATOR_ENTRYPOINT_RE.test(path.posix.basename(filePath));
+
       items.push({
         findingId: `debt:fanout:${filePath}`,
         category: "DEBT_HIGH_FANOUT_HOTSPOT",
         state,
         title: `High fan-out hotspot ${filePath} (${bCount} -> ${tCount})`,
-        description: `Module '${filePath}' has ${tCount} internal dependencies (threshold: ${fanoutThreshold}, base: ${bCount})`,
-        severity: state === "RESOLVED" ? "INFO" : tCount >= fanoutThreshold * 2 ? "HIGH" : "MEDIUM",
-        confidence: 1.0,
-        confidenceTier: "CONFIRMED",
+        description: isAggregatorOrEntrypoint
+          ? `Entrypoint/barrel module '${filePath}' aggregates ${tCount} internal dependencies (threshold: ${fanoutThreshold}, base: ${bCount})`
+          : `Module '${filePath}' has ${tCount} internal dependencies (threshold: ${fanoutThreshold}, base: ${bCount})`,
+        severity:
+          state === "RESOLVED"
+            ? "INFO"
+            : isAggregatorOrEntrypoint
+              ? "LOW"
+              : tCount >= fanoutThreshold * 2
+                ? "HIGH"
+                : "MEDIUM",
+        confidence: isAggregatorOrEntrypoint ? 0.6 : 0.8,
+        confidenceTier: isAggregatorOrEntrypoint ? "CANDIDATE" : "INFERRED",
         subjectEntity: filePath,
         baseMetric: bCount,
         targetMetric: tCount,
         relevantPaths: [filePath],
-        details: { filePath, baseFanOut: bCount, targetFanOut: tCount, threshold: fanoutThreshold },
+        details: {
+          filePath,
+          baseFanOut: bCount,
+          targetFanOut: tCount,
+          threshold: fanoutThreshold,
+          aggregatorOrEntrypoint: isAggregatorOrEntrypoint,
+        },
       });
     }
 
@@ -248,6 +273,16 @@ export class DebtAnalyzer {
       }
     }
 
+    const historicalAdrs = AdrDiffEngine.resolveHistoricalAdrs(
+      db,
+      repositoryId,
+      targetScanId,
+      options.workspaceRoot,
+    );
+    const acceptedAdrs = historicalAdrs.adrs.filter(
+      (a) => !a.isFallback && a.status && /\baccepted\b/i.test(a.status),
+    );
+
     const allViolationKeys = Array.from(
       new Set([...baseViolations.keys(), ...targetViolations.keys()]),
     ).sort((a, b) => a.localeCompare(b));
@@ -259,6 +294,14 @@ export class DebtAnalyzer {
       const rule = checkLayerViolation(edge.sourceCategory, edge.targetCategory)!;
       const state = !bEdge && tEdge ? "INTRODUCED" : bEdge && !tEdge ? "RESOLVED" : "PERSISTING";
       const bothConfirmed = edge.sourceConfirmed && edge.targetConfirmed;
+      const governingAdr = findCorroboratingAcceptedAdr(
+        acceptedAdrs,
+        edge.sourceComponentId,
+        edge.targetComponentId,
+        edge.sourceCategory,
+        edge.targetCategory,
+      );
+      const isAdrConfirmed = Boolean(governingAdr && bothConfirmed);
       const paths = Array.from(
         new Set(edge.fileEdges.flatMap((fe) => [fe.sourcePath, fe.targetPath])),
       ).sort((a, b) => a.localeCompare(b));
@@ -268,10 +311,12 @@ export class DebtAnalyzer {
         category: "DEBT_LAYER_BOUNDARY_VIOLATION",
         state,
         title: `Layer boundary violation ${edgeKey} (${state.toLowerCase()})`,
-        description: rule.reason,
+        description: isAdrConfirmed
+          ? `${rule.reason} (governed by Accepted ${governingAdr!.adrId})`
+          : `Heuristic layer rule: ${rule.reason} (uncorroborated by an Accepted ADR)`,
         severity: state === "RESOLVED" ? "INFO" : rule.severity,
-        confidence: bothConfirmed ? 0.95 : 0.75,
-        confidenceTier: bothConfirmed ? "CONFIRMED" : "INFERRED",
+        confidence: isAdrConfirmed ? 0.95 : bothConfirmed ? 0.8 : 0.65,
+        confidenceTier: isAdrConfirmed ? "CONFIRMED" : "INFERRED",
         subjectEntity: edgeKey,
         baseMetric: bEdge ? bEdge.fileEdges.length : 0,
         targetMetric: tEdge ? tEdge.fileEdges.length : 0,
@@ -281,6 +326,8 @@ export class DebtAnalyzer {
           targetComponentId: edge.targetComponentId,
           sourceCategory: edge.sourceCategory,
           targetCategory: edge.targetCategory,
+          basis: isAdrConfirmed ? "accepted_adr_rule" : "heuristic_layer_rule",
+          governingAdrId: governingAdr?.adrId,
         },
       });
     }
