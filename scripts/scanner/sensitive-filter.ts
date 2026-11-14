@@ -118,6 +118,37 @@ function isShortIncompletePemFragment(token: string, hasSeenPayload: boolean): b
   return hasSeenPayload;
 }
 
+function matchPemInlineTail(
+  line: string,
+  hasSeenPayload: boolean,
+  headerClosedOnBeginLine: boolean,
+): { token: string; suffix: string } | null {
+  const match = line.match(
+    /^\s*([A-Za-z0-9+/]{2,}={1,2}|[A-Za-z0-9+/]{12,}={0,2})((?:\s+.*|[`"';,)\]].*))$/,
+  );
+  if (!match) return null;
+  const [, token, suffix] = match;
+  if (hasSeenPayload) {
+    return { token, suffix };
+  }
+  // On the first continuation line after BEGIN with no prior payload, avoid matching ordinary
+  // code assignments (e.g., `configuration = 1;`) or lowercase prose words while catching real
+  // base64 payloads (`MIIE...`, `dA==`) terminated by inline prose or closing string delimiters.
+  if (/^\s*=[^=]/.test(suffix)) {
+    return null;
+  }
+  if (token.endsWith("=") && token.length >= 4) {
+    return { token, suffix };
+  }
+  if (token.length >= 12 && /[A-Z0-9+/]/.test(token)) {
+    if (headerClosedOnBeginLine && !/[+/0-9]/.test(token)) {
+      return null;
+    }
+    return { token, suffix };
+  }
+  return null;
+}
+
 function findLastPemBase64LineToEof(lines: string[], startIndex: number): number | null {
   let lastPayloadLine: number | null = null;
   for (let k = startIndex; k < lines.length; k++) {
@@ -281,6 +312,11 @@ export function redactPemPrivateKeys(
       let trailingLineSuffix = "";
       let hasSeenPayload =
         isPemArmorHeaderLine(tailOnBeginLine) || isPemBase64ContinuationLine(tailOnBeginLine, 12);
+      const headerClosedOnBeginLine =
+        !hasSeenPayload &&
+        inlineClosingQuote !== null &&
+        inlineClosingQuote.index !== undefined &&
+        tailOnBeginLine.slice(0, inlineClosingQuote.index).trim().length === 0;
 
       for (let j = i + 1; j < lines.length; j++) {
         const line = lines[j];
@@ -317,15 +353,11 @@ export function redactPemPrivateKeys(
           break;
         }
 
-        if (hasSeenPayload) {
-          const inlineTailMatch = line.match(
-            /^\s*([A-Za-z0-9+/]+={1,2}|[A-Za-z0-9+/]{12,}[=]{0,2})(\s+.*)$/,
-          );
-          if (inlineTailMatch) {
-            endSpan = j;
-            trailingLineSuffix = inlineTailMatch[2];
-            break;
-          }
+        const inlineTail = matchPemInlineTail(line, hasSeenPayload, headerClosedOnBeginLine);
+        if (inlineTail) {
+          endSpan = j;
+          trailingLineSuffix = inlineTail.suffix;
+          break;
         }
 
         if (line.trim().length === 0 && j + 1 < lines.length) {
@@ -465,7 +497,7 @@ export const CORE_SECRET_PATTERN_DEFS: SecretPatternDef[] = [
   },
   { type: "GITHUB_PAT", regex: /\b(gh[pousr]_[0-9a-zA-Z]{20,255})\b/g },
   { type: "GITHUB_FINE_GRAINED_PAT", regex: /\b(github_pat_[0-9a-zA-Z_]{20,255})\b/g },
-  { type: "SLACK_TOKEN", regex: /\b(xox[baprs]-[0-9a-zA-Z][0-9a-zA-Z-]{8,126}[0-9a-zA-Z])\b/g },
+  { type: "SLACK_TOKEN", regex: /\b(xox[baprs]-[0-9a-zA-Z][0-9a-zA-Z-]{8,253}[0-9a-zA-Z])\b/g },
   { type: "STRIPE_KEY", regex: /\b((?:sk|rk)_(?:live|test)_[0-9A-Za-z]{16,})\b/g },
   {
     type: "OPENAI_API_KEY",

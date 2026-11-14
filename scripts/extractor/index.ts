@@ -58,7 +58,7 @@ function redactSecrets(msg: string): string {
       /\b(?:A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}\b/g,
       "[REDACTED_SECRET]",
     )
-    .replace(/\bxox[baprs]-[0-9A-Za-z][0-9A-Za-z-]{8,126}[0-9A-Za-z]\b/g, "[REDACTED_SECRET]")
+    .replace(/\bxox[baprs]-[0-9A-Za-z][0-9A-Za-z-]{8,253}[0-9A-Za-z]\b/g, "[REDACTED_SECRET]")
     .replace(/\bsntrys_[A-Za-z0-9_=-]{16,255}/g, "[REDACTED_SECRET]")
     .replace(
       /\bBearer\s+(?!\[REDACTED[^\]]*\])[A-Za-z0-9._~+/=-]{12,512}/gi,

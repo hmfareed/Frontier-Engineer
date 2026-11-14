@@ -78,10 +78,42 @@ export function redactString(input: string): string {
 
 const SENSITIVE_KEY_PATTERN = /password|secret|token|credential|api_?key|private_?key/i;
 
+function safeOwnKeys(obj: object): { keys: string[]; enumerationError?: string } {
+  try {
+    return { keys: Object.keys(obj) };
+  } catch (err) {
+    return { keys: [], enumerationError: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+function shouldSkipPropertyBeforeRead(obj: object, key: string): boolean {
+  try {
+    const desc = Object.getOwnPropertyDescriptor(obj, key);
+    if (!desc) return false;
+    if ("value" in desc && typeof desc.value === "function") return true;
+    // Never execute getter-backed toJSON hooks during traversal.
+    if (key === "toJSON" && typeof desc.get === "function") return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function safeReadProperty(
+  obj: object,
+  key: string | number,
+): { ok: true; value: unknown } | { ok: false; error: string } {
+  try {
+    return { ok: true, value: (obj as Record<string | number, unknown>)[key] };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 /**
  * Recursively (via explicit heap stack) redacts strings within arrays and objects.
- * Protects against self-references, nested cycles, and arbitrarily deep structures
- * while allowing repeated sibling DAG references to be redacted normally.
+ * Protects against self-references, nested cycles, throwing getters, own toJSON overrides,
+ * and arbitrarily deep structures while allowing repeated sibling DAG references to be redacted.
  */
 export function redactValue(value: unknown): unknown {
   if (value === null || value === undefined) return value;
@@ -104,6 +136,48 @@ export function redactValue(value: unknown): unknown {
       },
     },
   ];
+
+  const enqueueObjectProperties = (curr: object, target: Record<string, unknown>): void => {
+    const { keys, enumerationError } = safeOwnKeys(curr);
+    if (enumerationError !== undefined) {
+      target.__enumerationError = `[PropertyEnumerationError: ${redactString(enumerationError)}]`;
+      return;
+    }
+
+    const pending: Array<{ key: string; value: unknown }> = [];
+    for (const key of keys) {
+      // Never copy own functions or execute getter-backed toJSON overrides onto redacted clones.
+      if (shouldSkipPropertyBeforeRead(curr, key)) {
+        continue;
+      }
+      const read = safeReadProperty(curr, key);
+      if (!read.ok) {
+        target[key] = SENSITIVE_KEY_PATTERN.test(key)
+          ? "[REDACTED]"
+          : `[PropertyAccessError: ${redactString(read.error)}]`;
+        continue;
+      }
+      if (typeof read.value === "function") {
+        continue;
+      }
+      if (SENSITIVE_KEY_PATTERN.test(key) && typeof read.value === "string") {
+        target[key] = "[REDACTED]";
+      } else {
+        pending.push({ key, value: read.value });
+      }
+    }
+
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const { key, value: childVal } = pending[i];
+      stack.push({
+        kind: "enter",
+        source: childVal,
+        assign: (redactedVal) => {
+          target[key] = redactedVal;
+        },
+      });
+    }
+  };
 
   while (stack.length > 0) {
     const frame = stack.pop()!;
@@ -141,22 +215,34 @@ export function redactValue(value: unknown): unknown {
     }
     if (curr instanceof Error) {
       activeAncestors.add(curr);
+      const nameRead = safeReadProperty(curr, "name");
+      const msgRead = safeReadProperty(curr, "message");
       const errOut: Record<string, unknown> = {
-        name: curr.name,
-        message: redactString(curr.message),
+        name: nameRead.ok ? String(nameRead.value) : "Error",
+        message: msgRead.ok
+          ? redactString(String(msgRead.value))
+          : `[PropertyAccessError: ${redactString(msgRead.error)}]`,
       };
       frame.assign(errOut);
       stack.push({ kind: "exit", obj: curr });
-      const entries = Object.entries(curr as unknown as Record<string, unknown>);
-      for (let i = entries.length - 1; i >= 0; i--) {
-        const [k, v] = entries[i];
+      enqueueObjectProperties(curr, errOut);
+
+      // Standard Error.cause is non-enumerable in ES2022; ensure it is also traversed and redacted.
+      const causeRead = safeReadProperty(curr, "cause");
+      if (
+        causeRead.ok &&
+        causeRead.value !== undefined &&
+        !Object.prototype.propertyIsEnumerable.call(curr, "cause")
+      ) {
         stack.push({
           kind: "enter",
-          source: SENSITIVE_KEY_PATTERN.test(k) && typeof v === "string" ? "[REDACTED]" : v,
-          assign: (redactedVal) => {
-            errOut[k] = redactedVal;
+          source: causeRead.value,
+          assign: (redactedCause) => {
+            errOut.cause = redactedCause;
           },
         });
+      } else if (!causeRead.ok) {
+        errOut.cause = `[PropertyAccessError: ${redactString(causeRead.error)}]`;
       }
       continue;
     }
@@ -169,9 +255,18 @@ export function redactValue(value: unknown): unknown {
       frame.assign(outArr);
       for (let i = curr.length - 1; i >= 0; i--) {
         const idx = i;
+        const elemRead = safeReadProperty(curr, idx);
+        if (!elemRead.ok) {
+          outArr[idx] = `[PropertyAccessError: ${redactString(elemRead.error)}]`;
+          continue;
+        }
+        if (typeof elemRead.value === "function") {
+          outArr[idx] = null;
+          continue;
+        }
         stack.push({
           kind: "enter",
-          source: curr[idx],
+          source: elemRead.value,
           assign: (redactedItem) => {
             outArr[idx] = redactedItem;
           },
@@ -180,21 +275,7 @@ export function redactValue(value: unknown): unknown {
     } else {
       const copy: Record<string, unknown> = {};
       frame.assign(copy);
-      const entries = Object.entries(curr as Record<string, unknown>);
-      for (let i = entries.length - 1; i >= 0; i--) {
-        const [key, val] = entries[i];
-        if (SENSITIVE_KEY_PATTERN.test(key) && typeof val === "string") {
-          copy[key] = "[REDACTED]";
-        } else {
-          stack.push({
-            kind: "enter",
-            source: val,
-            assign: (redactedVal) => {
-              copy[key] = redactedVal;
-            },
-          });
-        }
-      }
+      enqueueObjectProperties(curr, copy);
     }
   }
 

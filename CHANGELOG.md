@@ -2,7 +2,22 @@
 
 All notable changes to Frontier Engineer are documented here. This project follows [Semantic Versioning](https://semver.org/).
 
-## [0.6.3] - Phase 7.8 Final Security, Storage & Release-Readiness Remediation (0.7.0 Reserved)
+## [0.6.3] - Phase 7.8.1 Residual Security Remediation (0.7.0 Reserved)
+
+> Package and plugin manifest version remains `0.6.3` (`0.7.0` is reserved until formal `0.7.0` release bump). Intelligence database schema remains version `3`.
+
+### Phase 7.8.1 Remediation Summary
+
+- **Single-Line Unterminated PEM Redaction (`RES-01`)**:
+  - Added `matchPemInlineTail()` in `scripts/scanner/sensitive-filter.ts` so unterminated PEM blocks whose single continuation line is followed inline by prose or closing string delimiters (including padded fragments such as `dA== suffix`, template literals, and `MIIEv... const safeAfter = 1;`) are scrubbed cleanly across `scanBufferForSecrets`, `ContentSanitizer`, and `redactString` while preserving non-secret assignments.
+- **Audit Serialization Hardening (`RES-03`)**:
+  - Hardened `redactValue()` in `scripts/hooks/lib/secret-redactor.ts` with safe own-key enumeration, `try/catch` property/element access redaction, non-enumerable `Error.cause` traversal, and skipping own `toJSON` data/getter functions without executing untrusted serialization hooks.
+  - Hardened `writeAuditLog()` in `scripts/hooks/runtime/logger.ts` with `BigInt`-safe + string-redacting JSON serialization, a post-serialization `containsUnredactedSecrets()` fail-closed guard, and a redacted fallback JSONL entry on unexpected serialization failures so audit events are never dropped silently or leaked unredacted.
+- **Boundary Dispositions (`RES-02`, `RES-04`)**:
+  - `RES-02`: Extended canonical `SLACK_TOKEN` upper length in `scripts/scanner/sensitive-filter.ts` and `scripts/extractor/index.ts` to 255 body characters (`{8,253}`), while retaining hyphen-only segment delimiters (excluding underscores).
+  - `RES-04`: Retained RFC-3986 percent-encoding boundary for `@` inside database URI passwords (`p%40ss` supported; unencoded `@` splits userinfo from host to prevent cross-host over-redaction).
+
+## [0.6.3] - Phase 7.8 Final Security, Storage & Release-Readiness Remediation (`3a72ae1`; 0.7.0 Reserved)
 
 > Package and plugin manifest version remains `0.6.3` (`0.7.0` is reserved until formal external acceptance). Intelligence database schema remains version `3`.
 

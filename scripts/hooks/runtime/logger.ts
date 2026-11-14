@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { redactValue } from "../lib/secret-redactor.ts";
+import { containsUnredactedSecrets } from "../../scanner/sensitive-filter.ts";
+import { redactString, redactValue } from "../lib/secret-redactor.ts";
 import { logDiagnostic } from "./output.ts";
 
 const MAX_LOG_SIZE_BYTES = 5 * 1024 * 1024; // 5 MB
@@ -59,6 +60,62 @@ function rotateLogsIfNeeded(logFilePath: string): void {
   }
 }
 
+const AUDIT_JSON_REPLACER = (_key: string, val: unknown): unknown => {
+  if (typeof val === "bigint") {
+    return val.toString();
+  }
+  if (typeof val === "string") {
+    return redactString(val);
+  }
+  return val;
+};
+
+function serializeAuditLine(record: AuditRecord): string {
+  try {
+    const sanitized = redactValue(record) as AuditRecord;
+    const serialized = JSON.stringify(sanitized, AUDIT_JSON_REPLACER);
+    if (typeof serialized !== "string") {
+      throw new Error("Audit record serialization produced undefined output.");
+    }
+    if (containsUnredactedSecrets(serialized)) {
+      throw new Error("Post-serialization secret check detected unredacted content.");
+    }
+    return serialized;
+  } catch (serializeErr) {
+    const errMsg = serializeErr instanceof Error ? serializeErr.message : String(serializeErr);
+    const safeErrMsg = redactString(errMsg);
+    logDiagnostic("Audit record serialization degraded; writing redacted fallback entry", {
+      error: safeErrMsg,
+    });
+
+    const fallbackRecord: AuditRecord = {
+      event: redactString(String(record.event ?? "UnknownEvent")),
+      hookId: redactString(String(record.hookId ?? "unknown-hook")),
+      conversationId:
+        record.conversationId !== undefined
+          ? redactString(String(record.conversationId))
+          : undefined,
+      timestamp: redactString(String(record.timestamp ?? new Date().toISOString())),
+      stepIdx: typeof record.stepIdx === "number" ? record.stepIdx : undefined,
+      toolName: record.toolName !== undefined ? redactString(String(record.toolName)) : undefined,
+      status: record.status,
+      error: record.error !== undefined ? redactString(String(record.error)) : undefined,
+      metadata: { serializationError: safeErrMsg },
+    };
+    const fallbackLine = JSON.stringify(fallbackRecord, AUDIT_JSON_REPLACER);
+    if (!containsUnredactedSecrets(fallbackLine)) {
+      return fallbackLine;
+    }
+    return JSON.stringify({
+      event: "UnknownEvent",
+      hookId: "unknown-hook",
+      timestamp: new Date().toISOString(),
+      status: "error",
+      metadata: { serializationError: "Redacted fallback serialization guard triggered." },
+    });
+  }
+}
+
 /** Writes a sanitized audit record to local JSONL log. */
 export function writeAuditLog(record: AuditRecord, workspaceRoot?: string): void {
   try {
@@ -70,8 +127,7 @@ export function writeAuditLog(record: AuditRecord, workspaceRoot?: string): void
     const logFilePath = path.join(auditDir, "execution.jsonl");
     rotateLogsIfNeeded(logFilePath);
 
-    const sanitized = redactValue(record) as AuditRecord;
-    const line = JSON.stringify(sanitized) + "\n";
+    const line = serializeAuditLine(record) + "\n";
     fs.appendFileSync(logFilePath, line, "utf8");
   } catch (error) {
     logDiagnostic("Failed to write audit log entry (failing open)", {
