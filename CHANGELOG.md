@@ -2,6 +2,27 @@
 
 All notable changes to Frontier Engineer are documented here. This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.6.3] - Phase 7.1–7.7 Hardening & Release Readiness (Uncommitted Working Tree; 0.7.0 Reserved)
+
+> Package and plugin manifest version remains `0.6.3` (`0.7.0` is reserved until formal external acceptance). Intelligence database schema remains version `3`.
+
+### Phase 7.7 Hardening Summary
+
+- **Cross-Subsystem Boundary Hardening**:
+  - Updated `scripts/graph/graph-builder.ts` (`GraphBuilder.buildGraph`) to exclude extractions from ineligible or sensitive files (`classification === "sensitive"`, `hashState === "SKIPPED_SENSITIVE"`, or `status === "FAILED"`) and verify target `file:<resolvedPath>` node existence before creating internal `IMPORTS`/`TESTS` edges.
+  - Updated `scripts/storage/transactions/snapshot-writer.ts` (`SnapshotWriter.persist`) to treat `inventory.scanStatus === "CANCELLED"` equivalently to `signal.aborted` (`CANCELLED`, `promoted: false`), filter ineligible/sensitive extractions with `SKIPPED_INELIGIBLE_EXTRACTION` diagnostics, downgrade snapshots containing `FAILED` extractions to `PARTIAL` (preserving any existing active `COMPLETE` snapshot), and record `filesSkipped`, `filesFailed`, and `diagnosticCount`.
+- **Storage Promotion, Crash Recovery & Integrity Validation**:
+  - Updated `scripts/storage/repositories/scan-store.ts` (`promoteScan`, `recoverInterruptedScans`) to enforce scan existence, repository ownership, promotable status (`COMPLETE` or `PARTIAL`), explicit `allowPartial` opt-in, protection of active `COMPLETE` scans against `PARTIAL` overwrites, and transactional cleanup of half-written `files`, `graph_nodes`, and `architecture_components` staging rows on interrupted scans.
+  - Updated `scripts/storage/transactions/storage-manager.ts` (`validateIntegrity`) to verify `PRAGMA foreign_keys`, `PRAGMA integrity_check`, `PRAGMA foreign_key_check`, all 5 schema `003` immutability triggers, core SQLite indexes, `MULTIPLE_ACTIVE_SCANS`, `ACTIVE_SCAN_MISMATCH`, `ORPHAN_FILES`, and `SCAN_REPOSITORY_MISMATCH`.
+- **Security & Secret Redaction Hardening**:
+  - Expanded self-contained `redactSecrets` in `scripts/extractor/index.ts` (zero imports outside `scripts/extractor/`) to redact terminated/unterminated PEM private keys, `github_pat_`, `sk-`, `AKIA`/`ASIA`, Slack `xox[baprs]-`, Sentry `sntrys_`, Bearer/Basic auth headers, DB connection URIs, and key/value assignments.
+  - Expanded `scripts/hooks/lib/secret-redactor.ts` (`sk-`, `xox[baprs]-`, `sntrys_`) and `scripts/hooks/runtime/output.ts` (`emitOutput`, `logDiagnostic`) so error fallbacks and stderr diagnostics are redacted.
+- **Retrieval Validation & Bounded Envelope Protection**:
+  - Added strict runtime `validateRequest()` checks (`ERR_RETRIEVAL_REQUEST_INVALID`) in `scripts/retrieval/retrieval-engine.ts` for unknown fields, invalid `agentId`/`taskType`, malformed target arrays, non-positive scan IDs or limits, unpaired `baseScanId`/`targetScanId`, and equal `baseScanId`/`targetScanId`.
+  - Capped `RetrievalResponse.warnings` at 32 items in `dedupeWarnings()` with a `WARNINGS_OVERFLOW` rollup, preventing warning inflation on repositories with large unverified memory counts.
+- **Explicit Host & Environment Disclosed Boundaries**:
+  - Live Antigravity GUI multi-agent delegation, live `PreToolUse` `overwrite` execution, live `force_ask` UI bypass, live host PostgreSQL MCP interception, and non-Antigravity runtime adapters remain outside automated sandbox execution (`IMPLEMENTED, HOST-DEPENDENT`, `NOT VERIFIED`, or `DOCUMENTED BUT NOT IMPLEMENTED`). On Windows without Developer Mode / symlink privilege, file symlink boundary checks skip cleanly (`[SKIPPED: Windows EPERM on file symlinks without Developer Mode]`).
+
 ## [0.6.3] - 2026-11-11
 
 Final Host Verification Closure & Security Acceptance (Phase 6.1.2) and Final Evidence Reconciliation & Release Acceptance (Phase 6.1.3).

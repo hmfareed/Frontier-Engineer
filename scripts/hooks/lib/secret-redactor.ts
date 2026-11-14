@@ -12,8 +12,18 @@ const SECRET_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
     replacement: "ghp_[REDACTED]",
   },
   {
-    pattern: /github_pat_[a-zA-Z0-9_]{82}/g,
+    pattern: /github_pat_[a-zA-Z0-9_]{20,255}/g,
     replacement: "github_pat_[REDACTED]",
+  },
+  // OpenAI / API keys
+  {
+    pattern: /\bsk-[a-zA-Z0-9_-]{20,255}\b/g,
+    replacement: "[REDACTED_API_KEY]",
+  },
+  // Slack tokens
+  {
+    pattern: /\bxox[baprs]-[0-9a-zA-Z-]{10,128}\b/g,
+    replacement: "[REDACTED_SLACK_TOKEN]",
   },
   // AWS Access Keys
   {
@@ -22,7 +32,7 @@ const SECRET_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
   },
   // Sentry auth tokens
   {
-    pattern: /sntrys_[a-zA-Z0-9]{64}/g,
+    pattern: /sntrys_[a-zA-Z0-9_=-]{20,255}/g,
     replacement: "sntrys_[REDACTED]",
   },
   // Bearer tokens in headers or commands

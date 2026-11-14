@@ -9,6 +9,8 @@ export interface AntigravityBasePayload {
   artifactDirectoryPath?: string;
   modelName?: string;
   lastUserInput?: string;
+  hookEventName?: string;
+  cwd?: string;
 }
 
 export interface PreToolUsePayload extends AntigravityBasePayload {

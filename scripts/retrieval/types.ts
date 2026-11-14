@@ -370,6 +370,9 @@ export interface RetrievalResponse {
   limitations: string[];
 }
 
+export type HandoffEvidenceVerificationStatus =
+  "VERIFIED" | "UNVERIFIED" | "STALE" | "DISPUTED" | "CONTRADICTED" | "MISSING";
+
 export interface HandoffContextHighlight {
   domain: RetrievalDomain;
   idOrPath: string;
@@ -377,6 +380,11 @@ export interface HandoffContextHighlight {
   confidenceTier: ConfidenceTier;
   evidenceFile?: string;
   untrustedRepositoryContent?: boolean;
+  evidenceVerificationStatus?: HandoffEvidenceVerificationStatus;
+  lineRange?: [number, number];
+  symbolIdentity?: string;
+  confidence?: ConfidenceTier;
+  limitations?: string[];
 }
 
 export interface HandoffRetrievalContext {
@@ -392,6 +400,7 @@ export interface HandoffRetrievalContext {
   confidenceSummary: ConfidenceSummary;
   highlights: HandoffContextHighlight[];
   warnings: string[];
+  limitations?: string[];
   budget: {
     includedCount: number;
     truncatedCount: number;

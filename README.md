@@ -2,11 +2,11 @@
 
 An AI software-engineering **agent system** distributed as a Google Antigravity plugin. It packages a coordinating agent, five specialist subagents, ten reusable engineering skills, persistent rules, and verification tooling into one versioned, installable unit.
 
-> **Status: Phase 6.1.3 — Final Evidence Reconciliation & Release Acceptance (v0.6.3).** Six verified lifecycle hooks (`SessionStart`, `PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`) and their generated Antigravity configuration (`hooks.json`) operate with a global matcher (`*`) covering all native file operations (`view_file`, `write_to_file`, `replace_file_content`, `multi_replace_file_content`), command execution (`run_command`), and MCP tools. Explicit MCP tool capability classification (`TRUSTED_MCP_TOOLS`) binds tools to their expected MCP server, hostile commands (`read_and_execute`, `list_and_remove`, `query_delete_records`, `search_then_upload`) are escalated or blocked, unhandled dispatcher failures fail closed with valid protocol denials and exit code 0 across a 10-condition failure matrix, and 45 acceptance tests rigorously categorize evidence across unit, direct handler, and integration tests. Interactive cached permission bypass (`force_ask`) remains BLOCKED, and PostgreSQL host-level interception is explicitly NOT VERIFIED.
+> **Status: Phase 7.6 — Retrieval Integrity, Handoff Enforcement & Change-Control Compliance (v0.6.3, Schema v3).** Six Antigravity lifecycle hooks (`SessionStart`, `PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`) operate with global matcher `*` across native file tools, shell commands, MCP tools, and specialist delegation (`invoke_subagent`, `send_message`, and marker-bearing payloads). Phases 7.1–7.6 add a workspace-scoped embedded SQLite repository intelligence index (`.frontier/intelligence/index.sqlite`, schema version `3`), deterministic query and comparison engines, conjunctive engineering-memory verification, role-aware budgeted retrieval, fail-closed `frontier-engineer/handoff` v1 bundles, strict consumer validation, and linear-time full/unterminated PEM secret redaction. Automated unit, CLI, and dispatcher subprocess tests pass locally; live Antigravity GUI host execution (interactive `force_ask`, host PostgreSQL MCP interception, live multi-agent delegation, and `PreToolUse` `overwrite`) remains unverified outside the host IDE.
 
 ## What this is
 
-Frontier Engineer is a set of Markdown instructions, JSON configuration, and TypeScript validation utilities. It is **not** a web application: there is no React frontend, no backend API, and no database. Antigravity supplies the runtime, the model, the tools, and the agent loop.
+Frontier Engineer is a set of Markdown instructions, JSON configuration, and local TypeScript intelligence, hook, and validation utilities. It is **not** a hosted web application: there is no React frontend, no remote backend API server, and no external SaaS database. Repository intelligence uses an embedded workspace-scoped SQLite index at `.frontier/intelligence/index.sqlite` (schema version `3`), accessed read-only during queries, eligibility checks, and agent retrieval. Antigravity supplies the runtime, the model, the tools, and the agent loop.
 
 The system is built around one rule: **never claim work is done without evidence**. Agents must inspect before editing, verify before reporting, distinguish assumptions from facts, and pause for human approval on consequential actions.
 
@@ -104,9 +104,10 @@ Requires Node.js 22.6+ (native TypeScript execution) and npm.
 ```bash
 npm install
 npm run verify
+npm run frontier -- --help
 ```
 
-`npm run verify` runs the type check, full validation, unit tests, formatting check, and Markdown lint. After editing canonical agent, skill, or rule specs, regenerate the adapters:
+`npm run verify` runs the type check, full validation, unit tests, formatting check, and Markdown lint. `npm run frontier -- <command>` exposes the workspace intelligence and orchestration CLI (`status`, `overview`, `freshness`, `components`, `dependencies`, `cycles`, `compare`, `evolution`, `memories`, `retrieve`, `prepare-handoff`, `validate-handoff`; partial snapshots default to rejected unless `--allow-partial` is explicitly passed). After editing canonical agent, skill, or rule specs, regenerate the adapters:
 
 ```bash
 npm run generate:agents
@@ -142,7 +143,20 @@ The CLI binary is `agy`. On Windows it is installed at `~/.gemini/bin/agy.exe`; 
 
 `agy plugin validate --strict .` recognises ten skills, six agents, fourteen rules, six lifecycle hooks, and five MCP servers with zero findings. Everything that claims Antigravity compatibility is recorded in [the verification record](docs/27-OFFICIAL-FORMAT-VERIFICATION.md) with sources and dates.
 
-**Runtime invocation, actual specialist delegation, skill activation, host-level PostgreSQL MCP interception, and interactive `force_ask` UI prompts in live host user sessions have not been tested.** No non-Antigravity adapter is implemented, and no evaluation score has been assigned. Installation and runtime discovery remain deliberately deferred.
+### Capability Status Summary (Phase 7.7)
+
+| Capability                                                             | Status                              | Evidence / Boundary                                                                                                          |
+| ---------------------------------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| Deterministic scanner, AST extractor & SQLite schema v3                | **IMPLEMENTED AND VERIFIED**        | Verified across unit, integration, crash-recovery & synthetic scale benchmarks (up to 10,000 files on Windows Node v24.21.0) |
+| Engineering graph, architecture/ADR analysis & comparator              | **IMPLEMENTED AND VERIFIED**        | Verified across dependency, SCC cycle, drift, debt & snapshot diff tests                                                     |
+| Engineering memory lifecycle & conjunctive verification                | **IMPLEMENTED AND VERIFIED**        | Verified with SQLite immutability triggers and read-only evidence evaluation                                                 |
+| Role-aware retrieval, request validation & fail-closed handoffs        | **IMPLEMENTED AND VERIFIED**        | Verified via `RetrievalEngine`, schema validation, secret redaction & `parseAndValidateHandoffBundle`                        |
+| Delegation gating via `PreToolUse` & `FRONTIER_AUTO_PREPARE_HANDOFF=1` | **IMPLEMENTED, PARTIALLY VERIFIED** | Verified in handler/subprocess suites; live GUI host execution & `overwrite` payload mutation are **HOST-DEPENDENT**         |
+| Live host `force_ask` UI prompts & PostgreSQL MCP interception         | **NOT VERIFIED**                    | Blocked from non-interactive CLI subshells due to headless browser OAuth constraints                                         |
+| Windows unprivileged file symlink scanning                             | **IMPLEMENTED, PARTIALLY VERIFIED** | Directory traversal and containment verified; file symlink creation skipped on Windows without symlink privilege (`EPERM`)   |
+| Non-Antigravity runtime adapters                                       | **DOCUMENTED BUT NOT IMPLEMENTED**  | Only Antigravity adapter artifacts are generated (`agents/`, `skills/`, `rules/`, `hooks/`, `mcp_config.json`)               |
+
+**Runtime invocation, live specialist delegation, `PreToolUse` `overwrite` injection, skill activation, host-level PostgreSQL MCP interception, and interactive `force_ask` UI prompts in live Antigravity host user sessions have not been tested.** All verification of those paths reflects automated unit, handler, CLI, and dispatcher subprocess tests. No non-Antigravity adapter is implemented, and no evaluation score has been assigned. Installation and live host runtime discovery remain outside automated test scope.
 
 ## License
 

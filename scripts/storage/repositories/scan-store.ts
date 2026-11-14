@@ -160,9 +160,41 @@ export class ScanStore {
     };
   }
 
-  public promoteScan(repositoryId: number, scanId: number): void {
+  public promoteScan(
+    repositoryId: number,
+    scanId: number,
+    options?: { allowPartial?: boolean },
+  ): void {
     const now = new Date().toISOString();
     this.db.transaction(() => {
+      const target = this.db
+        .prepare("SELECT id, repository_id AS repositoryId, status FROM scan_runs WHERE id = ?")
+        .get(scanId) as { id: number; repositoryId: number; status: ScanRunStatus } | undefined;
+
+      if (!target) {
+        throw new Error(`Cannot promote missing scan ${scanId}.`);
+      }
+      if (target.repositoryId !== repositoryId) {
+        throw new Error(
+          `Cannot promote scan ${scanId}: belongs to repository ${target.repositoryId}, expected ${repositoryId}.`,
+        );
+      }
+      if (target.status !== "COMPLETE" && target.status !== "PARTIAL") {
+        throw new Error(`Cannot promote scan ${scanId} with status '${target.status}'.`);
+      }
+
+      if (target.status === "PARTIAL") {
+        if (options?.allowPartial === false) {
+          throw new Error(`Cannot promote PARTIAL scan ${scanId} when allowPartial is false.`);
+        }
+        const active = this.getActiveScan(repositoryId);
+        if (active && active.id !== scanId && active.status === "COMPLETE") {
+          throw new Error(
+            `Cannot promote PARTIAL scan ${scanId} over active COMPLETE scan ${active.id}.`,
+          );
+        }
+      }
+
       // Mark all scans inactive for this repository
       this.db
         .prepare("UPDATE scan_runs SET is_active = 0 WHERE repository_id = ?")
@@ -180,13 +212,43 @@ export class ScanStore {
 
   public recoverInterruptedScans(repositoryId: number): number {
     const now = new Date().toISOString();
-    const res = this.db
-      .prepare(
-        `UPDATE scan_runs
-         SET status = 'FAILED', completed_at = ?, failure_reason = 'Interrupted by process termination or crash'
-         WHERE repository_id = ? AND status IN ('RUNNING', 'VALIDATING')`,
-      )
-      .run(now, repositoryId);
-    return Number(res.changes);
+    return this.db.transaction(() => {
+      const interrupted = this.db
+        .prepare(
+          `SELECT id FROM scan_runs
+           WHERE repository_id = ? AND status IN ('RUNNING', 'VALIDATING')`,
+        )
+        .all(repositoryId) as Array<{ id: number }>;
+
+      if (interrupted.length === 0) {
+        return 0;
+      }
+
+      const deleteFilesStmt = this.db.prepare("DELETE FROM files WHERE scan_id = ?");
+      const deleteNodesStmt = this.db.prepare("DELETE FROM graph_nodes WHERE scan_id = ?");
+      const deleteComponentsStmt = this.db.prepare(
+        "DELETE FROM architecture_components WHERE scan_id = ?",
+      );
+      const clearActiveRepoStmt = this.db.prepare(
+        "UPDATE repositories SET active_scan_id = NULL, updated_at = ? WHERE id = ? AND active_scan_id = ?",
+      );
+
+      for (const row of interrupted) {
+        clearActiveRepoStmt.run(now, repositoryId, row.id);
+        deleteFilesStmt.run(row.id);
+        deleteNodesStmt.run(row.id);
+        deleteComponentsStmt.run(row.id);
+      }
+
+      const res = this.db
+        .prepare(
+          `UPDATE scan_runs
+           SET status = 'FAILED', is_active = 0, completed_at = ?, failure_reason = 'Interrupted by process termination or crash'
+           WHERE repository_id = ? AND status IN ('RUNNING', 'VALIDATING')`,
+        )
+        .run(now, repositoryId);
+
+      return Number(res.changes);
+    });
   }
 }

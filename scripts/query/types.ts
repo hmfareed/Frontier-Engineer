@@ -77,6 +77,7 @@ export interface QueryOptions {
   offset?: number;
   includeEvidence?: boolean;
   scanId?: number; // Optional historical scan inspection
+  allowPartial?: boolean; // Explicit opt-in to query PARTIAL snapshots (default: false)
 }
 
 export interface TraversalQueryOptions extends QueryOptions {

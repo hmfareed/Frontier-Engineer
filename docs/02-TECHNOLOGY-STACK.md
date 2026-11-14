@@ -43,7 +43,7 @@ The schemas in [schemas/](../schemas/) are local draft-07 transcriptions of the 
 ## Explicitly excluded
 
 - Next.js, React, or any frontend framework.
-- Backend APIs and databases.
+- Hosted backend APIs or external SaaS databases (local repository intelligence uses an embedded workspace-scoped SQLite index at `.frontier/intelligence/index.sqlite`, schema version `3`, read-only during queries and retrieval).
 - A custom plugin runtime or agent orchestrator.
 - Runtime npm dependencies.
 

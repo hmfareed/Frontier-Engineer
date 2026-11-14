@@ -6,9 +6,18 @@ import { ConnectionManager } from "../../scripts/storage/connection-manager.ts";
 import { StorageManager } from "../../scripts/storage/transactions/storage-manager.ts";
 import { MemoryStore } from "../../scripts/storage/repositories/memory-store.ts";
 import type { FileInventoryResult } from "../../scripts/scanner/types.ts";
-import { ContentSanitizer, RetrievalEngine } from "../../scripts/retrieval/index.ts";
+import {
+  ContentSanitizer,
+  RetrievalEngine,
+  prepareDelegationHandoff,
+} from "../../scripts/retrieval/index.ts";
 import { validateRetrievalResponse } from "../../scripts/retrieval/schema-validator.ts";
 import { handlePreToolUse } from "../../scripts/hooks/handlers/pre-tool-use.ts";
+import { redactString } from "../../scripts/hooks/lib/secret-redactor.ts";
+import {
+  redactPemPrivateKeys,
+  scanBufferForSecrets,
+} from "../../scripts/scanner/sensitive-filter.ts";
 
 describe("Retrieval Security (Secrets, Prompt Injection, Containment, Cross-Repo & Read-Only)", () => {
   const tempDirs: string[] = [];
@@ -432,5 +441,247 @@ describe("Retrieval Security (Secrets, Prompt Injection, Containment, Cross-Repo
       },
     });
     expect(denied.decision).toBe("deny");
+  });
+
+  it("redacts complete, unterminated, short EOF (dA==), CRLF, multi-block, embedded, header-only, and large PEM keys across all paths", async () => {
+    const assertNoFragments = (out: string, fragments: string[]) => {
+      for (const frag of fragments) {
+        expect(out).not.toContain(frag);
+      }
+      expect(out).not.toMatch(/BEGIN [A-Z0-9 ]*PRIVATE KEY/);
+      expect(out).not.toMatch(/END [A-Z0-9 ]*PRIVATE KEY/);
+    };
+
+    const beginRsa = ["-----BEGIN", "RSA PRIVATE KEY-----"].join(" ");
+    const endRsa = ["-----END", "RSA PRIVATE KEY-----"].join(" ");
+    const beginEc = ["-----BEGIN", "EC PRIVATE KEY-----"].join(" ");
+    const endEc = ["-----END", "EC PRIVATE KEY-----"].join(" ");
+    const beginPk = ["-----BEGIN", "PRIVATE KEY-----"].join(" ");
+    const endPk = ["-----END", "PRIVATE KEY-----"].join(" ");
+    const beginEncPk = ["-----BEGIN", "ENCRYPTED PRIVATE KEY-----"].join(" ");
+    const beginSshPk = ["-----BEGIN", "OPENSSH PRIVATE KEY-----"].join(" ");
+
+    // 1. Complete RSA, EC, and generic private-key blocks with preserved surrounding prose
+    const rsaComplete = [
+      "PREFIX_SAFE_ALPHA",
+      beginRsa,
+      "MIIEowIBAAKCAQEA7V5kSecretPayloadLineOne",
+      "Q9z8y7x6w5v4u3t2s1r0SecretPayloadLineTwo",
+      endRsa,
+      "SUFFIX_SAFE_OMEGA",
+    ].join("\n");
+    const ecComplete = [
+      "EC_BEFORE",
+      beginEc,
+      "MHcCAQEEIPayloadEcSecretDataLineOneHere==",
+      endEc,
+      "EC_AFTER",
+    ].join("\n");
+    const genericComplete = [
+      "GEN_BEFORE",
+      beginPk,
+      "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC",
+      endPk,
+      "GEN_AFTER",
+    ].join("\n");
+
+    const redactedRsa = redactPemPrivateKeys(rsaComplete).redactedText;
+    expect(redactedRsa).toContain("PREFIX_SAFE_ALPHA");
+    expect(redactedRsa).toContain("SUFFIX_SAFE_OMEGA");
+    assertNoFragments(redactedRsa, [
+      "MIIEowIBAAKCAQEA7V5kSecretPayloadLineOne",
+      "Q9z8y7x6w5v4u3t2s1r0",
+    ]);
+
+    const redactedEc = redactPemPrivateKeys(ecComplete).redactedText;
+    expect(redactedEc).toContain("EC_BEFORE");
+    expect(redactedEc).toContain("EC_AFTER");
+    assertNoFragments(redactedEc, ["MHcCAQEEIPayloadEcSecretDataLineOneHere=="]);
+
+    const redactedGen = redactPemPrivateKeys(genericComplete).redactedText;
+    expect(redactedGen).toContain("GEN_BEFORE");
+    expect(redactedGen).toContain("GEN_AFTER");
+    assertNoFragments(redactedGen, ["MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC"]);
+
+    // 2. Missing footer with long payload + short final line + exact short EOF 'dA=='
+    const missingFooterLong = [
+      "SAFE_HEADER_CONTEXT",
+      beginPk,
+      "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC9SecretLongPayload1",
+      "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC9SecretLongPayload2",
+      "AQAB",
+    ].join("\n");
+    const outLong = redactPemPrivateKeys(missingFooterLong).redactedText;
+    expect(outLong).toContain("SAFE_HEADER_CONTEXT");
+    assertNoFragments(outLong, ["SecretLongPayload1", "SecretLongPayload2", "AQAB"]);
+
+    const eofShortDa = [
+      "BEFORE_DA",
+      beginPk,
+      "MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC9UnTerminatedLine",
+      "dA==",
+    ].join("\n");
+    const directDa = `${beginPk}\ndA==`;
+    const directDaCrlf = `BEFORE_DA_CRLF\r\n${beginRsa}\r\nMIIEowIBAAKCAQEA\r\ndA==`;
+
+    const wsSnippet = makeDir("fe-ret-pem-snippet-");
+    fs.writeFileSync(
+      path.join(wsSnippet, "package.json"),
+      JSON.stringify({ name: "pem-snip" }),
+      "utf8",
+    );
+    fs.mkdirSync(path.join(wsSnippet, "src"), { recursive: true });
+
+    for (let idx = 0; idx < 3; idx++) {
+      const sample = [eofShortDa, directDa, directDaCrlf][idx];
+      assertNoFragments(redactPemPrivateKeys(sample).redactedText, [
+        "dA==",
+        "UnTerminatedLine",
+        "MIIEowIBAAKCAQEA",
+      ]);
+      assertNoFragments(redactString(sample), ["dA==", "UnTerminatedLine", "MIIEowIBAAKCAQEA"]);
+      expect(scanBufferForSecrets(Buffer.from(sample, "utf8")).detected).toBe(true);
+      assertNoFragments(ContentSanitizer.sanitizeUntrustedText(sample).text, [
+        "dA==",
+        "UnTerminatedLine",
+        "MIIEowIBAAKCAQEA",
+      ]);
+      const rel = `src/sample-${idx}.ts`;
+      fs.writeFileSync(path.join(wsSnippet, rel), sample, "utf8");
+      const snippetRes = ContentSanitizer.readSafeSnippet({
+        workspaceRoot: wsSnippet,
+        filePath: rel,
+        sensitivityStatus: "SAFE",
+        maxLines: 50,
+      });
+      expect(snippetRes.allowed).toBe(true);
+      assertNoFragments(snippetRes.content ?? "", ["dA==", "UnTerminatedLine", "MIIEowIBAAKCAQEA"]);
+    }
+
+    // 3. Header followed immediately by EOF
+    for (const headerOnly of [beginPk, `SAFE\n${beginEncPk}`, `${beginSshPk}\r\n`]) {
+      const cleaned = redactPemPrivateKeys(headerOnly).redactedText;
+      assertNoFragments(cleaned, ["PRIVATE KEY"]);
+      expect(redactString(headerOnly)).not.toContain("PRIVATE KEY");
+      expect(scanBufferForSecrets(Buffer.from(headerOnly, "utf8")).detected).toBe(true);
+    }
+
+    // 4. CRLF complete + adjacent multiple PEM blocks (including adjacent footer+header)
+    const multiCrlf = [
+      "SAFE_ONE",
+      beginRsa,
+      "LineOneCrlfSecretKey==",
+      `${endRsa}${beginEc}`,
+      "SecondEcPayloadCrlf==",
+      endEc,
+      "SAFE_MIDDLE",
+      beginPk,
+      "UnterminatedTailLine",
+      "dA==",
+    ].join("\r\n");
+    const multiOut = redactPemPrivateKeys(multiCrlf).redactedText;
+    expect(multiOut).toContain("SAFE_ONE");
+    expect(multiOut).toContain("SAFE_MIDDLE");
+    assertNoFragments(multiOut, [
+      "LineOneCrlfSecretKey",
+      "SecondEcPayloadCrlf",
+      "UnterminatedTailLine",
+      "dA==",
+    ]);
+
+    // 5. Large adversarial input (>= 120KB) executes quickly without backtracking
+    const bigLines = Array.from(
+      { length: 2000 },
+      (_, idx) => `AAAA${String(idx).padStart(4, "0")}${"Q".repeat(56)}`,
+    );
+    const largeAdversarial = `BEFORE_LARGE\n${beginPk}\n${bigLines.join("\n")}\ndA==`;
+    expect(largeAdversarial.length).toBeGreaterThan(120_000);
+    const startMs = Date.now();
+    const largeRedacted = redactPemPrivateKeys(largeAdversarial).redactedText;
+    expect(Date.now() - startMs).toBeLessThan(1500);
+    expect(largeRedacted).toContain("BEFORE_LARGE");
+    assertNoFragments(largeRedacted, ["AAAA0000", "AAAA1999", "dA=="]);
+
+    // 6. Handoff serialization path redacts short EOF PEM fragment stored in memory content
+    const ws = makeDir("fe-ret-pem-handoff-");
+    fs.writeFileSync(
+      path.join(ws, "package.json"),
+      JSON.stringify({ name: "pem-handoff" }),
+      "utf8",
+    );
+    fs.mkdirSync(path.join(ws, "src"), { recursive: true });
+    const appPath = path.join(ws, "src", "app.ts");
+    fs.writeFileSync(appPath, "export const ok = true;\n", "utf8");
+    const fixedTime = new Date(1700000000000);
+    fs.utimesSync(path.join(ws, "package.json"), fixedTime, fixedTime);
+    fs.utimesSync(appPath, fixedTime, fixedTime);
+    const stat = fs.statSync(appPath);
+
+    const cm = new ConnectionManager({ workspaceRoot: ws });
+    managers.push(cm);
+    await cm.initialize();
+    const sm = new StorageManager(cm);
+    const snap = await sm.persistSnapshot({
+      repositoryIdentity: cm.getRepository().identity,
+      rootPath: ws,
+      displayName: "pem-handoff",
+      inventory: {
+        workspaceRoot: ws,
+        scannedAt: new Date().toISOString(),
+        scanStatus: "COMPLETE",
+        files: [
+          {
+            canonicalPath: "src/app.ts",
+            fileExtension: ".ts",
+            classification: "source",
+            sizeBytes: stat.size,
+            mtimeMs: stat.mtimeMs,
+            contentHash: "h-pem-app",
+            hashState: "COMPUTED",
+            inspectionStatus: "INCLUDED",
+            exclusionStatus: "INCLUDED",
+            exclusionReason: null,
+          },
+        ],
+        summary: {
+          totalFilesDiscovered: 1,
+          totalFilesInspected: 1,
+          totalFilesExcluded: 0,
+          totalFilesUnreadable: 0,
+          totalBytesDiscovered: stat.size,
+          totalBytesInspected: stat.size,
+        },
+        totalFilesScanned: 1,
+        totalBytesScanned: stat.size,
+        limitExceeded: false,
+        scanDurationMs: 1,
+      },
+      extractions: new Map(),
+      scannerVersion: "0.6.3",
+      extractorVersion: "0.6.3",
+    });
+
+    new MemoryStore(cm.getDatabase()).createMemory({
+      repositoryId: cm.getRepository().id,
+      memoryKey: "pem-tail-mem",
+      category: "engineering_convention",
+      title: "Key storage note",
+      content: `Never commit keys:\n${beginPk}\nMIIEvAIBADANBg\ndA==`,
+      confidence: 0.9,
+      confidenceTier: "CONFIRMED",
+      firstSeenScanId: snap.scanId,
+      lastSeenScanId: snap.scanId,
+    });
+
+    const handoff = await prepareDelegationHandoff({
+      workspaceRoot: ws,
+      targetAgent: "security-auditor",
+      taskId: "FE-PEM-EOF",
+      taskSummary: "Verify src/app.ts",
+      allowStaleSnapshot: true,
+    });
+    expect(handoff.status).toBe("READY");
+    const serialized = `${JSON.stringify(handoff.handoff)}\n${handoff.promptSection ?? ""}`;
+    assertNoFragments(serialized, ["MIIEvAIBADANBg", "dA=="]);
   });
 });

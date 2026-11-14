@@ -6,6 +6,8 @@
 import type { SqliteDatabase } from "../storage/database.ts";
 import { MemoryStore } from "../storage/repositories/memory-store.ts";
 import { MemoryLifecycleEvaluator } from "../memory/memory-lifecycle-evaluator.ts";
+import { SnapshotComparisonError } from "../evolution/snapshot-comparator.ts";
+import type { ComparisonLimitation } from "../evolution/types.ts";
 import type { MemoryEvaluationResult } from "../memory/types.ts";
 import type { ConfidenceTier, QueryEvidence } from "../query/types.ts";
 import type {
@@ -61,6 +63,8 @@ export class EvidenceUnifier {
 
   /**
    * Loads repository memories and runs read-only lifecycle verification (applyLifecycle: false).
+   * Enforces the repository-wide partial-snapshot policy (allowPartial defaults to false) and
+   * propagates snapshot eligibility errors instead of swallowing them.
    */
   public static loadAndVerifyMemories(params: {
     db: SqliteDatabase;
@@ -69,19 +73,63 @@ export class EvidenceUnifier {
     workspaceRoot: string;
     includeHistorical: boolean;
     surfaceWarnings: boolean;
+    allowPartial?: boolean;
   }): {
     items: UnifiedMemoryEvaluation[];
     warnings: RetrievalWarning[];
+    isPartialSnapshot: boolean;
+    limitations: ComparisonLimitation[];
   } {
+    const allowPartial = params.allowPartial === true;
     const store = new MemoryStore(params.db);
-    const allMemories = store.listMemories(params.repositoryId);
     const warnings: RetrievalWarning[] = [];
 
-    if (allMemories.length === 0) {
-      return { items: [], warnings };
+    const scanRow = params.db
+      .prepare("SELECT id, repository_id AS repositoryId, status FROM scan_runs WHERE id = ?")
+      .get(params.scanId) as { id: number; repositoryId: number; status: string } | undefined;
+
+    if (!scanRow) {
+      throw new SnapshotComparisonError(
+        `Target scan ${params.scanId} does not exist.`,
+        "ERR_SCAN_NOT_FOUND",
+      );
+    }
+    if (scanRow.repositoryId !== params.repositoryId) {
+      throw new SnapshotComparisonError(
+        `Target scan ${params.scanId} belongs to repository ${scanRow.repositoryId}, expected ${params.repositoryId}.`,
+        "ERR_REPOSITORY_MISMATCH",
+      );
+    }
+    if (scanRow.status === "RUNNING" || scanRow.status === "VALIDATING") {
+      throw new SnapshotComparisonError(
+        `Target scan ${params.scanId} is still ${scanRow.status} and cannot evaluate memory lifecycle.`,
+        "ERR_SCAN_INCOMPLETE",
+      );
+    }
+    if (scanRow.status === "FAILED" || scanRow.status === "CANCELLED") {
+      throw new SnapshotComparisonError(
+        `Target scan ${params.scanId} ended with status ${scanRow.status} and cannot evaluate memory lifecycle.`,
+        "ERR_SCAN_FAILED",
+      );
+    }
+    if (scanRow.status === "PARTIAL" && !allowPartial) {
+      throw new SnapshotComparisonError(
+        `Target scan ${params.scanId} has status PARTIAL and allowPartial is false; pass allowPartial: true to evaluate with incomplete coverage warnings.`,
+        "ERR_PARTIAL_SCAN_NOT_ALLOWED",
+      );
+    }
+    if (scanRow.status !== "COMPLETE" && scanRow.status !== "PARTIAL") {
+      throw new SnapshotComparisonError(
+        `Target scan ${params.scanId} has unsupported status ${scanRow.status}.`,
+        "ERR_SCAN_INVALID_STATUS",
+      );
     }
 
+    const isPartialSnapshot = scanRow.status === "PARTIAL";
+    const allMemories = store.listMemories(params.repositoryId);
     let evaluationsById = new Map<number, MemoryEvaluationResult>();
+    let limitations: ComparisonLimitation[] = [];
+
     try {
       const summary = MemoryLifecycleEvaluator.evaluateRepository(
         params.db,
@@ -90,17 +138,41 @@ export class EvidenceUnifier {
         undefined,
         {
           applyLifecycle: false,
-          allowPartial: true,
+          allowPartial,
           workspaceRoot: params.workspaceRoot,
         },
       );
       evaluationsById = new Map(summary.evaluations.map((e) => [e.memoryId, e]));
+      limitations = summary.limitations ?? [];
     } catch (err: any) {
+      if (
+        err instanceof SnapshotComparisonError ||
+        /ERR_PARTIAL_SCAN_NOT_ALLOWED|ERR_SCAN_INCOMPLETE|ERR_SCAN_FAILED|ERR_SCAN_NOT_FOUND|ERR_REPOSITORY_MISMATCH|ERR_SCAN_INVALID_STATUS/.test(
+          err?.message ?? "",
+        )
+      ) {
+        throw err;
+      }
       warnings.push({
         code: "MEMORY_EVIDENCE_UNVERIFIED",
         severity: "warning",
         message: `Unable to run live memory verification against scan ${params.scanId}: ${err?.message ?? String(err)}`,
       });
+    }
+
+    if (isPartialSnapshot) {
+      const partialLim = limitations.find((l) => l.code === "LIM_PARTIAL_SNAPSHOT_EVALUATION");
+      warnings.push({
+        code: "PARTIAL_SNAPSHOT",
+        severity: "warning",
+        message:
+          partialLim?.description ??
+          `Memory verification ran against PARTIAL scan ${params.scanId} with explicit allowPartial opt-in; missing files are downgraded to UNVERIFIED.`,
+      });
+    }
+
+    if (allMemories.length === 0) {
+      return { items: [], warnings, isPartialSnapshot, limitations };
     }
 
     const items: UnifiedMemoryEvaluation[] = [];
@@ -173,7 +245,7 @@ export class EvidenceUnifier {
       });
     }
 
-    return { items, warnings };
+    return { items, warnings, isPartialSnapshot, limitations };
   }
 
   private static deriveLiveStatus(

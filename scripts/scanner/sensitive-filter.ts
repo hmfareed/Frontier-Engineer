@@ -78,22 +78,59 @@ export function extractConfigKeysOnly(text: string): string[] {
   return keys;
 }
 
-const PEM_BEGIN_REGEX = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/;
-const PEM_END_REGEX = /-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/;
-const PEM_BEGIN_GLOBAL = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/g;
-const PEM_END_GLOBAL = /-----END [A-Z0-9 ]*PRIVATE KEY(?: BLOCK)?-----/g;
+const PEM_BEGIN_REGEX = /-----BEGIN [A-Z0-9 ]{0,48}PRIVATE KEY(?: BLOCK)?-----/;
+const PEM_END_REGEX = /-----END [A-Z0-9 ]{0,48}PRIVATE KEY(?: BLOCK)?-----/;
+const PEM_BEGIN_GLOBAL = /-----BEGIN [A-Z0-9 ]{0,48}PRIVATE KEY(?: BLOCK)?-----/g;
+const PEM_END_GLOBAL = /-----END [A-Z0-9 ]{0,48}PRIVATE KEY(?: BLOCK)?-----/g;
 
 function isPemArmorHeaderLine(line: string): boolean {
-  return /^\s*(?:Proc-Type|DEK-Info|Version|Hash|Comment):/i.test(line);
+  return /^\s*(?:\/\/+\s+|#+\s*|\*+\s+)?(?:Proc-Type|DEK-Info|Version|Hash|Comment):/i.test(line);
+}
+
+function extractPemBase64Token(line: string): string | null {
+  const trimmed = line.trim();
+  if (trimmed.length === 0) return null;
+  if (PEM_BEGIN_REGEX.test(trimmed) || PEM_END_REGEX.test(trimmed)) return null;
+  // Strip optional comment line prefixes (only space-separated //, or # / * which are non-base64)
+  const withoutComment = trimmed.replace(/^(?:\/\/\s+|#+\s*|\*+\s+)/, "").trim();
+  if (withoutComment.length === 0) return null;
+  const stripped = withoutComment
+    .replace(/(?:\\r|\\n)+$/g, "")
+    .replace(/^[`"']/, "")
+    .replace(/(?:\\r|\\n|[`"';,\\+])+$/g, "");
+  if (stripped.length === 0) return null;
+  return /^[A-Za-z0-9+/=]+$/.test(stripped) ? stripped : null;
 }
 
 function isPemBase64ContinuationLine(line: string, minBase64Chars = 16): boolean {
   const trimmed = line.trim();
   if (trimmed.length === 0) return false;
   if (isPemArmorHeaderLine(trimmed)) return true;
-  const stripped = trimmed.replace(/(?:\\r|\\n|[`"';,\\])+$/g, "").replace(/^[`"']/, "");
-  if (stripped.length < minBase64Chars) return false;
-  return /^[A-Za-z0-9+/=]+$/.test(stripped);
+  const token = extractPemBase64Token(line);
+  return token !== null && token.length >= minBase64Chars;
+}
+
+function isShortIncompletePemFragment(token: string, hasSeenPayload: boolean): boolean {
+  if (token.length === 0) return false;
+  if (token.length >= 12) return true;
+  if (token.includes("=")) return true;
+  if (/[+/0-9]/.test(token)) return true;
+  return hasSeenPayload;
+}
+
+function findLastPemBase64LineToEof(lines: string[], startIndex: number): number | null {
+  let lastPayloadLine: number | null = null;
+  for (let k = startIndex; k < lines.length; k++) {
+    const line = lines[k];
+    if (line.trim().length === 0) continue;
+    if (PEM_BEGIN_REGEX.test(line) || PEM_END_REGEX.test(line)) return null;
+    if (isPemArmorHeaderLine(line) || extractPemBase64Token(line) !== null) {
+      lastPayloadLine = k;
+      continue;
+    }
+    return null;
+  }
+  return lastPayloadLine;
 }
 
 function maskSpanPreservingTail(
@@ -121,6 +158,7 @@ export function redactPemPrivateKeys(
   const preserveLineCount = options.preserveLineCount === true;
   const lineEnding = input.includes("\r\n") ? "\r\n" : "\n";
   const lines = input.split(/\r?\n/);
+  const markerContainsPem = PEM_BEGIN_REGEX.test(marker) || PEM_END_REGEX.test(marker);
   let detected = false;
   let redactionCount = 0;
 
@@ -161,21 +199,63 @@ export function redactPemPrivateKeys(
 
       let closingIdx = -1;
       let closingEndCol = 0;
-      for (let j = i + 1; j < lines.length; j++) {
-        if (PEM_BEGIN_REGEX.test(lines[j])) {
-          break;
-        }
-        const endMatch = PEM_END_REGEX.exec(lines[j]);
-        if (endMatch && endMatch.index !== undefined) {
-          closingIdx = j;
-          closingEndCol = endMatch.index + endMatch[0].length;
-          break;
+      const sameLineTailStart = beginMatch.index + beginMatch[0].length;
+      const sameLineTail = lines[i].slice(sameLineTailStart);
+      const sameLineBegin = PEM_BEGIN_REGEX.exec(sameLineTail);
+      const sameLineEnd = PEM_END_REGEX.exec(sameLineTail);
+      if (
+        sameLineEnd &&
+        sameLineEnd.index !== undefined &&
+        (!sameLineBegin ||
+          sameLineBegin.index === undefined ||
+          sameLineEnd.index < sameLineBegin.index)
+      ) {
+        closingIdx = i;
+        closingEndCol = sameLineTailStart + sameLineEnd.index + sameLineEnd[0].length;
+      } else if (!sameLineBegin) {
+        for (let j = i + 1; j < lines.length; j++) {
+          const beginOnJ = PEM_BEGIN_REGEX.exec(lines[j]);
+          const endMatch = PEM_END_REGEX.exec(lines[j]);
+          if (
+            endMatch &&
+            endMatch.index !== undefined &&
+            (!beginOnJ || beginOnJ.index === undefined || endMatch.index < beginOnJ.index)
+          ) {
+            closingIdx = j;
+            closingEndCol = endMatch.index + endMatch[0].length;
+            break;
+          }
+          if (beginOnJ) {
+            break;
+          }
         }
       }
 
       if (closingIdx !== -1) {
         const prefix = lines[i].slice(0, beginMatch.index);
         const suffix = lines[closingIdx].slice(closingEndCol);
+        const suffixHasPem =
+          !markerContainsPem && (PEM_BEGIN_REGEX.test(suffix) || PEM_END_REGEX.test(suffix));
+
+        if (suffixHasPem) {
+          for (let k = i; k < closingIdx; k++) {
+            maskedLineFlags[k] = true;
+            if (preserveLineCount) {
+              lines[k] = k === i ? `${prefix}${marker}` : marker;
+            } else {
+              lines[k] = k === i ? `${prefix}${marker}` : "";
+            }
+          }
+          if (preserveLineCount) {
+            maskedLineFlags[closingIdx] = true;
+            lines[closingIdx] = `${marker}${suffix}`;
+          } else {
+            lines[closingIdx] = suffix;
+          }
+          i = closingIdx - 1;
+          continue;
+        }
+
         for (let k = i; k <= closingIdx; k++) {
           maskedLineFlags[k] = true;
           if (preserveLineCount) {
@@ -190,27 +270,67 @@ export function redactPemPrivateKeys(
         continue;
       }
 
-      // Incomplete block with no closing END: consume contiguous PEM armor / base64 lines
-      let endSpan = i;
-      for (let j = i + 1; j < lines.length; j++) {
-        const line = lines[j];
-        if (
-          isPemArmorHeaderLine(line) ||
-          isPemBase64ContinuationLine(line, 12) ||
-          (line.trim().length === 0 &&
-            j + 1 < lines.length &&
-            isPemBase64ContinuationLine(lines[j + 1], 12))
-        ) {
-          endSpan = j;
-          continue;
-        }
-        break;
-      }
-
+      // Incomplete block with no closing END: consume contiguous PEM armor / base64 lines,
+      // including short trailing payload fragments (e.g., "dA==", "AQAB") at end-of-block or EOF.
       const prefix = lines[i].slice(0, beginMatch.index);
       const beginHeaderEnd = beginMatch.index + beginMatch[0].length;
       const tailOnBeginLine = lines[i].slice(beginHeaderEnd);
       const inlineClosingQuote = tailOnBeginLine.match(/[`"']/);
+
+      let endSpan = i;
+      let hasSeenPayload =
+        isPemArmorHeaderLine(tailOnBeginLine) || isPemBase64ContinuationLine(tailOnBeginLine, 12);
+
+      for (let j = i + 1; j < lines.length; j++) {
+        const line = lines[j];
+        if (PEM_BEGIN_REGEX.test(line) || PEM_END_REGEX.test(line)) {
+          break;
+        }
+
+        if (isPemArmorHeaderLine(line)) {
+          hasSeenPayload = true;
+          endSpan = j;
+          continue;
+        }
+
+        const token = extractPemBase64Token(line);
+        if (token !== null) {
+          if (token.length >= 12) {
+            hasSeenPayload = true;
+            endSpan = j;
+            continue;
+          }
+          if (isShortIncompletePemFragment(token, hasSeenPayload)) {
+            endSpan = j;
+            if (token.includes("=")) {
+              // Padding terminates a base64 block cleanly without risking adjacent identifiers
+              continue;
+            }
+            continue;
+          }
+          const eofTail = findLastPemBase64LineToEof(lines, j);
+          if (eofTail !== null) {
+            endSpan = eofTail;
+            break;
+          }
+          break;
+        }
+
+        if (line.trim().length === 0 && j + 1 < lines.length) {
+          const nextLine = lines[j + 1];
+          const nextToken = extractPemBase64Token(nextLine);
+          if (
+            isPemArmorHeaderLine(nextLine) ||
+            (nextToken !== null &&
+              (nextToken.length >= 12 || isShortIncompletePemFragment(nextToken, hasSeenPayload)))
+          ) {
+            endSpan = j;
+            continue;
+          }
+        }
+        break;
+      }
+
       const suffix =
         endSpan === i && inlineClosingQuote && inlineClosingQuote.index !== undefined
           ? tailOnBeginLine.slice(inlineClosingQuote.index)
@@ -224,7 +344,16 @@ export function redactPemPrivateKeys(
           lines[k] = k === i ? `${prefix}${marker}${suffix}` : "";
         }
       }
-      i = endSpan;
+
+      const suffixHasPem =
+        !markerContainsPem &&
+        suffix.length > 0 &&
+        (PEM_BEGIN_REGEX.test(suffix) || PEM_END_REGEX.test(suffix));
+      if (suffixHasPem) {
+        i--;
+      } else {
+        i = endSpan;
+      }
       continue;
     }
 
@@ -238,13 +367,13 @@ export function redactPemPrivateKeys(
       for (let j = i - 1; j >= 0; j--) {
         if (maskedLineFlags[j]) break;
         const line = lines[j];
-        const minLen = j === i - 1 ? 4 : 16;
+        const minLen = j === i - 1 ? 1 : 12;
         if (
           isPemArmorHeaderLine(line) ||
           isPemBase64ContinuationLine(line, minLen) ||
           (line.trim().length === 0 &&
             j > 0 &&
-            (isPemArmorHeaderLine(lines[j - 1]) || isPemBase64ContinuationLine(lines[j - 1], 16)))
+            (isPemArmorHeaderLine(lines[j - 1]) || isPemBase64ContinuationLine(lines[j - 1], 12)))
         ) {
           startSpan = j;
           continue;
@@ -253,6 +382,28 @@ export function redactPemPrivateKeys(
       }
 
       const suffix = lines[i].slice(orphanEnd.index + orphanEnd[0].length);
+      const suffixHasPem =
+        !markerContainsPem && (PEM_BEGIN_REGEX.test(suffix) || PEM_END_REGEX.test(suffix));
+
+      if (suffixHasPem) {
+        for (let k = startSpan; k < i; k++) {
+          maskedLineFlags[k] = true;
+          if (preserveLineCount) {
+            lines[k] = marker;
+          } else {
+            lines[k] = k === startSpan ? marker : "";
+          }
+        }
+        if (preserveLineCount) {
+          maskedLineFlags[i] = true;
+          lines[i] = `${marker}${suffix}`;
+        } else {
+          lines[i] = startSpan === i ? `${marker}${suffix}` : suffix;
+        }
+        i--;
+        continue;
+      }
+
       for (let k = startSpan; k <= i; k++) {
         maskedLineFlags[k] = true;
         if (preserveLineCount) {
@@ -260,6 +411,10 @@ export function redactPemPrivateKeys(
         } else {
           lines[k] = k === startSpan ? `${marker}${suffix}` : "";
         }
+      }
+
+      if (suffixHasPem) {
+        i--;
       }
     }
   }

@@ -50,6 +50,7 @@ export interface CliExecutionResult {
 export async function runCli(argv: string[]): Promise<number> {
   let format: "text" | "json" = "text";
   let workspaceRoot = process.cwd();
+  let workspaceProvided = false;
   let limit: number | undefined;
   let depth: number | undefined;
   let scanId: number | undefined;
@@ -58,6 +59,7 @@ export async function runCli(argv: string[]): Promise<number> {
   let allowPartialOpt: boolean | undefined;
   let seenAllowPartial = false;
   let seenNoAllowPartial = false;
+  let allowStaleOpt = false;
   let applyLifecycle = false;
   let agentId: AgentId = "frontier-engineer";
   let agentProvided = false;
@@ -127,8 +129,10 @@ export async function runCli(argv: string[]): Promise<number> {
       const raw = nextVal(arg);
       if (raw === null) return 2;
       workspaceRoot = path.resolve(raw);
+      workspaceProvided = true;
     } else if (arg.startsWith("--workspace=")) {
       workspaceRoot = path.resolve(arg.slice("--workspace=".length));
+      workspaceProvided = true;
     } else if (arg === "--limit") {
       const raw = nextVal(arg);
       if (raw === null) return 2;
@@ -321,6 +325,8 @@ export async function runCli(argv: string[]): Promise<number> {
     } else if (arg === "--no-allow-partial") {
       seenNoAllowPartial = true;
       allowPartialOpt = false;
+    } else if (arg === "--allow-stale") {
+      allowStaleOpt = true;
     } else if (arg === "--allow-unindexed") {
       allowUnindexed = true;
     } else if (arg === "--apply-lifecycle") {
@@ -581,17 +587,25 @@ export async function runCli(argv: string[]): Promise<number> {
 
     let valid = false;
     let contract: string = "unknown";
+    let mode: "INDEXED" | "DEGRADED_UNINDEXED" | "INVALID" | undefined;
     let attachmentValid = true;
     let untrustedWarningPresent = true;
     let errors: string[] = [];
+
+    const consumerOptions = {
+      workspaceRoot: workspaceProvided ? workspaceRoot : undefined,
+      allowPartialSnapshot: allowPartialOpt === true,
+      allowStaleSnapshot: allowStaleOpt,
+    };
 
     if (
       rawContent.includes("<<<FRONTIER_HANDOFF_JSON>>>") ||
       rawContent.includes("<<<END_FRONTIER_HANDOFF_JSON>>>")
     ) {
-      const bundle = parseAndValidateHandoffBundle(rawContent);
+      const bundle = parseAndValidateHandoffBundle(rawContent, consumerOptions);
       valid = bundle.valid;
       contract = bundle.handoff?.contract ?? "frontier-engineer/handoff";
+      mode = bundle.mode;
       attachmentValid = bundle.retrievalAttachmentValid;
       untrustedWarningPresent = bundle.untrustedWarningPresent;
       errors = bundle.errors;
@@ -619,17 +633,32 @@ export async function runCli(argv: string[]): Promise<number> {
             attachmentValid = att.valid;
             errors.push(...att.errors);
           }
+          // Apply full semantic consumer checks (stripped retrievalContext, partial/stale, workspace identity)
+          const syntheticBundle = `<<<FRONTIER_HANDOFF_JSON>>>\n${rawContent}\n<<<END_FRONTIER_HANDOFF_JSON>>>`;
+          const bundle = parseAndValidateHandoffBundle(syntheticBundle, consumerOptions);
+          mode = bundle.mode;
+          if (!bundle.retrievalAttachmentValid) {
+            attachmentValid = false;
+          }
+          for (const err of bundle.errors) {
+            if (!errors.includes(err)) {
+              errors.push(err);
+            }
+          }
+          untrustedWarningPresent = false;
           valid = errors.length === 0;
         }
       } catch (err: any) {
         valid = false;
+        mode = "INVALID";
         errors = [`Invalid JSON input: ${err?.message ?? String(err)}`];
       }
     }
 
-    const report = {
+    const report: Record<string, unknown> = {
       valid,
       contract,
+      ...(mode !== undefined ? { mode } : {}),
       attachmentValid,
       untrustedWarningPresent,
       errors,
@@ -687,13 +716,29 @@ export async function runCli(argv: string[]): Promise<number> {
         return 3;
       }
 
+      if (prepared.status === "BLOCKED_SENSITIVE_TARGET") {
+        outputError(
+          prepared.eligibility.reason ||
+            prepared.limitations.join("; ") ||
+            "Sensitive target blocked.",
+          2,
+          format,
+        );
+        return 2;
+      }
+
       if (
+        prepared.status === "VALIDATION_FAILED" ||
         prepared.schemaValidation.errors.length > 0 ||
         !prepared.handoff ||
         !prepared.promptSection
       ) {
+        const details =
+          prepared.schemaValidation.errors.length > 0
+            ? prepared.schemaValidation.errors
+            : [...prepared.limitations, ...prepared.warnings.map((w) => w.message)];
         outputError(
-          `Prepared handoff failed schema validation: ${prepared.schemaValidation.errors.join("; ")}`,
+          `Prepared handoff failed validation (${prepared.status}): ${details.join("; ") || "no detailed error reported"}`,
           1,
           format,
         );
@@ -707,6 +752,26 @@ export async function runCli(argv: string[]): Promise<number> {
       }
       return 0;
     } catch (err: any) {
+      if (
+        err instanceof SnapshotComparisonError &&
+        (err.code === "ERR_SCAN_NOT_FOUND" ||
+          err.code === "ERR_BASE_SNAPSHOT_NOT_FOUND" ||
+          err.code === "ERR_TARGET_SNAPSHOT_NOT_FOUND" ||
+          err.code === "ERR_SNAPSHOT_NOT_FOUND")
+      ) {
+        outputError(err.message, 4, format);
+        return 4;
+      }
+      if (
+        err instanceof SnapshotComparisonError &&
+        (err.code === "ERR_SCAN_INCOMPLETE" ||
+          err.code === "ERR_SCAN_FAILED" ||
+          err.code === "ERR_PARTIAL_SCAN_NOT_ALLOWED" ||
+          err.code === "ERR_SCAN_INVALID_STATUS")
+      ) {
+        outputError(err.message, 3, format);
+        return 3;
+      }
       const msg = err?.message || String(err);
       if (
         msg.includes("not found") ||
@@ -720,7 +785,16 @@ export async function runCli(argv: string[]): Promise<number> {
         msg.includes("No active scan") ||
         msg.includes("VALIDATING") ||
         msg.includes("allowPartialSnapshot is false") ||
-        msg.includes("Repository index is unavailable")
+        msg.includes("allowPartial is false") ||
+        msg.includes("Repository index is unavailable") ||
+        msg.includes("ERR_PARTIAL_SCAN_NOT_ALLOWED") ||
+        msg.includes("ERR_SCAN_INCOMPLETE") ||
+        msg.includes("ERR_SCAN_FAILED") ||
+        msg.includes("ERR_SCAN_INVALID_STATUS") ||
+        msg.includes("PARTIAL_DISALLOWED") ||
+        msg.includes("SCAN_NOT_READY") ||
+        msg.includes("has status PARTIAL") ||
+        msg.includes("has status FAILED")
       ) {
         outputError(msg, 3, format);
         return 3;
@@ -769,8 +843,13 @@ export async function runCli(argv: string[]): Promise<number> {
     }
 
     const engine = new ArchitectureQueryEngine(connectionManager);
-    const queryOpts: QueryOptions = { limit, scanId };
-    const traversalOpts: TraversalQueryOptions = { limit, depth, scanId };
+    const queryOpts: QueryOptions = { limit, scanId, allowPartial: allowPartialOpt === true };
+    const traversalOpts: TraversalQueryOptions = {
+      limit,
+      depth,
+      scanId,
+      allowPartial: allowPartialOpt === true,
+    };
 
     let result: any;
 
@@ -1101,6 +1180,15 @@ export async function runCli(argv: string[]): Promise<number> {
         outputError(err.message, 4, format);
         return 4;
       }
+      if (
+        err.code === "ERR_SCAN_INCOMPLETE" ||
+        err.code === "ERR_SCAN_FAILED" ||
+        err.code === "ERR_PARTIAL_SCAN_NOT_ALLOWED" ||
+        err.code === "ERR_SCAN_INVALID_STATUS"
+      ) {
+        outputError(err.message, 3, format);
+        return 3;
+      }
       outputError(err.message, 2, format);
       return 2;
     }
@@ -1127,7 +1215,12 @@ export async function runCli(argv: string[]): Promise<number> {
       message.includes("Corrupt database") ||
       message.includes("Repository index is unavailable") ||
       message.includes("VALIDATING") ||
-      message.includes("allowPartialSnapshot is false")
+      message.includes("allowPartialSnapshot is false") ||
+      message.includes("allowPartial is false") ||
+      message.includes("ERR_PARTIAL_SCAN_NOT_ALLOWED") ||
+      message.includes("ERR_SCAN_INCOMPLETE") ||
+      message.includes("ERR_SCAN_FAILED") ||
+      message.includes("ERR_SCAN_INVALID_STATUS")
     ) {
       outputError(message, 3, format);
       return 3;
@@ -1397,6 +1490,7 @@ Options:
   --apply-lifecycle          Apply validated memory lifecycle transitions and scan verifications
   --allow-partial            Allow PARTIAL snapshots (marks result PARTIAL)
   --no-allow-partial         Reject PARTIAL snapshots during 'retrieve' / 'prepare-handoff'
+  --allow-stale              Allow STALE snapshots during 'validate-handoff' consumer check
   --allow-unindexed          Emit degraded static-inspection handoff when repository index is unavailable
   --help, -h                 Display this help message
 

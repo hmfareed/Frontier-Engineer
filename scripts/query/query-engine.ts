@@ -62,32 +62,67 @@ export class ArchitectureQueryEngine {
     this.architectureAnalyzer = new ArchitectureAnalyzer(this.db);
   }
 
-  private resolveScanId(explicitScanId?: number): { scanId: number; isHistorical: boolean } {
+  private resolveScanId(
+    explicitScanId?: number,
+    allowPartial = false,
+    requireQueryableStatus = true,
+  ): { scanId: number; isHistorical: boolean } {
+    let resolvedScanId: number;
+    let isHistorical = false;
+
     if (explicitScanId !== undefined) {
-      const scanRow = this.db
-        .prepare("SELECT id FROM scan_runs WHERE repository_id = ? AND id = ?")
-        .get(this.repository.id, explicitScanId) as { id: number } | undefined;
-      if (!scanRow) {
+      resolvedScanId = explicitScanId;
+      isHistorical = true;
+    } else {
+      // Authoritative lookup from database repositories table
+      const repoRow = this.db
+        .prepare("SELECT active_scan_id FROM repositories WHERE id = ?")
+        .get(this.repository.id) as { active_scan_id: number | null } | undefined;
+
+      const activeScanId = repoRow?.active_scan_id ?? this.repository.activeScanId;
+
+      if (!activeScanId) {
         throw new Error(
-          `Scan run ID ${explicitScanId} was not found for repository '${this.repository.identity}'.`,
+          `No active scan index available for repository '${this.repository.identity}'. Run a scan to index.`,
         );
       }
-      return { scanId: explicitScanId, isHistorical: true };
+      resolvedScanId = activeScanId;
     }
 
-    // Authoritative lookup from database repositories table
-    const repoRow = this.db
-      .prepare("SELECT active_scan_id FROM repositories WHERE id = ?")
-      .get(this.repository.id) as { active_scan_id: number | null } | undefined;
+    const scanRow = this.db
+      .prepare("SELECT id, status FROM scan_runs WHERE repository_id = ? AND id = ?")
+      .get(this.repository.id, resolvedScanId) as { id: number; status: string } | undefined;
 
-    const activeScanId = repoRow?.active_scan_id ?? this.repository.activeScanId;
-
-    if (!activeScanId) {
+    if (!scanRow) {
       throw new Error(
-        `No active scan index available for repository '${this.repository.identity}'. Run a scan to index.`,
+        `Scan run ID ${resolvedScanId} was not found for repository '${this.repository.identity}'.`,
       );
     }
-    return { scanId: activeScanId, isHistorical: false };
+
+    if (requireQueryableStatus) {
+      if (scanRow.status === "RUNNING" || scanRow.status === "VALIDATING") {
+        throw new Error(
+          `ERR_SCAN_INCOMPLETE: Scan ${scanRow.id} has status ${scanRow.status} and is not queryable.`,
+        );
+      }
+      if (scanRow.status === "FAILED" || scanRow.status === "CANCELLED") {
+        throw new Error(
+          `ERR_SCAN_FAILED: Scan ${scanRow.id} has status ${scanRow.status} and cannot be queried.`,
+        );
+      }
+      if (scanRow.status === "PARTIAL" && !allowPartial) {
+        throw new Error(
+          `ERR_PARTIAL_SCAN_NOT_ALLOWED: Scan ${scanRow.id} has status PARTIAL and allowPartial is false.`,
+        );
+      }
+      if (scanRow.status !== "COMPLETE" && scanRow.status !== "PARTIAL") {
+        throw new Error(
+          `ERR_SCAN_INVALID_STATUS: Scan ${scanRow.id} has unsupported status ${scanRow.status}.`,
+        );
+      }
+    }
+
+    return { scanId: scanRow.id, isHistorical };
   }
 
   private buildBaseResult<T>(params: {
@@ -208,7 +243,7 @@ export class ArchitectureQueryEngine {
   public async getOverview(
     options: QueryOptions = {},
   ): Promise<QueryResult<RepositoryOverviewData>> {
-    const { scanId } = this.resolveScanId(options.scanId);
+    const { scanId } = this.resolveScanId(options.scanId, options.allowPartial === true);
 
     // Languages distribution
     const langRows = this.db
@@ -356,7 +391,7 @@ export class ArchitectureQueryEngine {
 
   // 3. Components List
   public async listComponents(options: QueryOptions = {}): Promise<QueryResult<ComponentListData>> {
-    const { scanId } = this.resolveScanId(options.scanId);
+    const { scanId } = this.resolveScanId(options.scanId, options.allowPartial === true);
     const limit = options.limit ?? 100;
     const offset = options.offset ?? 0;
 
@@ -405,7 +440,7 @@ export class ArchitectureQueryEngine {
     nameOrIdentity: string,
     options: QueryOptions = {},
   ): Promise<QueryResult<ComponentDetailData>> {
-    const { scanId } = this.resolveScanId(options.scanId);
+    const { scanId } = this.resolveScanId(options.scanId, options.allowPartial === true);
     const components = await this.architectureAnalyzer.getComponents(this.repository.id, scanId);
 
     const norm = nameOrIdentity.trim().toLowerCase();
@@ -581,7 +616,7 @@ export class ArchitectureQueryEngine {
   public async getEntrypoints(
     options: QueryOptions = {},
   ): Promise<QueryResult<EntrypointListData>> {
-    const { scanId } = this.resolveScanId(options.scanId);
+    const { scanId } = this.resolveScanId(options.scanId, options.allowPartial === true);
     const entrypoints = await this.architectureAnalyzer.getEntrypoints(this.repository.id, scanId);
 
     const limit = options.limit ?? 100;
@@ -617,7 +652,7 @@ export class ArchitectureQueryEngine {
     filePath: string,
     options: QueryOptions = {},
   ): Promise<QueryResult<FileDetailData>> {
-    const { scanId } = this.resolveScanId(options.scanId);
+    const { scanId } = this.resolveScanId(options.scanId, options.allowPartial === true);
     const normalized = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
 
     const fileRow = this.db
@@ -739,7 +774,7 @@ export class ArchitectureQueryEngine {
     name: string,
     options: QueryOptions = {},
   ): Promise<QueryResult<SymbolSearchResult>> {
-    const { scanId } = this.resolveScanId(options.scanId);
+    const { scanId } = this.resolveScanId(options.scanId, options.allowPartial === true);
     const limit = options.limit ?? 50;
 
     const rows = this.db
@@ -818,7 +853,7 @@ export class ArchitectureQueryEngine {
     direction: "dependencies" | "dependents",
     options: TraversalQueryOptions = {},
   ): Promise<QueryResult<DependencyTraversalData>> {
-    const { scanId } = this.resolveScanId(options.scanId);
+    const { scanId } = this.resolveScanId(options.scanId, options.allowPartial === true);
     const depth = Math.min(Math.max(options.depth ?? 3, 1), 10);
     const limit = options.limit ?? 50;
 
@@ -971,7 +1006,7 @@ export class ArchitectureQueryEngine {
 
   // 10. Cycles
   public async getCycles(options: QueryOptions = {}): Promise<QueryResult<CycleData>> {
-    const { scanId } = this.resolveScanId(options.scanId);
+    const { scanId } = this.resolveScanId(options.scanId, options.allowPartial === true);
     const cycleResult = CycleAnalyzer.analyze(this.db, this.repository.id, scanId);
 
     const limit = options.limit ?? 50;
@@ -1009,7 +1044,7 @@ export class ArchitectureQueryEngine {
     target?: string,
     options: QueryOptions = {},
   ): Promise<QueryResult<TestAssociationData>> {
-    const { scanId } = this.resolveScanId(options.scanId);
+    const { scanId } = this.resolveScanId(options.scanId, options.allowPartial === true);
     const allAssocs = await this.architectureAnalyzer.getTestAssociations(
       this.repository.id,
       scanId,
@@ -1081,7 +1116,7 @@ export class ArchitectureQueryEngine {
   public async getDecisions(
     options: QueryOptions & { requireSha256?: boolean } = {},
   ): Promise<QueryResult<DecisionListData>> {
-    const { scanId } = this.resolveScanId(options.scanId);
+    const { scanId } = this.resolveScanId(options.scanId, options.allowPartial === true);
     const decisions = await this.architectureAnalyzer.getDecisions(this.repository.id, scanId, {
       requireSha256: options.requireSha256,
     });
@@ -1138,7 +1173,7 @@ export class ArchitectureQueryEngine {
     id: string,
     options: QueryOptions & { requireSha256?: boolean } = {},
   ): Promise<QueryResult<DecisionDetailData>> {
-    const { scanId } = this.resolveScanId(options.scanId);
+    const { scanId } = this.resolveScanId(options.scanId, options.allowPartial === true);
     const decisions = await this.architectureAnalyzer.getDecisions(this.repository.id, scanId, {
       requireSha256: options.requireSha256,
     });
@@ -1208,7 +1243,11 @@ export class ArchitectureQueryEngine {
   public async getFreshness(
     options: QueryOptions & FreshnessEvaluationOptions = {},
   ): Promise<QueryResult<FreshnessAssessment>> {
-    const { scanId } = this.resolveScanId(options.scanId ?? options.explicitScanId);
+    const { scanId } = this.resolveScanId(
+      options.scanId ?? options.explicitScanId,
+      options.allowPartial === true,
+      false,
+    );
     const freshness = FreshnessEvaluator.evaluate(this.db, this.repository.id, this.rootPath, {
       explicitScanId: scanId,
       verifyContentHashes: options.verifyContentHashes,

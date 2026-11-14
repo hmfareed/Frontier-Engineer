@@ -14,6 +14,9 @@ import {
   SnapshotComparisonError,
 } from "../../scripts/evolution/index.ts";
 import { computeSymbolId } from "../../scripts/extractor/symbol-identity.ts";
+import { ArchitectureQueryEngine } from "../../scripts/query/query-engine.ts";
+import { EvidenceUnifier } from "../../scripts/retrieval/evidence-unifier.ts";
+import { RetrievalEngine } from "../../scripts/retrieval/retrieval-engine.ts";
 
 describe("memory-lifecycle-intelligence (Stage 4 Evidence Evaluation, Lifecycle & Relationships)", () => {
   let tmpDir: string;
@@ -1986,5 +1989,283 @@ describe("memory-lifecycle-intelligence (Stage 4 Evidence Evaluation, Lifecycle 
         relationshipType: "DEPENDS_ON",
       }),
     ).not.toThrow();
+  });
+
+  it("PHASE76-PARTIAL-01: enforces default allowPartial=false across EvidenceUnifier, ArchitectureQueryEngine, and RetrievalEngine", async () => {
+    const createStatusScan = (status: string, startedAt: string): number => {
+      const res = db
+        .prepare(
+          `INSERT INTO scan_runs (
+            repository_id, started_at, completed_at, status, files_discovered,
+            files_indexed, files_skipped, files_failed, diagnostic_count,
+            scanner_version, extractor_version, is_active
+          ) VALUES (?, ?, ?, ?, 2, 1, 1, 0, 0, '0.6.3', '0.6.3', 0)`,
+        )
+        .run(
+          repoId,
+          startedAt,
+          status === "VALIDATING" || status === "RUNNING" ? null : new Date().toISOString(),
+          status,
+        );
+      return Number(res.lastInsertRowid);
+    };
+
+    const completeScan = createStatusScan("COMPLETE", "2026-11-10T10:00:00.000Z");
+    const partialScan = createStatusScan("PARTIAL", "2026-11-11T10:00:00.000Z");
+    const validatingScan = createStatusScan("VALIDATING", "2026-11-12T10:00:00.000Z");
+    const failedScan = createStatusScan("FAILED", "2026-11-13T10:00:00.000Z");
+
+    const fComplete = insertFile(completeScan, "src/core.ts", "h-core");
+    insertSymbol(completeScan, fComplete, "sym:src/core.ts#init", "init");
+
+    const fPartial = insertFile(partialScan, "src/core.ts", "h-core");
+    insertSymbol(partialScan, fPartial, "sym:src/core.ts#init", "init");
+
+    // 1. Complete verified memory
+    const mVerified = store.createMemory({
+      repositoryId: repoId,
+      memoryKey: "mem-verified",
+      category: "architectural_knowledge",
+      title: "Verified Core",
+      content: "Core boots via init",
+      firstSeenScanId: completeScan,
+      lastSeenScanId: completeScan,
+    });
+    store.addEvidence({
+      repositoryId: repoId,
+      memoryId: mVerified.id,
+      scanId: completeScan,
+      evidenceType: "source_file",
+      sourcePath: "src/core.ts",
+      description: "Core file",
+      confidence: 0.9,
+    });
+
+    // 2. Mixed VERIFIED + UNVERIFIED support must never become VERIFIED
+    const mMixed = store.createMemory({
+      repositoryId: repoId,
+      memoryKey: "mem-mixed",
+      category: "architectural_knowledge",
+      title: "Mixed Evidence",
+      content: "One verified file plus an unverified claim",
+      firstSeenScanId: completeScan,
+      lastSeenScanId: completeScan,
+    });
+    store.addEvidence({
+      repositoryId: repoId,
+      memoryId: mMixed.id,
+      scanId: completeScan,
+      evidenceType: "source_file",
+      sourcePath: "src/core.ts",
+      description: "Present file",
+      confidence: 0.9,
+    });
+    store.addEvidence({
+      repositoryId: repoId,
+      memoryId: mMixed.id,
+      scanId: completeScan,
+      evidenceType: "manual",
+      sourcePath: "manual",
+      description: "Manual review assertion outside automated index",
+      confidence: 0.7,
+    });
+
+    // 3. Zero-evidence memory stays UNVERIFIED
+    store.createMemory({
+      repositoryId: repoId,
+      memoryKey: "mem-no-evidence",
+      category: "engineering_convention",
+      title: "No Evidence Memory",
+      content: "Has no supporting rows",
+      firstSeenScanId: completeScan,
+      lastSeenScanId: completeScan,
+    });
+
+    // 4. Contradictory + incomplete support stays DISPUTED
+    const adrCompleteFile = insertFile(
+      completeScan,
+      "docs/adr/ADR-901.md",
+      "h-adr-c",
+      "documentation",
+    );
+    db.prepare(
+      `INSERT INTO source_evidence (
+        repository_id, scan_id, file_id, evidence_type, start_line, end_line, start_column, end_column, confidence, evidence_description
+      ) VALUES (?, ?, ?, 'ADR_METADATA_JSON', 1, 1, 0, 1, 1.0, ?)`,
+    ).run(
+      repoId,
+      completeScan,
+      adrCompleteFile,
+      JSON.stringify({ adrId: "ADR-901", status: "Deprecated" }),
+    );
+    const adrPartialFile = insertFile(
+      partialScan,
+      "docs/adr/ADR-901.md",
+      "h-adr-c",
+      "documentation",
+    );
+    db.prepare(
+      `INSERT INTO source_evidence (
+        repository_id, scan_id, file_id, evidence_type, start_line, end_line, start_column, end_column, confidence, evidence_description
+      ) VALUES (?, ?, ?, 'ADR_METADATA_JSON', 1, 1, 0, 1, 1.0, ?)`,
+    ).run(
+      repoId,
+      partialScan,
+      adrPartialFile,
+      JSON.stringify({ adrId: "ADR-901", status: "Deprecated" }),
+    );
+
+    const mContra = store.createMemory({
+      repositoryId: repoId,
+      memoryKey: "mem-contradicted",
+      category: "architectural_decision",
+      title: "Contradicted Memory",
+      content: "Relies on deprecated ADR plus missing partial file",
+      firstSeenScanId: completeScan,
+      lastSeenScanId: completeScan,
+    });
+    store.addEvidence({
+      repositoryId: repoId,
+      memoryId: mContra.id,
+      scanId: completeScan,
+      evidenceType: "adr",
+      sourcePath: "docs/adr/ADR-901.md",
+      description: "Deprecated ADR contradiction",
+      confidence: 0.9,
+    });
+    store.addEvidence({
+      repositoryId: repoId,
+      memoryId: mContra.id,
+      scanId: completeScan,
+      evidenceType: "source_file",
+      sourcePath: "src/unscanned.ts",
+      description: "Missing file in partial scan",
+      confidence: 0.9,
+    });
+
+    const queryEngine = new ArchitectureQueryEngine(connectionManager);
+    const retrievalEngine = new RetrievalEngine(connectionManager);
+
+    // COMPLETE snapshot succeeds consistently across direct memory API, query API, and RetrievalEngine
+    const completeMem = EvidenceUnifier.loadAndVerifyMemories({
+      db,
+      repositoryId: repoId,
+      scanId: completeScan,
+      workspaceRoot: tmpDir,
+      includeHistorical: false,
+      surfaceWarnings: true,
+    });
+    expect(completeMem.isPartialSnapshot).toBe(false);
+    expect(completeMem.items.find((i) => i.record.memoryKey === "mem-verified")?.liveStatus).toBe(
+      "VERIFIED",
+    );
+    expect(completeMem.items.find((i) => i.record.memoryKey === "mem-mixed")?.liveStatus).toBe(
+      "UNVERIFIED",
+    );
+    expect(
+      completeMem.items.find((i) => i.record.memoryKey === "mem-no-evidence")?.liveStatus,
+    ).toBe("UNVERIFIED");
+    expect(
+      completeMem.items.find((i) => i.record.memoryKey === "mem-contradicted")?.liveStatus,
+    ).toBe("DISPUTED");
+    expect((await queryEngine.getOverview({ scanId: completeScan })).snapshotStatus).toBe(
+      "COMPLETE",
+    );
+
+    // PARTIAL rejected by default on direct memory API, QueryEngine, and RetrievalEngine
+    let partialMemErr: unknown;
+    try {
+      EvidenceUnifier.loadAndVerifyMemories({
+        db,
+        repositoryId: repoId,
+        scanId: partialScan,
+        workspaceRoot: tmpDir,
+        includeHistorical: false,
+        surfaceWarnings: true,
+      });
+    } catch (err) {
+      partialMemErr = err;
+    }
+    expect(partialMemErr).toBeInstanceOf(SnapshotComparisonError);
+    expect((partialMemErr as SnapshotComparisonError).code).toBe("ERR_PARTIAL_SCAN_NOT_ALLOWED");
+    await expect(queryEngine.getOverview({ scanId: partialScan })).rejects.toThrow(
+      /ERR_PARTIAL_SCAN_NOT_ALLOWED/,
+    );
+    await expect(
+      retrievalEngine.retrieve({
+        agentId: "architect",
+        taskSummary: "Inspect partial without opt-in",
+        scanId: partialScan,
+      }),
+    ).rejects.toThrow(/PARTIAL/);
+
+    // VALIDATING & FAILED rejected even with allowPartial: true
+    for (const [badScan, expectedCode] of [
+      [validatingScan, "ERR_SCAN_INCOMPLETE"],
+      [failedScan, "ERR_SCAN_FAILED"],
+    ] as const) {
+      let badMemErr: unknown;
+      try {
+        EvidenceUnifier.loadAndVerifyMemories({
+          db,
+          repositoryId: repoId,
+          scanId: badScan,
+          workspaceRoot: tmpDir,
+          includeHistorical: false,
+          surfaceWarnings: true,
+          allowPartial: true,
+        });
+      } catch (err) {
+        badMemErr = err;
+      }
+      expect(badMemErr).toBeInstanceOf(SnapshotComparisonError);
+      expect((badMemErr as SnapshotComparisonError).code).toBe(expectedCode);
+      await expect(
+        queryEngine.getOverview({ scanId: badScan, allowPartial: true }),
+      ).rejects.toThrow(/ERR_SCAN_INCOMPLETE|ERR_SCAN_FAILED/);
+      await expect(
+        retrievalEngine.retrieve({
+          agentId: "architect",
+          taskSummary: "Inspect bad scan",
+          scanId: badScan,
+          allowPartialSnapshot: true,
+        }),
+      ).rejects.toThrow();
+    }
+
+    // PARTIAL explicit opt-in succeeds visibly across all three APIs without promoting missing support
+    const optInMem = EvidenceUnifier.loadAndVerifyMemories({
+      db,
+      repositoryId: repoId,
+      scanId: partialScan,
+      workspaceRoot: tmpDir,
+      includeHistorical: false,
+      surfaceWarnings: true,
+      allowPartial: true,
+    });
+    expect(optInMem.isPartialSnapshot).toBe(true);
+    expect(optInMem.warnings.some((w) => w.code === "PARTIAL_SNAPSHOT")).toBe(true);
+    expect(optInMem.items.find((i) => i.record.memoryKey === "mem-mixed")?.liveStatus).toBe(
+      "UNVERIFIED",
+    );
+    expect(optInMem.items.find((i) => i.record.memoryKey === "mem-contradicted")?.liveStatus).toBe(
+      "DISPUTED",
+    );
+
+    const optInQuery = await queryEngine.getOverview({ scanId: partialScan, allowPartial: true });
+    expect(optInQuery.snapshotStatus).toBe("PARTIAL");
+
+    const optInRet = await retrievalEngine.retrieve({
+      agentId: "architect",
+      taskSummary: "Inspect partial with opt-in",
+      scanId: partialScan,
+      allowPartialSnapshot: true,
+    });
+    expect(optInRet.snapshot.status).toBe("PARTIAL");
+    expect(optInRet.snapshot.freshness.isPartial).toBe(true);
+    expect(optInRet.warnings.some((w) => w.code === "PARTIAL_SNAPSHOT")).toBe(true);
+    expect(
+      optInRet.context.memories.find((m) => m.memoryKey === "mem-mixed")?.liveVerificationStatus,
+    ).toBe("UNVERIFIED");
   });
 });

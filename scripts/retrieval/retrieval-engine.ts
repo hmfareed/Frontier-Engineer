@@ -17,11 +17,13 @@ import { ContentSanitizer } from "./content-sanitizer.ts";
 import { EvidenceUnifier } from "./evidence-unifier.ts";
 import { RelevanceRanker } from "./relevance-ranker.ts";
 import { ContextBudgeter } from "./context-budgeter.ts";
+import { validateRetrievalResponse } from "./schema-validator.ts";
 import type {
   AnyRankedItem,
   BudgetReport,
   ConfidenceSummary,
   HandoffContextHighlight,
+  HandoffEvidenceVerificationStatus,
   HandoffRetrievalContext,
   RankedAdrItem,
   RankedComponentItem,
@@ -43,6 +45,58 @@ import type {
 import type { ConfidenceTier } from "../query/types.ts";
 import type { ScanRecord } from "../storage/types.ts";
 
+const VALID_AGENT_IDS = new Set<string>([
+  "frontier-engineer",
+  "architect",
+  "implementation-engineer",
+  "security-auditor",
+  "qa-engineer",
+  "design-engineer",
+]);
+
+const VALID_TASK_TYPES = new Set<string>([
+  "architecture_design",
+  "feature_implementation",
+  "bug_fix",
+  "refactoring",
+  "database_change",
+  "security_audit",
+  "test_generation",
+  "ui_ux_work",
+  "documentation",
+  "evolution_review",
+  "general_inspection",
+]);
+
+const ALLOWED_REQUEST_KEYS = new Set<string>([
+  "agentId",
+  "taskSummary",
+  "objective",
+  "taskType",
+  "targetFiles",
+  "targetSymbols",
+  "targetComponents",
+  "targetAdrs",
+  "scanId",
+  "baseScanId",
+  "targetScanId",
+  "expectedRepositoryIdentity",
+  "verifyContentHashes",
+  "includeSnippets",
+  "includeHistoricalMemories",
+  "allowPartialSnapshot",
+  "limits",
+  "signal",
+]);
+
+const ALLOWED_LIMITS_KEYS = new Set<string>([
+  "maxItems",
+  "maxTotalChars",
+  "maxTokens",
+  "maxDepth",
+  "maxSnippetLines",
+]);
+
 export class RetrievalEngine {
   private readonly connectionManager: ConnectionManager;
 
@@ -50,16 +104,120 @@ export class RetrievalEngine {
     this.connectionManager = connectionManager;
   }
 
-  public async retrieve(request: RetrievalRequest): Promise<RetrievalResponse> {
-    this.throwIfAborted(request.signal);
+  private validateRequest(request: RetrievalRequest): void {
+    if (!request || typeof request !== "object" || Array.isArray(request)) {
+      throw new Error("ERR_RETRIEVAL_REQUEST_INVALID: Retrieval request must be a plain object.");
+    }
+
+    for (const key of Object.keys(request)) {
+      if (!ALLOWED_REQUEST_KEYS.has(key)) {
+        throw new Error(`ERR_RETRIEVAL_REQUEST_INVALID: Unknown request field '${key}'.`);
+      }
+    }
 
     if (
       !request.taskSummary ||
       typeof request.taskSummary !== "string" ||
       !request.taskSummary.trim()
     ) {
-      throw new Error("Retrieval taskSummary cannot be empty.");
+      throw new Error("ERR_RETRIEVAL_REQUEST_INVALID: Retrieval taskSummary cannot be empty.");
     }
+
+    if (typeof request.agentId !== "string" || !VALID_AGENT_IDS.has(request.agentId)) {
+      throw new Error(
+        `ERR_RETRIEVAL_REQUEST_INVALID: Unsupported agentId '${String(request.agentId)}'.`,
+      );
+    }
+
+    if (
+      request.taskType !== undefined &&
+      (typeof request.taskType !== "string" || !VALID_TASK_TYPES.has(request.taskType))
+    ) {
+      throw new Error(
+        `ERR_RETRIEVAL_REQUEST_INVALID: Unsupported taskType '${String(request.taskType)}'.`,
+      );
+    }
+
+    if (request.objective !== undefined && typeof request.objective !== "string") {
+      throw new Error("ERR_RETRIEVAL_REQUEST_INVALID: objective must be a string.");
+    }
+
+    if (
+      request.expectedRepositoryIdentity !== undefined &&
+      typeof request.expectedRepositoryIdentity !== "string"
+    ) {
+      throw new Error(
+        "ERR_RETRIEVAL_REQUEST_INVALID: expectedRepositoryIdentity must be a string.",
+      );
+    }
+
+    for (const field of [
+      "targetFiles",
+      "targetSymbols",
+      "targetComponents",
+      "targetAdrs",
+    ] as const) {
+      const value = request[field];
+      if (value !== undefined) {
+        if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+          throw new Error(`ERR_RETRIEVAL_REQUEST_INVALID: ${field} must be an array of strings.`);
+        }
+      }
+    }
+
+    for (const field of [
+      "verifyContentHashes",
+      "includeSnippets",
+      "includeHistoricalMemories",
+      "allowPartialSnapshot",
+    ] as const) {
+      if (request[field] !== undefined && typeof request[field] !== "boolean") {
+        throw new Error(`ERR_RETRIEVAL_REQUEST_INVALID: ${field} must be a boolean.`);
+      }
+    }
+
+    for (const field of ["scanId", "baseScanId", "targetScanId"] as const) {
+      const val = request[field];
+      if (val !== undefined && (!Number.isSafeInteger(val) || val <= 0)) {
+        throw new Error(`ERR_RETRIEVAL_REQUEST_INVALID: ${field} must be a positive safe integer.`);
+      }
+    }
+
+    if ((request.baseScanId !== undefined) !== (request.targetScanId !== undefined)) {
+      throw new Error(
+        "ERR_RETRIEVAL_REQUEST_INVALID: Evolution retrieval requires both baseScanId and targetScanId.",
+      );
+    }
+    if (
+      request.baseScanId !== undefined &&
+      request.targetScanId !== undefined &&
+      request.baseScanId === request.targetScanId
+    ) {
+      throw new Error(
+        "ERR_RETRIEVAL_REQUEST_INVALID: baseScanId and targetScanId must refer to distinct scans.",
+      );
+    }
+
+    if (request.limits !== undefined) {
+      if (!request.limits || typeof request.limits !== "object" || Array.isArray(request.limits)) {
+        throw new Error("ERR_RETRIEVAL_REQUEST_INVALID: limits must be a plain object.");
+      }
+      for (const [k, v] of Object.entries(request.limits)) {
+        if (!ALLOWED_LIMITS_KEYS.has(k)) {
+          throw new Error(`ERR_RETRIEVAL_REQUEST_INVALID: Unknown limits field '${k}'.`);
+        }
+        if (v !== undefined && (!Number.isSafeInteger(v) || v <= 0)) {
+          throw new Error(
+            `ERR_RETRIEVAL_REQUEST_INVALID: limits.${k} must be a positive safe integer.`,
+          );
+        }
+      }
+    }
+  }
+
+  public async retrieve(request: RetrievalRequest): Promise<RetrievalResponse> {
+    this.throwIfAborted(request?.signal);
+    this.validateRequest(request);
 
     const db = this.connectionManager.getDatabase();
     const repo = this.connectionManager.getRepository();
@@ -74,11 +232,13 @@ export class RetrievalEngine {
       );
     }
 
-    const allowPartial = request.allowPartialSnapshot ?? true;
+    const allowPartial = request.allowPartialSnapshot === true;
     const boundedRequest: RetrievalRequest = {
       ...request,
-      taskSummary: request.taskSummary.slice(0, 8192),
-      objective: request.objective ? request.objective.slice(0, 4096) : undefined,
+      taskSummary: ContentSanitizer.truncateUnicodeSafe(request.taskSummary, 4000).text,
+      objective: request.objective
+        ? ContentSanitizer.truncateUnicodeSafe(request.objective, 4000).text
+        : undefined,
       signal: undefined,
     };
 
@@ -162,7 +322,7 @@ export class RetrievalEngine {
     let overview: RetrievalOverviewSummary | null = null;
     if (plannedDomains.has("overview")) {
       try {
-        const ovRes = await queryEngine.getOverview({ scanId });
+        const ovRes = await queryEngine.getOverview({ scanId, allowPartial });
         const ovData = ovRes.data;
         overview = {
           languages: ovData.languages.slice(0, 10),
@@ -405,11 +565,13 @@ export class RetrievalEngine {
               dir === "dependencies"
                 ? await queryEngine.getDependencies(seed, {
                     scanId,
+                    allowPartial,
                     depth: plan.effectiveLimits.maxDepth,
                     limit: depStepLimit,
                   })
                 : await queryEngine.getDependents(seed, {
                     scanId,
+                    allowPartial,
                     depth: plan.effectiveLimits.maxDepth,
                     limit: depStepLimit,
                   });
@@ -467,7 +629,11 @@ export class RetrievalEngine {
 
       // Include structural cycles when relevant
       try {
-        const cycleRes = await queryEngine.getCycles({ scanId, limit: Math.min(5, depStepLimit) });
+        const cycleRes = await queryEngine.getCycles({
+          scanId,
+          allowPartial,
+          limit: Math.min(5, depStepLimit),
+        });
         for (const c of cycleRes.data.cycles) {
           const cycleId = `cycle:${c.cycle.join("->")}`;
           const item: RankedDependencyItem = {
@@ -518,6 +684,7 @@ export class RetrievalEngine {
       try {
         const testRes = await queryEngine.getTests(undefined, {
           scanId,
+          allowPartial,
           limit: Math.max(testStepLimit * 2, 16),
         });
         for (const assoc of testRes.data.associations) {
@@ -567,6 +734,7 @@ export class RetrievalEngine {
       try {
         const adrRes = await queryEngine.getDecisions({
           scanId,
+          allowPartial,
           limit: Math.max(adrStepLimit * 2, 16),
           requireSha256: true,
         });
@@ -672,6 +840,7 @@ export class RetrievalEngine {
         workspaceRoot: repo.rootPath,
         includeHistorical: plan.includeHistoricalMemories,
         surfaceWarnings: resolvedPolicy.policy.surfaceDisputedAndStaleWarnings,
+        allowPartial,
       });
       warnings.push(...memResult.warnings);
 
@@ -1183,7 +1352,62 @@ export class RetrievalEngine {
       response.budget.budgetOverflowed = exactOverflowed;
     }
 
+    const validation = validateRetrievalResponse(response);
+    if (!validation.valid) {
+      throw new Error(`ERR_RETRIEVAL_RESPONSE_INVALID: ${validation.errors.join("; ")}`);
+    }
+
     return response;
+  }
+
+  private static resolveHighlightVerificationStatus(
+    item: AnyRankedItem,
+    snapshotStatus: string,
+  ): HandoffEvidenceVerificationStatus | undefined {
+    if (item.domain === "memories") {
+      switch (item.liveVerificationStatus) {
+        case "VERIFIED":
+          return "VERIFIED";
+        case "DISPUTED":
+          return "DISPUTED";
+        case "STALE":
+          return "STALE";
+        case "MISSING":
+          return "MISSING";
+        default:
+          return "UNVERIFIED";
+      }
+    }
+    if (item.domain === "decisions") {
+      switch (item.verificationStatus) {
+        case "CONFIRMED":
+          return "VERIFIED";
+        case "SNAPSHOT_METADATA":
+          return snapshotStatus === "PARTIAL" ? "UNVERIFIED" : "VERIFIED";
+        case "DISK_HASH_MISMATCH":
+          return "CONTRADICTED";
+        case "DISK_FILE_MISSING":
+          return "MISSING";
+        default:
+          return "UNVERIFIED";
+      }
+    }
+    if (item.domain === "snippets") {
+      const evStatus = item.evidence[0]?.verificationStatus;
+      return evStatus === "VERIFIED" ? "VERIFIED" : "UNVERIFIED";
+    }
+    const evStatus = item.evidence[0]?.verificationStatus;
+    if (evStatus === "VERIFIED") return "VERIFIED";
+    if (evStatus === "CONTRADICTED") return "CONTRADICTED";
+    if (evStatus === "MISSING") return "MISSING";
+    if (evStatus === "UNVERIFIED") return "UNVERIFIED";
+    if (snapshotStatus === "PARTIAL" || item.confidenceTier === "UNRESOLVED") {
+      return "UNVERIFIED";
+    }
+    if (evStatus === "STATIC_INDEX") {
+      return "VERIFIED";
+    }
+    return undefined;
   }
 
   public static buildHandoffAttachment(response: RetrievalResponse): HandoffRetrievalContext {
@@ -1198,21 +1422,130 @@ export class RetrievalEngine {
       ...response.context.snippets,
     ].sort((a, b) => b.rankScore - a.rankScore || a.id.localeCompare(b.id));
 
-    const highlights: HandoffContextHighlight[] = allSelected.slice(0, 12).map((item) => ({
-      domain: item.domain,
-      idOrPath: item.id,
-      summary: item.untrustedRepositoryContent
+    const attachmentWarnings: RetrievalWarning[] = [];
+    const highlights: HandoffContextHighlight[] = [];
+
+    for (const item of allSelected) {
+      if (highlights.length >= 12) break;
+
+      const cleanId = ContentSanitizer.sanitizeMetadataText(item.id).text.trim();
+      if (!cleanId || cleanId.length > 512) {
+        attachmentWarnings.push({
+          code: "BUDGET_TRUNCATED",
+          severity: "warning",
+          message: `[HIGHLIGHT_ID_OMITTED] Omitted highlight in domain '${item.domain}' because its identifier is empty or exceeds 512 chars.`,
+        });
+        continue;
+      }
+
+      const rawSummary = item.untrustedRepositoryContent
         ? item.title
-        : ContentSanitizer.sanitizeMetadataText(item.title).text,
-      confidenceTier: item.confidenceTier,
-      ...(item.evidence[0]?.filePath ? { evidenceFile: item.evidence[0].filePath } : {}),
-      untrustedRepositoryContent: item.untrustedRepositoryContent,
-    }));
+        : ContentSanitizer.sanitizeMetadataText(item.title).text;
+      const candidateSummary =
+        rawSummary.trim().length > 0 ? rawSummary : `${item.domain}:${cleanId}`;
+      const boundedSummary = ContentSanitizer.boundFencedText(candidateSummary, 2000);
+      if (boundedSummary.truncated) {
+        attachmentWarnings.push({
+          code: "BUDGET_TRUNCATED",
+          severity: "info",
+          message: `[HIGHLIGHT_SUMMARY_TRUNCATED] Truncated highlight summary for '${cleanId}' to 2000 chars.`,
+        });
+      }
+
+      let evidenceFile: string | undefined;
+      const rawEvFile = item.evidence[0]?.filePath;
+      if (typeof rawEvFile === "string" && rawEvFile.length > 0) {
+        const cleanEvFile = ContentSanitizer.sanitizeMetadataText(rawEvFile).text.trim();
+        if (cleanEvFile.length > 0 && cleanEvFile.length <= 512) {
+          evidenceFile = cleanEvFile;
+        } else {
+          attachmentWarnings.push({
+            code: "BUDGET_TRUNCATED",
+            severity: "warning",
+            message: `[EVIDENCE_PATH_OMITTED] Omitted evidenceFile for '${cleanId}' because path is empty or exceeds 512 chars.`,
+          });
+        }
+      }
+
+      let symbolIdentity: string | undefined;
+      const rawSymbolId =
+        item.domain === "symbols" ? item.symbolIdentity : item.evidence[0]?.symbolIdentity;
+      if (typeof rawSymbolId === "string" && rawSymbolId.length > 0) {
+        const cleanSymId = ContentSanitizer.sanitizeMetadataText(rawSymbolId).text.trim();
+        if (cleanSymId.length > 0 && cleanSymId.length <= 512) {
+          symbolIdentity = cleanSymId;
+        } else {
+          attachmentWarnings.push({
+            code: "BUDGET_TRUNCATED",
+            severity: "warning",
+            message: `[SYMBOL_ID_OMITTED] Omitted symbolIdentity for '${cleanId}' because identifier is empty or exceeds 512 chars.`,
+          });
+        }
+      }
+
+      let lineRange: [number, number] | undefined;
+      const rawRange =
+        item.domain === "snippets"
+          ? item.lineRange
+          : item.domain === "symbols" && item.startLine >= 1 && item.endLine >= item.startLine
+            ? ([item.startLine, item.endLine] as [number, number])
+            : item.evidence[0]?.lineRange;
+      if (
+        Array.isArray(rawRange) &&
+        rawRange.length === 2 &&
+        Number.isInteger(rawRange[0]) &&
+        Number.isInteger(rawRange[1]) &&
+        rawRange[0] >= 1 &&
+        rawRange[1] >= rawRange[0]
+      ) {
+        lineRange = [rawRange[0], rawRange[1]];
+      }
+
+      const evidenceVerificationStatus = this.resolveHighlightVerificationStatus(
+        item,
+        String(response.snapshot.status),
+      );
+      const effectiveConfidence: ConfidenceTier =
+        (evidenceVerificationStatus === "CONTRADICTED" ||
+          evidenceVerificationStatus === "MISSING") &&
+        item.confidenceTier === "CONFIRMED"
+          ? "UNRESOLVED"
+          : item.confidenceTier;
+
+      const highlightLimitations: string[] = [];
+      if (String(response.snapshot.status) === "PARTIAL") {
+        highlightLimitations.push("Derived from a PARTIAL snapshot; coverage may be incomplete.");
+      }
+      if (evidenceVerificationStatus && evidenceVerificationStatus !== "VERIFIED") {
+        highlightLimitations.push(`Evidence verification status is ${evidenceVerificationStatus}.`);
+      }
+
+      highlights.push({
+        domain: item.domain,
+        idOrPath: cleanId,
+        summary: boundedSummary.text,
+        confidenceTier: effectiveConfidence,
+        ...(evidenceFile ? { evidenceFile } : {}),
+        untrustedRepositoryContent: item.untrustedRepositoryContent,
+        ...(evidenceVerificationStatus ? { evidenceVerificationStatus } : {}),
+        ...(lineRange ? { lineRange } : {}),
+        ...(symbolIdentity ? { symbolIdentity } : {}),
+        confidence: effectiveConfidence,
+        ...(highlightLimitations.length > 0
+          ? {
+              limitations: highlightLimitations
+                .slice(0, 16)
+                .map((l) => ContentSanitizer.truncateUnicodeSafe(l, 512).text),
+            }
+          : {}),
+      });
+    }
 
     // Preserve all critical security/integrity/freshness/disputed warnings; never drop them behind info notices
+    const combinedWarnings = [...response.warnings, ...attachmentWarnings];
     const critical: RetrievalWarning[] = [];
     const nonCritical: RetrievalWarning[] = [];
-    for (const w of response.warnings) {
+    for (const w of combinedWarnings) {
       if (this.getWarningPriority(w) <= 2 || w.severity === "error") {
         critical.push(w);
       } else {
@@ -1220,19 +1553,35 @@ export class RetrievalEngine {
       }
     }
 
-    const chosenWarnings: RetrievalWarning[] = [...critical.slice(0, 20)];
-    const remainingSlots = Math.max(0, 8 - chosenWarnings.length);
+    const chosenWarnings: RetrievalWarning[] = [...critical.slice(0, 31)];
+    const remainingSlots = Math.max(0, 10 - chosenWarnings.length);
     chosenWarnings.push(...nonCritical.slice(0, remainingSlots));
 
-    const omittedCount = response.warnings.length - chosenWarnings.length;
+    const omittedCount = combinedWarnings.length - chosenWarnings.length;
     const formattedWarnings = chosenWarnings.map(
-      (w) => `[${w.code}] ${ContentSanitizer.sanitizeMetadataText(w.message).text}`,
+      (w) =>
+        ContentSanitizer.truncateUnicodeSafe(
+          `[${w.code}] ${ContentSanitizer.sanitizeMetadataText(w.message).text}`,
+          1024,
+        ).text,
     );
-    if (omittedCount > 0) {
+    if (omittedCount > 0 && formattedWarnings.length < 32) {
       formattedWarnings.push(
-        `[WARNINGS_OVERFLOW] ${omittedCount} additional warning(s) omitted from compact handoff; inspect full RetrievalResponse.`,
+        ContentSanitizer.truncateUnicodeSafe(
+          `[WARNINGS_OVERFLOW] ${omittedCount} additional warning(s) omitted from compact handoff; inspect full RetrievalResponse.`,
+          1024,
+        ).text,
       );
     }
+
+    const boundedLimitations = response.limitations
+      .slice(0, 32)
+      .map(
+        (l) =>
+          ContentSanitizer.truncateUnicodeSafe(ContentSanitizer.sanitizeMetadataText(l).text, 512)
+            .text,
+      )
+      .filter((l) => l.length > 0);
 
     return {
       contract: "frontier-engineer/retrieval-attachment",
@@ -1246,7 +1595,8 @@ export class RetrievalEngine {
       taskType: response.classification.primaryTaskType,
       confidenceSummary: response.confidenceSummary,
       highlights,
-      warnings: formattedWarnings,
+      warnings: formattedWarnings.slice(0, 32),
+      ...(boundedLimitations.length > 0 ? { limitations: boundedLimitations } : {}),
       budget: {
         includedCount: response.budget.includedCount,
         truncatedCount: response.budget.truncatedCount,
@@ -1357,7 +1707,7 @@ export class RetrievalEngine {
     repositoryId: number,
     activeScanId: number | null,
     explicitScanId?: number,
-    allowPartialSnapshot = true,
+    allowPartialSnapshot = false,
   ): ScanRecord {
     const db = this.connectionManager.getDatabase();
     const scanId = explicitScanId ?? activeScanId;
@@ -1408,7 +1758,13 @@ export class RetrievalEngine {
 
     if (row.status === "PARTIAL" && allowPartialSnapshot === false) {
       throw new Error(
-        `Repository index snapshot ${scanId} has status 'PARTIAL' and allowPartialSnapshot is false.`,
+        `ERR_PARTIAL_SCAN_NOT_ALLOWED: Repository index snapshot ${scanId} has status 'PARTIAL' and allowPartialSnapshot is false.`,
+      );
+    }
+
+    if (row.status !== "COMPLETE" && row.status !== "PARTIAL") {
+      throw new Error(
+        `ERR_SCAN_INVALID_STATUS: Repository index snapshot ${scanId} has unsupported status '${row.status}'.`,
       );
     }
 
@@ -1649,7 +2005,7 @@ export class RetrievalEngine {
 
   private findLatestCompletedScanPair(
     repositoryId: number,
-    allowPartial = true,
+    allowPartial = false,
   ): { baseScanId: number; targetScanId: number } | null {
     const db = this.connectionManager.getDatabase();
     const statusClause = allowPartial ? "status IN ('COMPLETE', 'PARTIAL')" : "status = 'COMPLETE'";
@@ -1724,7 +2080,19 @@ export class RetrievalEngine {
       if (prioDiff !== 0) return prioDiff;
       return a.code.localeCompare(b.code) || a.message.localeCompare(b.message);
     });
-    return result;
+    const MAX_RESPONSE_WARNINGS = 32;
+    if (result.length <= MAX_RESPONSE_WARNINGS) {
+      return result;
+    }
+    const omittedCount = result.length - (MAX_RESPONSE_WARNINGS - 1);
+    return [
+      ...result.slice(0, MAX_RESPONSE_WARNINGS - 1),
+      {
+        code: "WARNINGS_OVERFLOW",
+        severity: "info",
+        message: `${omittedCount} additional lower-priority warning(s) omitted to honor bounded retrieval envelope.`,
+      },
+    ];
   }
 
   private computeDeterministicId(seed: Record<string, unknown>): string {

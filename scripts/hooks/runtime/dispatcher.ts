@@ -5,7 +5,7 @@ import { emitOutput, logDiagnostic } from "./output.ts";
 import { resolveSafeFallback } from "./security.ts";
 import { validateEventPayload } from "./validation.ts";
 import { handleSessionStart } from "../handlers/session-start.ts";
-import { handlePreToolUse } from "../handlers/pre-tool-use.ts";
+import { handlePreToolUse, prepareAndGateSubagentToolCall } from "../handlers/pre-tool-use.ts";
 import { handlePostToolUse } from "../handlers/post-tool-use.ts";
 import { handlePreInvocation } from "../handlers/pre-invocation.ts";
 import { handlePostInvocation } from "../handlers/post-invocation.ts";
@@ -101,7 +101,10 @@ export async function dispatchHook(options: DispatcherOptions): Promise<void> {
         break;
 
       case "PreToolUse":
-        result = handlePreToolUse(payload as PreToolUsePayload);
+        result =
+          process.env.FRONTIER_AUTO_PREPARE_HANDOFF === "1"
+            ? await prepareAndGateSubagentToolCall(payload as PreToolUsePayload)
+            : handlePreToolUse(payload as PreToolUsePayload);
         break;
 
       case "PostToolUse":

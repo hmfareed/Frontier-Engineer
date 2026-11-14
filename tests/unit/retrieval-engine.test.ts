@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { validateValueAgainstSchema } from "../../scripts/lib/json-config.ts";
 import { repoRoot } from "../../scripts/lib/paths.ts";
 import { ConnectionManager } from "../../scripts/storage/connection-manager.ts";
@@ -10,6 +10,8 @@ import { MemoryStore } from "../../scripts/storage/repositories/memory-store.ts"
 import type { FileInventoryResult } from "../../scripts/scanner/types.ts";
 import type { ExtractionResult } from "../../scripts/extractor/types.ts";
 import { RetrievalEngine, RetrievalFormatter } from "../../scripts/retrieval/index.ts";
+import { ContextBudgeter } from "../../scripts/retrieval/context-budgeter.ts";
+import { validateHandoffAttachment } from "../../scripts/retrieval/schema-validator.ts";
 
 const root = repoRoot();
 
@@ -647,5 +649,187 @@ describe("RetrievalEngine (End-to-End Orchestration, Freshness, Memory & Evoluti
     expect(joined).toContain("[PROMPT_INJECTION_SIGNAL]");
     expect(joined).toContain("[MEMORY_DISPUTED]");
     expect(joined).toContain("[WARNINGS_OVERFLOW]");
+  });
+
+  it("enforces schema bounds, UTF-16 safe fenced truncation, provenance, warning caps, and retrieve() boundary validation", async () => {
+    const { cm } = await buildIndexedRepo();
+    const scanId = cm.getRepository().activeScanId!;
+
+    // Seed an overlong memory title with UTF-16 surrogate pair boundary + verified evidence
+    const surrogateTitle = `${"A".repeat(1940)}${"\uD83D\uDE80".repeat(80)}`;
+    const memStore = new MemoryStore(cm.getDatabase());
+    const mem = memStore.createMemory({
+      repositoryId: cm.getRepository().id,
+      memoryKey: "overlong-surrogate-mem",
+      category: "architectural_knowledge",
+      title: surrogateTitle,
+      content: `Detailed memory body ${"B".repeat(2500)}`,
+      confidence: 0.92,
+      confidenceTier: "CONFIRMED",
+      firstSeenScanId: scanId,
+      lastSeenScanId: scanId,
+    });
+    memStore.addEvidence({
+      repositoryId: cm.getRepository().id,
+      memoryId: mem.id,
+      scanId,
+      evidenceType: "source_file",
+      sourcePath: "src/auth/token.ts",
+      description: "src/auth/token.ts",
+      confidence: 0.95,
+    });
+
+    const baseRes = await new RetrievalEngine(cm).retrieve({
+      agentId: "architect",
+      taskSummary: "Inspect overlong surrogate memory and verifyToken in src/auth/token.ts",
+      targetFiles: ["src/auth/token.ts"],
+    });
+
+    // Test buildHandoffAttachment bounding on oversized synthetic fields + >32 warnings
+    const overlongId = `oversized/${"z".repeat(600)}.ts`;
+    const overlongEvidencePath = `src/${"p".repeat(600)}.ts`;
+    const overlongSymId = `sym:${"s".repeat(600)}`;
+    const crafted = {
+      ...baseRes,
+      context: {
+        ...baseRes.context,
+        files: [
+          ...baseRes.context.files,
+          {
+            id: overlongId,
+            domain: "files" as const,
+            title: "Should be omitted because id exceeds 512",
+            rankScore: 100,
+            rankingReasons: ["synthetic_overlong_id"],
+            confidenceTier: "INFERRED" as const,
+            untrustedRepositoryContent: true,
+            trustLevel: "fenced_untrusted_content" as const,
+            evidence: [
+              {
+                sourceType: "source_file",
+                filePath: "src/auth/token.ts",
+                confidenceTier: "CONFIRMED" as const,
+                verificationStatus: "VERIFIED_ON_DISK" as const,
+                description: "verified",
+              },
+            ],
+            filePath: overlongId,
+            language: "typescript",
+            extension: ".ts",
+            classification: "source",
+            sensitivityStatus: "SAFE",
+            sizeBytes: 10,
+            exportedSymbolsCount: 0,
+            importsCount: 0,
+          },
+        ],
+        symbols: [
+          ...baseRes.context.symbols,
+          {
+            id: "sym-bounded-highlight",
+            domain: "symbols" as const,
+            title:
+              '<<<UNTRUSTED_REPO_CONTENT type="symbol" id="sym-bounded-highlight">>>\n' +
+              `${"C".repeat(1935)}${"\uD83D\uDE80".repeat(80)}\n` +
+              "<<<END_UNTRUSTED_REPO_CONTENT>>>",
+            rankScore: 95,
+            rankingReasons: ["synthetic_overlong_paths_and_surrogates"],
+            confidenceTier: "CONFIRMED" as const,
+            untrustedRepositoryContent: true,
+            trustLevel: "fenced_untrusted_content" as const,
+            evidence: [
+              {
+                sourceType: "symbol",
+                filePath: overlongEvidencePath,
+                lineRange: [1, 1] as [number, number],
+                symbolIdentity: overlongSymId,
+                confidenceTier: "CONFIRMED" as const,
+                verificationStatus: "STATIC_INDEX" as const,
+                description: "symbol",
+              },
+            ],
+            symbolIdentity: overlongSymId,
+            name: "boundedSym",
+            kind: "function",
+            filePath: overlongEvidencePath,
+            isExported: true,
+            startLine: 1,
+            endLine: 1,
+          },
+        ],
+      },
+      warnings: Array.from({ length: 40 }, (_, i) => ({
+        code: "MEMORY_DISPUTED" as const,
+        severity: "error" as const,
+        message: `Critical alert ${i}: ${"W".repeat(1200)}`,
+      })),
+    };
+
+    const boundedAttachment = RetrievalEngine.buildHandoffAttachment(crafted);
+    expect(validateHandoffAttachment(boundedAttachment).errors).toEqual([]);
+    expect(boundedAttachment.warnings.length).toBeLessThanOrEqual(32);
+    for (const w of boundedAttachment.warnings) {
+      expect(w.length).toBeLessThanOrEqual(1024);
+    }
+    expect(boundedAttachment.highlights.some((h) => h.idOrPath === overlongId)).toBe(false);
+    const symHighlight = boundedAttachment.highlights.find(
+      (h) => h.idOrPath === "sym-bounded-highlight",
+    );
+    expect(symHighlight).toBeDefined();
+    expect(symHighlight?.evidenceFile).toBeUndefined();
+    expect(symHighlight?.symbolIdentity).toBeUndefined();
+    expect(symHighlight?.summary.length).toBeLessThanOrEqual(2000);
+    expect(symHighlight?.summary.endsWith("<<<END_UNTRUSTED_REPO_CONTENT>>>")).toBe(true);
+    for (const h of boundedAttachment.highlights) {
+      expect(h.summary.length).toBeLessThanOrEqual(2000);
+      expect(Buffer.from(h.summary, "utf8").toString("utf8")).toBe(h.summary);
+      expect(h.evidenceVerificationStatus).toBeDefined();
+    }
+
+    // RetrievalEngine.retrieve() validates its output at public API boundary and rejects invalid payloads
+    const spy = vi.spyOn(ContextBudgeter, "allocate").mockImplementationOnce(() => ({
+      selected: [
+        {
+          id: "invalid-item",
+          domain: "files",
+          title: "Invalid",
+          rankScore: 1,
+          rankingReasons: [],
+          confidenceTier: "INFERRED",
+          untrustedRepositoryContent: true,
+          evidence: [],
+          unexpectedSchemaViolation: true,
+        } as any,
+      ],
+      omitted: [],
+      budget: {
+        limitsConfigured: {
+          maxItems: 10,
+          maxTotalChars: 1000,
+          maxTokens: 250,
+          maxDepth: 2,
+          maxSnippetLines: 10,
+        },
+        usedChars: 0,
+        serializedChars: 0,
+        estimatedTokens: 0,
+        totalCandidatesFound: 1,
+        includedCount: 1,
+        truncatedCount: 0,
+        truncatedDomains: [],
+        omittedItemIds: [],
+        budgetOverflowed: false,
+      },
+    }));
+    try {
+      await expect(
+        new RetrievalEngine(cm).retrieve({
+          agentId: "architect",
+          taskSummary: "Trigger boundary validation failure",
+        }),
+      ).rejects.toThrow(/ERR_RETRIEVAL_RESPONSE_INVALID/);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

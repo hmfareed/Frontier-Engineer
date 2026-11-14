@@ -41,8 +41,12 @@ export class SnapshotWriter {
     const scanId = scanRecord.id;
 
     // Check cancellation prior to staging writes
-    if (input.signal?.aborted) {
-      scanStore.cancelScan(scanId, "Scan was cancelled prior to ingestion");
+    if (input.signal?.aborted || input.inventory.scanStatus === "CANCELLED") {
+      const cancelMsg =
+        input.inventory.scanStatus === "CANCELLED"
+          ? "Scan inventory was marked CANCELLED prior to ingestion"
+          : "Scan was cancelled prior to ingestion";
+      scanStore.cancelScan(scanId, cancelMsg);
       return {
         scanId,
         repositoryId,
@@ -55,28 +59,69 @@ export class SnapshotWriter {
         edgesCreated: 0,
         promoted: false,
         durationMs: Date.now() - startTime,
-        diagnostics: ["Scan was cancelled prior to ingestion"],
+        diagnostics: [cancelMsg],
       };
     }
 
     try {
-      // 2. Persist File Inventory
+      // 2. Persist File Inventory & Filter Eligible Extractable Files
+      const eligibleExtractableFiles = new Set<string>();
+      let filesSkippedCount = 0;
+      for (const f of input.inventory.files) {
+        const isEligible =
+          f.exclusionStatus === "INCLUDED" &&
+          (f.inspectionStatus === "INCLUDED" || f.inspectionStatus === "INSPECTED") &&
+          f.classification !== "sensitive" &&
+          f.hashState !== "SKIPPED_SENSITIVE";
+        if (isEligible) {
+          eligibleExtractableFiles.add(f.canonicalPath);
+        } else {
+          filesSkippedCount++;
+        }
+      }
+
       const pathToId = fileStore.insertFiles(repositoryId, scanId, input.inventory.files);
       scanStore.updateProgress({
         scanId,
         filesDiscovered: input.inventory.summary.totalFilesDiscovered,
         filesIndexed: pathToId.size,
+        filesSkipped: filesSkippedCount,
       });
 
-      // 3. Persist Symbols, Evidence, Imports & Exports
+      // 3. Persist Symbols, Evidence, Imports & Exports (strictly filtered to eligible non-failed extractions)
+      const filteredExtractions = new Map<
+        string,
+        typeof input.extractions extends Map<string, infer V> ? V : never
+      >();
       const globalSymbolMap = new Map<string, number>();
       let symbolsIndexedCount = 0;
       let importsIndexedCount = 0;
       let exportsIndexedCount = 0;
+      let filesFailedCount = 0;
 
       for (const [canonicalPath, extraction] of input.extractions.entries()) {
         const fileId = pathToId.get(canonicalPath);
-        if (!fileId) continue;
+        if (!fileId || !eligibleExtractableFiles.has(canonicalPath)) {
+          diagnostics.push(
+            `SKIPPED_INELIGIBLE_EXTRACTION: Ignored extraction for ineligible or sensitive file '${canonicalPath}'.`,
+          );
+          continue;
+        }
+
+        if (extraction.status === "FAILED") {
+          filesFailedCount++;
+          diagnostics.push(
+            `EXTRACTION_FAILED: Extraction failed for '${canonicalPath}' (${extraction.diagnostics[0]?.message ?? "unknown error"}).`,
+          );
+          continue;
+        }
+
+        filteredExtractions.set(canonicalPath, extraction);
+        for (const d of extraction.diagnostics) {
+          if (d.severity === "error" || d.severity === "warning") {
+            diagnostics.push(`${canonicalPath}: ${d.message}`);
+          }
+        }
 
         // Symbols
         if (extraction.symbols.length > 0) {
@@ -124,7 +169,7 @@ export class SnapshotWriter {
       const { nodes, edges } = GraphBuilder.buildGraph({
         repositoryIdentity: input.repositoryIdentity,
         files: input.inventory.files,
-        extractions: input.extractions,
+        extractions: filteredExtractions,
         pathToId,
       });
 
@@ -155,7 +200,15 @@ export class SnapshotWriter {
 
       // 7. Complete Scan Record
       const finalStatus: ScanRunStatus =
-        input.inventory.scanStatus === "COMPLETE" ? "COMPLETE" : "PARTIAL";
+        input.inventory.scanStatus === "COMPLETE" && filesFailedCount === 0
+          ? "COMPLETE"
+          : "PARTIAL";
+
+      scanStore.updateProgress({
+        scanId,
+        filesFailed: filesFailedCount,
+        diagnosticCount: diagnostics.length,
+      });
 
       // 8. Explicit Promotion Decision
       let shouldPromote = false;
@@ -183,10 +236,16 @@ export class SnapshotWriter {
         }
       }
 
+      scanStore.updateProgress({
+        scanId,
+        diagnosticCount: diagnostics.length,
+      });
       scanStore.completeScan(scanId, finalStatus);
 
       if (shouldPromote) {
-        scanStore.promoteScan(repositoryId, scanId);
+        scanStore.promoteScan(repositoryId, scanId, {
+          allowPartial: input.allowPartialPromotion === true,
+        });
       }
 
       return {

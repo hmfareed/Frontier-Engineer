@@ -165,7 +165,7 @@ export class ContentSanitizer {
       }
     }
 
-    const safeLabel = label.replace(/[\r\n"<>\\]/g, "_");
+    const safeLabel = this.truncateUnicodeSafe(label.replace(/[\r\n"<>\\]/g, "_"), 180).text;
     const fencedText = [
       `<<<UNTRUSTED_REPO_CONTENT source="${safeLabel}" trust="untrusted_data">>>`,
       redactedText,
@@ -273,6 +273,79 @@ export class ContentSanitizer {
         injectionLabels: [],
       };
     }
+  }
+
+  /**
+   * Truncates text deterministically without splitting a UTF-16 surrogate pair.
+   */
+  public static truncateUnicodeSafe(
+    text: string,
+    maxChars: number,
+  ): { text: string; truncated: boolean } {
+    if (maxChars <= 0) {
+      return { text: "", truncated: text.length > 0 };
+    }
+    if (text.length <= maxChars) {
+      return { text, truncated: false };
+    }
+    let cut = maxChars;
+    if (cut > 0) {
+      const prevUnit = text.charCodeAt(cut - 1);
+      if (prevUnit >= 0xd800 && prevUnit <= 0xdbff) {
+        cut -= 1;
+      }
+    }
+    return { text: text.slice(0, cut), truncated: true };
+  }
+
+  /**
+   * Bounds plain or fenced untrusted text to maxChars while preserving untrusted
+   * boundary fences and valid Unicode code points.
+   */
+  public static boundFencedText(
+    text: string,
+    maxChars: number,
+  ): { text: string; truncated: boolean } {
+    if (maxChars <= 0) {
+      return { text: "", truncated: text.length > 0 };
+    }
+    if (text.length <= maxChars) {
+      return { text, truncated: false };
+    }
+
+    const openPrefix = "<<<UNTRUSTED_REPO_CONTENT ";
+    const closeToken = "<<<END_UNTRUSTED_REPO_CONTENT>>>";
+    if (text.startsWith(openPrefix) && text.endsWith(closeToken)) {
+      const openEndIdx = text.indexOf(">>>");
+      const closeStart = text.length - closeToken.length;
+      if (openEndIdx !== -1 && openEndIdx + 3 < closeStart) {
+        const openSep = text[openEndIdx + 3] === "\n" ? "\n" : " ";
+        const closeSep = text[closeStart - 1] === "\n" ? "\n" : " ";
+        const openFence = text.slice(0, openEndIdx + 3) + openSep;
+        const closeFence = closeSep + closeToken;
+        const inner = text.slice(openFence.length, text.length - closeFence.length);
+        const marker = openSep === "\n" ? "\n...[TRUNCATED]" : "...[TRUNCATED]";
+        const overhead = openFence.length + closeFence.length;
+
+        if (maxChars >= overhead + marker.length + 1) {
+          const innerBudget = maxChars - overhead - marker.length;
+          const safeInner = this.truncateUnicodeSafe(inner, innerBudget).text;
+          return { text: `${openFence}${safeInner}${marker}${closeFence}`, truncated: true };
+        }
+        if (maxChars >= overhead) {
+          const innerBudget = maxChars - overhead;
+          const safeInner = this.truncateUnicodeSafe(inner, innerBudget).text;
+          return { text: `${openFence}${safeInner}${closeFence}`, truncated: true };
+        }
+      }
+    }
+
+    const suffix = "...[TRUNCATED]";
+    if (maxChars > suffix.length + 1) {
+      const safeHead = this.truncateUnicodeSafe(text, maxChars - suffix.length).text;
+      return { text: `${safeHead}${suffix}`, truncated: true };
+    }
+    return this.truncateUnicodeSafe(text, maxChars);
   }
 
   private static sliceAndSanitize(

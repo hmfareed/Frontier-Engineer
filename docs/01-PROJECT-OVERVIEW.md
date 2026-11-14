@@ -2,14 +2,14 @@
 
 ## Identity
 
-| Property              | Value                                                                  |
-| --------------------- | ---------------------------------------------------------------------- |
-| Product               | Frontier Engineer                                                      |
-| Category              | AI software-engineering agent system                                   |
-| Distribution          | Google Antigravity plugin                                              |
-| Execution environment | Antigravity App, CLI, or IDE                                           |
-| Current version       | 0.6.3 (Phase 6.1.3 Final Evidence Reconciliation & Release Acceptance) |
-| Target release        | 1.0.0 (Phase 10)                                                       |
+| Property              | Value                                                                                             |
+| --------------------- | ------------------------------------------------------------------------------------------------- |
+| Product               | Frontier Engineer                                                                                 |
+| Category              | AI software-engineering agent system                                                              |
+| Distribution          | Google Antigravity plugin                                                                         |
+| Execution environment | Antigravity App, CLI, or IDE                                                                      |
+| Current version       | 0.6.3 (Phase 7.6 Retrieval Integrity, Handoff Enforcement & Change-Control Compliance; Schema v3) |
+| Target release        | 1.0.0 (Phase 10)                                                                                  |
 
 ## Vision
 
@@ -37,7 +37,7 @@ The first of these is the defining characteristic: the system's value comes from
 - Automatically deploying to production.
 - Executing unrestricted shell commands.
 - Depending on a custom SaaS backend for core functionality.
-- Building a React, Next.js, or database-backed application.
+- Building a hosted React, Next.js, or remote SaaS database-backed web application (local repository intelligence uses an embedded workspace-scoped SQLite index at `.frontier/intelligence/index.sqlite`, schema version `3`).
 
 ## Target users
 
@@ -59,14 +59,18 @@ Phase 5.1 conducted an empirical technical audit, verified provider packages, re
 
 Phase 6 implemented the Antigravity lifecycle hooks architecture across six events (`SessionStart`, `PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`), generated `hooks.json`, unified file and command interception under a global matcher (`*`), hardened dispatcher fail-closed error boundaries, implemented semantic capability categorization, registered trusted MCP capabilities, and established an extensive 45-test acceptance suite. Phase 6.1.3 reconciled all verification evidence, strictly classifying host-level PostgreSQL MCP interception as NOT VERIFIED, maintaining interactive `force_ask` confirmation bypass as BLOCKED, and confirming strict CLI validation with CLI v1.5.0.
 
-Still deliberately deferred: project intelligence and engineering memory (Phase 7), workflows (Phase 8), and release packaging (Phases 9–10).
+Phase 7 (Phases 7.1–7.7) implemented deterministic repository scanning, AST/symbol extraction, embedded SQLite intelligence persistence (`schemaVersion = 3`), dependency graph traversal and cycle detection, architecture and ADR verification, the `frontier` query/evolution CLI, snapshot comparison, drift/debt tracking, durable engineering memories with conjunctive evidence verification, Phase 7.6 role-aware retrieval orchestration and fail-closed `frontier-engineer/handoff` v1 delegation gating, and Phase 7.7 cross-subsystem hardening (strict `RetrievalEngine` request validation and bounded warnings, self-contained extractor secret redaction, hook output redaction, atomic `promoteScan`/staging crash cleanup, expanded `validateIntegrity`, and synthetic scale/stress verification up to 10,000 files). Version remains `0.6.3` (`0.7.0` reserved pending formal acceptance).
+
+Still deliberately deferred: workflows (Phase 8) and release packaging (Phases 9–10).
 
 ## Current limitations
 
-- Installation and runtime invocation of the plugin's agents and skills inside Antigravity have not been tested in live user sessions, although static discovery is verified by the CLI.
-- Real specialist delegation, handoff round trips, and skill activation have not been exercised in live chat.
+- Live IDE installation and interactive runtime invocation of the plugin's agents, skills, specialist delegation, and `PreToolUse` `overwrite` payload modification inside Antigravity GUI sessions have not been executed in live user sessions; automated coverage rests on unit, direct handler, CLI, and dispatcher subprocess tests plus `agy plugin validate --strict .`.
+- Plain-text delegation to specialist subagents can bypass retrieval unless `PreToolUse` gating with `FRONTIER_REQUIRE_HANDOFF=1` or `FRONTIER_AUTO_PREPARE_HANDOFF=1` is active in the host runtime.
 - While `mcp_config.json` and `hooks.json` are generated and strictly validated, live host-level interception of PostgreSQL MCP operations has not been verified within an authentic Antigravity session.
+- `PreInvocation` host payloads provide invocation step counters and metadata without structured incoming subagent tool arguments, and Antigravity exposes no `SubagentStart` hook event; delegation inspection runs in `PreToolUse`.
 - Live host UI evaluation of `force_ask` fresh prompts bypassing cached Always Allow permissions is BLOCKED due to headless OAuth constraints.
+- On Windows without Developer Mode or explicit `SeCreateSymbolicLinkPrivilege`, automated symlink filesystem-boundary assertions skip the file-symlink subtest (`EPERM`); full POSIX symlink verification remains recommended on Linux/macOS CI.
 - `tools` allowlists are not emitted; see [Part 04](04-AGENT-SPECIFICATIONS.md) for the reason.
 - No adapter other than Antigravity is implemented, and no evaluation score has been assigned.
 - The 85/100 quality target in the original specification is a target, not a measured score.

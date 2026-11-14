@@ -46,6 +46,7 @@ describe("CLI Integration: frontier retrieve", () => {
     const filePath = path.join(ws, "src", "service.ts");
     fs.writeFileSync(filePath, "export function runService() { return 42; }\n", "utf8");
     const fixedTime = new Date(1700000000000);
+    fs.utimesSync(path.join(ws, "package.json"), fixedTime, fixedTime);
     fs.utimesSync(filePath, fixedTime, fixedTime);
     const stat = fs.statSync(filePath);
 
@@ -316,5 +317,98 @@ describe("CLI Integration: frontier retrieve", () => {
     );
     expect(runCliProc(["validate-handoff", badFile]).status).toBe(2);
     expect(runCliProc(["validate-handoff", path.join(ws, "missing.json")]).status).toBe(4);
-  });
+  }, 30_000);
+
+  it("enforces validate-handoff workspace/stale policy and PARTIAL snapshot default across CLI queries", async () => {
+    const ws = await seedWorkspace();
+    const readyProc = runCliProc([
+      "prepare-handoff",
+      "--workspace",
+      ws,
+      "--agent",
+      "implementation-engineer",
+      "--task-id",
+      "FE-CLI-101",
+      "--task",
+      "Update runService in src/service.ts",
+      "--file",
+      "src/service.ts",
+      "--max-tokens",
+      "4000",
+      "--format",
+      "text",
+    ]);
+    expect(readyProc.status).toBe(0);
+    const bundleFile = path.join(ws, "delegation-prompt-p76.txt");
+    fs.writeFileSync(bundleFile, readyProc.stdout, "utf8");
+
+    // Consumer validation with --workspace rejects wrong workspace (read-only, no .frontier created) and STALE without --allow-stale
+    const valRightWs = runCliProc([
+      "validate-handoff",
+      "--input",
+      bundleFile,
+      "--workspace",
+      ws,
+      "--format",
+      "json",
+    ]);
+    expect(valRightWs.status).toBe(0);
+
+    const otherWs = makeTempDir("fe-cli-other-");
+    fs.writeFileSync(path.join(otherWs, "package.json"), JSON.stringify({ name: "other" }), "utf8");
+    const valWrongWs = runCliProc([
+      "validate-handoff",
+      "--input",
+      bundleFile,
+      "--workspace",
+      otherWs,
+      "--format",
+      "json",
+    ]);
+    expect(valWrongWs.status).toBe(2);
+    expect(fs.existsSync(path.join(otherWs, ".frontier"))).toBe(false);
+
+    // Make ws stale -> validate-handoff rejects unless --allow-stale is passed
+    fs.writeFileSync(
+      path.join(ws, "src", "service.ts"),
+      "export function runService() { return 99; }\n",
+      "utf8",
+    );
+    const staleDate = new Date(Date.now() + 60_000);
+    fs.utimesSync(path.join(ws, "src", "service.ts"), staleDate, staleDate);
+    expect(
+      runCliProc(["validate-handoff", "--input", bundleFile, "--workspace", ws, "--format", "json"])
+        .status,
+    ).toBe(2);
+    expect(
+      runCliProc([
+        "validate-handoff",
+        "--input",
+        bundleFile,
+        "--workspace",
+        ws,
+        "--allow-stale",
+        "--format",
+        "json",
+      ]).status,
+    ).toBe(0);
+
+    // Direct query & prepare-handoff reject PARTIAL by default and accept explicit --allow-partial
+    const cm = new ConnectionManager({ workspaceRoot: ws });
+    await cm.initialize();
+    const activeScan = cm.getRepository().activeScanId!;
+    cm.getDatabase()
+      .prepare("UPDATE scan_runs SET status = 'PARTIAL' WHERE id = ?")
+      .run(activeScan);
+    cm.close();
+
+    expect(runCliProc(["overview", "--workspace", ws, "--format", "json"]).status).toBe(3);
+    expect(
+      runCliProc(["overview", "--workspace", ws, "--allow-partial", "--format", "json"]).status,
+    ).toBe(0);
+    expect(
+      runCliProc(["prepare-handoff", "--workspace", ws, "--agent", "architect", "--task", "Check"])
+        .status,
+    ).toBe(3);
+  }, 30_000);
 });

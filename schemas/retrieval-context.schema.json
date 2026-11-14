@@ -630,6 +630,7 @@
           "type": "string",
           "enum": [
             "CONFIRMED",
+            "SNAPSHOT_METADATA",
             "DISK_HASH_MISMATCH",
             "DISK_FILE_MISSING",
             "MISSING_CONTENT_HASH",

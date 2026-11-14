@@ -41,10 +41,27 @@ function isValidCanonicalPath(p: string): boolean {
 
 function redactSecrets(msg: string): string {
   return msg
-    .replace(/\b(ghp_[A-Za-z0-9_]{20,})\b/g, "[REDACTED_SECRET]")
-    .replace(/\b(sk-[A-Za-z0-9_]{20,})\b/g, "[REDACTED_SECRET]")
-    .replace(/\b(AKIA[A-Z0-9]{16})\b/g, "[REDACTED_SECRET]")
-    .replace(/Bearer\s+[A-Za-z0-9_\-\.]{20,}/gi, "Bearer [REDACTED_SECRET]");
+    .replace(
+      /-----BEGIN [A-Z0-9 ]{0,48}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]{0,48}PRIVATE KEY-----|$)/g,
+      "[REDACTED_PRIVATE_KEY]",
+    )
+    .replace(
+      /\b(?:gh[pousr]_[A-Za-z0-9_]{20,255}|github_pat_[A-Za-z0-9_]{20,255})\b/g,
+      "[REDACTED_SECRET]",
+    )
+    .replace(/\bsk-[A-Za-z0-9_-]{16,255}\b/g, "[REDACTED_SECRET]")
+    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, "[REDACTED_SECRET]")
+    .replace(/\bxox[baprs]-[0-9A-Za-z-]{10,128}\b/g, "[REDACTED_SECRET]")
+    .replace(/\bsntrys_[A-Za-z0-9_=-]{16,255}\b/g, "[REDACTED_SECRET]")
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,512}/gi, "$1 [REDACTED_SECRET]")
+    .replace(
+      /\b((?:postgres|postgresql|mysql|mongodb(?:\+srv)?|redis|rediss|amqp|amqps):\/\/[^:\s/@]+:)[^@\s]+(@)/gi,
+      "$1[REDACTED_SECRET]$2",
+    )
+    .replace(
+      /((?:api[_-]?key|secret|token|password|passwd|client[_-]?secret)\s*[:=]\s*["']?)[^\s"',;}{]{6,128}/gi,
+      "$1[REDACTED_SECRET]",
+    );
 }
 
 /**

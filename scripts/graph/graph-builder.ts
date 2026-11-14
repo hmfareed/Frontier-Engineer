@@ -112,7 +112,23 @@ export class GraphBuilder {
     }
 
     // 5. Symbols, Imports, Exports & Test Associations from Extractions
+    const eligibleExtractableFiles = new Set<string>();
+    for (const file of input.files) {
+      const isEligible =
+        file.exclusionStatus === "INCLUDED" &&
+        (file.inspectionStatus === "INCLUDED" || file.inspectionStatus === "INSPECTED") &&
+        file.classification !== "sensitive" &&
+        file.hashState !== "SKIPPED_SENSITIVE";
+      if (isEligible) {
+        eligibleExtractableFiles.add(file.canonicalPath);
+      }
+    }
+
     for (const [filePath, extraction] of input.extractions.entries()) {
+      if (!eligibleExtractableFiles.has(filePath) || extraction.status === "FAILED") {
+        continue;
+      }
+
       const fileNodeId = `file:${filePath}`;
 
       // A. Symbols
@@ -159,8 +175,9 @@ export class GraphBuilder {
 
       // B. Imports
       for (const imp of extraction.imports) {
-        if (imp.resolvedPath) {
-          const targetFileNodeId = `file:${imp.resolvedPath}`;
+        const resolvedTargetNodeId = imp.resolvedPath ? `file:${imp.resolvedPath}` : null;
+        if (resolvedTargetNodeId && nodesMap.has(resolvedTargetNodeId)) {
+          const targetFileNodeId = resolvedTargetNodeId;
           const importEdgeId = `${fileNodeId}->IMPORTS->${targetFileNodeId}`;
 
           const declInfo = {
