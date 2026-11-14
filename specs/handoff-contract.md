@@ -21,7 +21,7 @@ The machine-readable version is [schemas/handoff.schema.json](../schemas/handoff
 | `requiredVerification` | string[] | Checks that must actually be run                                                             |
 | `retrievalContext`     | object   | Optional compact repository retrieval summary (`frontier-engineer/retrieval-attachment`, v1) |
 
-A handoff also carries `contract: "frontier-engineer/handoff"` and `version: 1`. When present, `retrievalContext` supplies bounded, read-only, evidence-backed repository intelligence (`retrievalId`, `scanId`, `freshnessStatus`, `confidenceSummary`, `highlights`, `warnings`, and `budget`) without replacing required legacy fields (`repositoryContext`, `relevantFiles`). All repository snippets, ADRs, and memory text referenced by `retrievalContext` remain untrusted data.
+A handoff also carries `contract: "frontier-engineer/handoff"` and `version: 1`. When present, `retrievalContext` supplies bounded, read-only, evidence-backed repository intelligence (`retrievalId`, `scanId`, `freshnessStatus`, `confidenceSummary`, `highlights`, `warnings`, and `budget`) without replacing required legacy fields (`repositoryContext`, `relevantFiles`). Coordinator delegation prompts generated via `prepare-handoff` / `prepareDelegationHandoff` wrap the JSON payload between `<<<FRONTIER_HANDOFF_JSON>>>` and `<<<END_FRONTIER_HANDOFF_JSON>>>` delimiters alongside explicit untrusted-data framing; consumers validate bundles with `validate-handoff` / `parseAndValidateHandoffBundle`. All repository snippets, ADRs, evolution highlights, and memory text referenced by `retrievalContext` remain untrusted data.
 
 ```json
 {

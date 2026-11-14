@@ -127,6 +127,22 @@ export class RelevanceRanker {
         score += 45;
         reasons.push("explicit_adr_match(+45)");
       }
+      if (
+        item.isFallback ||
+        item.verificationStatus === "DISK_HASH_MISMATCH" ||
+        item.verificationStatus === "DISK_FILE_MISSING" ||
+        item.verificationStatus === "MISSING_CONTENT_HASH" ||
+        item.verificationStatus === "UNVERIFIED_HASH"
+      ) {
+        score -= 14;
+        reasons.push("unverified_adr_snapshot(-14)");
+      } else if (
+        item.verificationStatus === "CONFIRMED" ||
+        item.verificationStatus === "SNAPSHOT_METADATA"
+      ) {
+        score += 8;
+        reasons.push("verified_adr_snapshot(+8)");
+      }
     }
 
     // 4. Lexical keyword overlap with task prompt
@@ -162,28 +178,31 @@ export class RelevanceRanker {
         reasons.push(`preferred_memory_category(+10)`);
       }
       if (item.liveVerificationStatus === "VERIFIED") {
-        score += 12;
-        reasons.push("live_verified_memory(+12)");
+        score += 16;
+        reasons.push("live_verified_memory(+16)");
       } else if (item.liveVerificationStatus === "DISPUTED") {
         if (inputs.policy.agentId === "security-auditor" || inputs.policy.agentId === "architect") {
-          score += 5;
-          reasons.push("disputed_governance_alert(+5)");
+          score += 2;
+          reasons.push("disputed_governance_alert(+2)");
         } else {
-          score -= 10;
-          reasons.push("disputed_memory_penalty(-10)");
+          score -= 22;
+          reasons.push("disputed_memory_penalty(-22)");
         }
       } else if (
         item.liveVerificationStatus === "STALE" ||
         item.liveVerificationStatus === "MISSING"
       ) {
-        score -= 12;
-        reasons.push("stale_memory_penalty(-12)");
+        score -= 24;
+        reasons.push("stale_memory_penalty(-24)");
+      } else if (item.liveVerificationStatus === "UNVERIFIED") {
+        score -= 8;
+        reasons.push("unverified_memory_penalty(-8)");
       } else if (
         item.liveVerificationStatus === "SUPERSEDED" ||
         item.liveVerificationStatus === "ARCHIVED"
       ) {
-        score -= 20;
-        reasons.push("historical_memory_penalty(-20)");
+        score -= 32;
+        reasons.push("historical_memory_penalty(-32)");
       }
     }
 

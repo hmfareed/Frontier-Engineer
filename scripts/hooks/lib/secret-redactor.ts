@@ -3,13 +3,9 @@
  * Ensures zero credential leaks in diagnostics, audit logs, and error traces.
  */
 
+import { redactPemPrivateKeys } from "../../scanner/sensitive-filter.ts";
+
 const SECRET_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
-  // Private keys (PEM format)
-  {
-    pattern:
-      /-----BEGIN (?:[A-Z ]+)?PRIVATE KEY-----[\s\S]*?-----END (?:[A-Z ]+)?PRIVATE KEY-----/g,
-    replacement: "[REDACTED_PRIVATE_KEY]",
-  },
   // GitHub Personal Access Tokens (classic and fine-grained)
   {
     pattern: /ghp_[a-zA-Z0-9]{36}/g,
@@ -50,7 +46,7 @@ const SECRET_PATTERNS: Array<{ pattern: RegExp; replacement: string }> = [
 /** Redacts sensitive strings according to standard credential patterns. */
 export function redactString(input: string): string {
   if (!input || typeof input !== "string") return "";
-  let result = input;
+  let result = redactPemPrivateKeys(input, "[REDACTED_PRIVATE_KEY]").redactedText;
   for (const { pattern, replacement } of SECRET_PATTERNS) {
     result = result.replace(pattern, replacement);
   }

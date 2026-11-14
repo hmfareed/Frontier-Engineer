@@ -5,8 +5,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { validateValueAgainstSchema } from "../lib/json-config.ts";
-import { repoRoot } from "../lib/paths.ts";
+import { validateWorkspaceConfigValue } from "./schema-validator.ts";
+import { ContentSanitizer } from "./content-sanitizer.ts";
 import type {
   AgentId,
   AgentRetrievalPolicy,
@@ -441,10 +441,10 @@ export function clampRetrievalLimits(
     maxTotalChars: clamp(
       override?.maxTotalChars,
       base.maxTotalChars,
-      512,
+      1024,
       HARD_SAFETY_CEILINGS.maxTotalChars,
     ),
-    maxTokens: clamp(override?.maxTokens, base.maxTokens, 128, HARD_SAFETY_CEILINGS.maxTokens),
+    maxTokens: clamp(override?.maxTokens, base.maxTokens, 256, HARD_SAFETY_CEILINGS.maxTokens),
     maxDepth: clamp(override?.maxDepth, base.maxDepth, 1, HARD_SAFETY_CEILINGS.maxDepth),
     maxSnippetLines: clamp(
       override?.maxSnippetLines,
@@ -481,6 +481,18 @@ export function loadWorkspaceRetrievalConfig(
       return { loaded: false, warnings };
     }
 
+    const stat = fs.statSync(realConfig);
+    if (stat.size > 512 * 1024) {
+      warnings.push({
+        code: "INVALID_WORKSPACE_CONFIG",
+        severity: "warning",
+        message:
+          "Workspace .frontier/retrieval.config.json exceeds 512KB size limit and was ignored.",
+        entity: ".frontier/retrieval.config.json",
+      });
+      return { loaded: false, warnings };
+    }
+
     const raw = fs.readFileSync(realConfig, "utf8");
     const parsed = JSON.parse(raw) as {
       version?: number;
@@ -488,21 +500,13 @@ export function loadWorkspaceRetrievalConfig(
       agents?: Record<string, WorkspaceConfigLoadResult["agentOverride"]>;
     };
 
-    const schemaFindings = validateValueAgainstSchema(
-      repoRoot(),
-      parsed,
-      ".frontier/retrieval.config.json",
-      "schemas/retrieval-config.schema.json",
-      "invalid-retrieval-config",
-    );
+    const validation = validateWorkspaceConfigValue(parsed);
 
-    if (schemaFindings.length > 0) {
+    if (!validation.valid) {
       warnings.push({
         code: "INVALID_WORKSPACE_CONFIG",
         severity: "warning",
-        message: `Workspace .frontier/retrieval.config.json failed schema validation and was ignored: ${schemaFindings
-          .map((f) => f.message)
-          .join("; ")}`,
+        message: `Workspace .frontier/retrieval.config.json failed schema validation and was ignored: ${validation.errors.join("; ")}`,
         entity: ".frontier/retrieval.config.json",
       });
       return { loaded: false, warnings };
@@ -515,10 +519,11 @@ export function loadWorkspaceRetrievalConfig(
       warnings,
     };
   } catch (err: any) {
+    const safeErr = ContentSanitizer.sanitizeMetadataText(err?.message ?? String(err)).text;
     warnings.push({
       code: "INVALID_WORKSPACE_CONFIG",
       severity: "warning",
-      message: `Unable to parse .frontier/retrieval.config.json; defaults applied (${err?.message ?? String(err)}).`,
+      message: `Unable to parse .frontier/retrieval.config.json; defaults applied (${safeErr}).`,
       entity: ".frontier/retrieval.config.json",
     });
     return { loaded: false, warnings };
@@ -564,8 +569,24 @@ export function resolveEffectivePolicy(
       ? wsConfig.agentOverride.priorityDomains
       : basePolicy.priorityDomains;
 
+  // Clone policy with effective snippet quota so explicit `includeSnippets: true`
+  // grants an effective bounded quota even on roles whose default snippet quota is 0.
+  const effectiveQuotas = { ...basePolicy.domainQuotas };
+  if (includeSnippets) {
+    if ((effectiveQuotas.snippets ?? 0) <= 0) {
+      effectiveQuotas.snippets = Math.min(4, Math.max(1, Math.floor(limits.maxItems / 5)));
+    }
+  } else {
+    effectiveQuotas.snippets = 0;
+  }
+
+  const effectivePolicy: AgentRetrievalPolicy = {
+    ...basePolicy,
+    domainQuotas: effectiveQuotas,
+  };
+
   return {
-    policy: basePolicy,
+    policy: effectivePolicy,
     effectiveLimits: limits,
     includeSnippets,
     includeHistoricalMemories,

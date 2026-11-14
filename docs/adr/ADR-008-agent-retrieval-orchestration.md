@@ -36,7 +36,9 @@ Phases 7.1–7.5 delivered deterministic repository scanning, AST symbol extract
 
 ## Consequences
 
-- `scripts/retrieval/` provides a self-contained read-only pipeline (`TaskClassifier`, `RetrievalPlanner`, `ContentSanitizer`, `EvidenceUnifier`, `RelevanceRanker`, `ContextBudgeter`, `RetrievalEngine`, `RetrievalFormatter`).
-- `frontier-cli.ts` exposes `retrieve` under existing exit code semantics (`0..4`).
+- `scripts/retrieval/` provides a self-contained read-only pipeline (`TaskClassifier`, `RetrievalPlanner`, `ContentSanitizer`, `EvidenceUnifier`, `RelevanceRanker`, `ContextBudgeter`, `RetrievalEngine`, `RetrievalFormatter`, `SchemaValidator`, `orchestrator`).
+- `schemas/retrieval-context.schema.json` enforces strict per-domain item schemas (`additionalProperties: false`), while `SchemaValidator` caches compiled AJV validators and redacts secret/control data in error diagnostics.
+- `orchestrator.ts` provides `assessRetrievalEligibility` (zero-mutation preflight), `prepareDelegationHandoff`, and `parseAndValidateHandoffBundle` (`<<<FRONTIER_HANDOFF_JSON>>>` transport), reinforced by `PreToolUse` inspection on `invoke_subagent` prompts.
+- `frontier-cli.ts` exposes `retrieve`, `prepare-handoff`, and `validate-handoff` under existing exit code semantics (`0..4`).
 - All 6 canonical agent specs (`specs/agents/*.md`) and generated Antigravity adapters (`agents/*.md`) stay synchronized via `npm run generate:agents`.
 - Repository schema remains cleanly at `CURRENT_SCHEMA_VERSION = 3` and plugin version remains `0.6.3`.

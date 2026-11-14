@@ -19,6 +19,7 @@ import { RelevanceRanker } from "./relevance-ranker.ts";
 import { ContextBudgeter } from "./context-budgeter.ts";
 import type {
   AnyRankedItem,
+  BudgetReport,
   ConfidenceSummary,
   HandoffContextHighlight,
   HandoffRetrievalContext,
@@ -29,11 +30,14 @@ import type {
   RankedMemoryItem,
   RankedSymbolItem,
   RankedTestAssociationItem,
+  RetrievalDomain,
   RetrievalEvolutionSummary,
   RetrievalOverviewSummary,
+  RetrievalPlan,
   RetrievalRequest,
   RetrievalResponse,
   RetrievalWarning,
+  RetrievalWarningCode,
   SafeCodeSnippet,
 } from "./types.ts";
 import type { ConfidenceTier } from "../query/types.ts";
@@ -47,6 +51,8 @@ export class RetrievalEngine {
   }
 
   public async retrieve(request: RetrievalRequest): Promise<RetrievalResponse> {
+    this.throwIfAborted(request.signal);
+
     if (
       !request.taskSummary ||
       typeof request.taskSummary !== "string" ||
@@ -57,17 +63,41 @@ export class RetrievalEngine {
 
     const db = this.connectionManager.getDatabase();
     const repo = this.connectionManager.getRepository();
+
+    if (
+      request.expectedRepositoryIdentity !== undefined &&
+      request.expectedRepositoryIdentity.trim() !== repo.identity
+    ) {
+      throw new SnapshotComparisonError(
+        `Expected repository identity '${request.expectedRepositoryIdentity}', but workspace repository is '${repo.identity}'.`,
+        "ERR_REPOSITORY_MISMATCH",
+      );
+    }
+
+    const allowPartial = request.allowPartialSnapshot ?? true;
     const boundedRequest: RetrievalRequest = {
       ...request,
       taskSummary: request.taskSummary.slice(0, 8192),
       objective: request.objective ? request.objective.slice(0, 4096) : undefined,
+      signal: undefined,
     };
 
-    const resolvedScan = this.resolveTargetScan(repo.id, repo.activeScanId, boundedRequest.scanId);
+    const resolvedScan = this.resolveTargetScan(
+      repo.id,
+      repo.activeScanId,
+      boundedRequest.scanId,
+      allowPartial,
+    );
     const freshness = FreshnessEvaluator.evaluate(db, repo.id, repo.rootPath, {
       explicitScanId: resolvedScan.id,
       verifyContentHashes: boundedRequest.verifyContentHashes ?? false,
     });
+
+    if (freshness.isPartial && allowPartial === false) {
+      throw new Error(
+        `Repository index snapshot ${resolvedScan.id} is a PARTIAL index and allowPartialSnapshot is false.`,
+      );
+    }
 
     const warnings: RetrievalWarning[] = [];
     const limitations: string[] = [
@@ -90,14 +120,24 @@ export class RetrievalEngine {
       });
     }
 
+    this.throwIfAborted(request.signal);
+
     // 1. Classify task & extract targets deterministically
     const classification = TaskClassifier.classify(boundedRequest);
+    if (classification.isAmbiguous) {
+      warnings.push({
+        code: "AMBIGUOUS_CLASSIFICATION",
+        severity: "info",
+        message: `Task intent classification was low-confidence or ambiguous (primary: '${classification.primaryTaskType}', tier: ${classification.confidenceTier ?? "CANDIDATE"}); falling back cleanly.`,
+      });
+    }
     for (const unsafePath of classification.extractedTargets.ignoredUnsafeTargets) {
+      const safeEntity = ContentSanitizer.sanitizeMetadataText(unsafePath).text;
       warnings.push({
         code: "UNSAFE_TARGET_IGNORED",
         severity: "warning",
-        message: `Ignored unsafe or outside-workspace target path '${unsafePath}'.`,
-        entity: unsafePath,
+        message: `Ignored unsafe or outside-workspace target path '${safeEntity}'.`,
+        entity: safeEntity,
       });
     }
 
@@ -118,6 +158,7 @@ export class RetrievalEngine {
     const seedFiles = new Set<string>(classification.extractedTargets.files);
 
     // 4a. Overview
+    this.throwIfAborted(request.signal);
     let overview: RetrievalOverviewSummary | null = null;
     if (plannedDomains.has("overview")) {
       try {
@@ -132,14 +173,24 @@ export class RetrievalEngine {
           cycleCount: ovData.dependencySummary.circularCyclesCount,
           decisionCount: ovData.counts.decisions,
         };
-      } catch {
-        // Overview omitted if unavailable
+      } catch (err: any) {
+        const errMsg = ContentSanitizer.sanitizeMetadataText(err?.message ?? String(err)).text;
+        warnings.push({
+          code: "PARTIAL_DOMAIN_ERROR",
+          severity: "warning",
+          message: `Overview summary could not be retrieved for scan ${scanId}: ${errMsg}`,
+          entity: "overview",
+        });
+        limitations.push(`overview domain error on scan ${scanId}: ${errMsg}`);
       }
     }
 
     // 4b. Components
+    this.throwIfAborted(request.signal);
     const archComponents = await archAnalyzer.getComponents(repo.id, scanId);
     const compNameByFile = new Map<string, string>();
+    const compStepLimit = this.getStepLimit(plan, "components", 15);
+    let compCountAdded = 0;
     for (const comp of archComponents) {
       for (const fp of comp.filePaths) {
         compNameByFile.set(fp, comp.name);
@@ -155,17 +206,20 @@ export class RetrievalEngine {
           seedFiles.add(fp);
         }
       }
-      if (plannedDomains.has("components")) {
+      if (plannedDomains.has("components") && compCountAdded < Math.max(compStepLimit * 2, 12)) {
+        const safeName = ContentSanitizer.sanitizeMetadataText(comp.name).text;
+        const safeEvidence = ContentSanitizer.sanitizeMetadataText(comp.evidenceDescription).text;
         const item: RankedComponentItem = {
           id: comp.componentIdentity,
           domain: "components",
-          title: `${comp.name} (${comp.category})`,
+          title: `${safeName} (${comp.category})`,
           rankScore: 0,
           rankingReasons: [],
           confidenceTier: comp.status,
           untrustedRepositoryContent: false,
+          trustLevel: "deterministic_metadata",
           componentIdentity: comp.componentIdentity,
-          name: comp.name,
+          name: safeName,
           category: comp.category,
           rootPath: comp.rootPath,
           filesCount: comp.filesCount,
@@ -177,15 +231,18 @@ export class RetrievalEngine {
               confidence: comp.confidence,
               confidenceTier: comp.status,
               verificationStatus: "STATIC_INDEX",
-              description: comp.evidenceDescription,
+              description: safeEvidence,
             },
           ],
         };
         candidates.push(item);
+        compCountAdded++;
       }
     }
 
-    // 4c. Files (targeted + keyword SQL lookup; avoids N+1 over large repositories)
+    // 4c. Files (targeted + keyword SQL lookup with batched export/import counts; avoids N+1)
+    this.throwIfAborted(request.signal);
+    const fileStepLimit = this.getStepLimit(plan, "files", 25);
     const fileMetaByPath = new Map<
       string,
       {
@@ -198,14 +255,23 @@ export class RetrievalEngine {
       }
     >();
     const selectedFileCandidates = this.selectCandidateFiles(
+      repo.id,
       scanId,
       classification.extractedTargets.files,
       classification.extractedTargets.keywords,
       Array.from(seedFiles),
-      Math.max(plan.effectiveLimits.maxItems, 25),
+      Math.max(fileStepLimit * 2, plan.effectiveLimits.maxItems, 25),
     );
 
+    const safeFileIds = selectedFileCandidates
+      .filter((f) => f.sensitivityStatus === "SAFE")
+      .map((f) => f.id);
+    const batchedFileCounts = plannedDomains.has("files")
+      ? this.getBatchFileCounts(repo.id, scanId, safeFileIds)
+      : new Map<number, { exportsCount: number; importsCount: number }>();
+
     const indexedPathsFound = new Set<string>();
+    let fileCountAdded = 0;
     for (const fRow of selectedFileCandidates) {
       indexedPathsFound.add(fRow.normalizedPath);
       fileMetaByPath.set(fRow.normalizedPath, fRow);
@@ -219,8 +285,8 @@ export class RetrievalEngine {
         });
       }
 
-      if (plannedDomains.has("files")) {
-        const counts = this.getFileCounts(scanId, fRow.id);
+      if (plannedDomains.has("files") && fileCountAdded < Math.max(fileStepLimit * 2, 20)) {
+        const counts = batchedFileCounts.get(fRow.id) ?? { exportsCount: 0, importsCount: 0 };
         const item: RankedFileItem = {
           id: `file:${fRow.normalizedPath}`,
           domain: "files",
@@ -229,6 +295,7 @@ export class RetrievalEngine {
           rankingReasons: [],
           confidenceTier: "CONFIRMED",
           untrustedRepositoryContent: false,
+          trustLevel: "deterministic_metadata",
           filePath: fRow.normalizedPath,
           language: fRow.language,
           classification: fRow.classification,
@@ -248,6 +315,7 @@ export class RetrievalEngine {
           ],
         };
         candidates.push(item);
+        fileCountAdded++;
       }
     }
 
@@ -263,15 +331,18 @@ export class RetrievalEngine {
     }
 
     // 4d. Symbols (targeted SQL lookup on SAFE files only)
+    this.throwIfAborted(request.signal);
     const matchedSymbolLocations: Array<{ filePath: string; startLine: number; endLine: number }> =
       [];
     if (plannedDomains.has("symbols") || plan.includeSnippets) {
+      const symStepLimit = this.getStepLimit(plan, "symbols", 35);
       const symbolRows = this.selectCandidateSymbols(
+        repo.id,
         scanId,
         classification.extractedTargets.symbols,
         classification.extractedTargets.files,
         classification.extractedTargets.keywords,
-        35,
+        Math.max(symStepLimit * 2, 20),
       );
       for (const sym of symbolRows) {
         seedFiles.add(sym.filePath);
@@ -281,16 +352,18 @@ export class RetrievalEngine {
           endLine: sym.endLine,
         });
         if (plannedDomains.has("symbols")) {
+          const safeSymName = ContentSanitizer.sanitizeMetadataText(sym.name).text;
           const item: RankedSymbolItem = {
             id: `symbol:${sym.symbolIdentity}`,
             domain: "symbols",
-            title: `${sym.name} (${sym.kind}) in ${sym.filePath}:${sym.startLine}`,
+            title: `${safeSymName} (${sym.kind}) in ${sym.filePath}:${sym.startLine}`,
             rankScore: 0,
             rankingReasons: [],
             confidenceTier: sym.confidence >= 0.9 ? "CONFIRMED" : "INFERRED",
             untrustedRepositoryContent: false,
+            trustLevel: "deterministic_metadata",
             symbolIdentity: sym.symbolIdentity,
-            name: sym.name,
+            name: safeSymName,
             kind: sym.kind,
             filePath: sym.filePath,
             startLine: sym.startLine,
@@ -305,7 +378,7 @@ export class RetrievalEngine {
                 confidence: sym.confidence,
                 confidenceTier: sym.confidence >= 0.9 ? "CONFIRMED" : "INFERRED",
                 verificationStatus: "STATIC_INDEX",
-                description: `Declaration of ${sym.kind} '${sym.name}' (lines ${sym.startLine}-${sym.endLine})`,
+                description: `Declaration of ${sym.kind} '${safeSymName}' (lines ${sym.startLine}-${sym.endLine})`,
               },
             ],
           };
@@ -315,7 +388,9 @@ export class RetrievalEngine {
     }
 
     // 4e. Dependencies & Dependents (cycle-safe bounded GraphTraversal via QueryEngine)
+    this.throwIfAborted(request.signal);
     if (plannedDomains.has("dependencies")) {
+      const depStepLimit = this.getStepLimit(plan, "dependencies", 12);
       const traversalSeeds = Array.from(seedFiles).slice(0, 4);
       if (traversalSeeds.length === 0 && archComponents.length > 0) {
         traversalSeeds.push(archComponents[0].componentIdentity);
@@ -323,6 +398,7 @@ export class RetrievalEngine {
 
       const seenDepKeys = new Set<string>();
       for (const seed of traversalSeeds) {
+        this.throwIfAborted(request.signal);
         for (const dir of ["dependencies", "dependents"] as const) {
           try {
             const res =
@@ -330,15 +406,15 @@ export class RetrievalEngine {
                 ? await queryEngine.getDependencies(seed, {
                     scanId,
                     depth: plan.effectiveLimits.maxDepth,
-                    limit: 12,
+                    limit: depStepLimit,
                   })
                 : await queryEngine.getDependents(seed, {
                     scanId,
                     depth: plan.effectiveLimits.maxDepth,
-                    limit: 12,
+                    limit: depStepLimit,
                   });
 
-            const nodes = [...res.data.direct, ...res.data.transitive].slice(0, 12);
+            const nodes = [...res.data.direct, ...res.data.transitive].slice(0, depStepLimit);
             for (const n of nodes) {
               const key = `${dir}:${seed}->${n.nodeIdentity}`;
               if (seenDepKeys.has(key)) continue;
@@ -352,6 +428,7 @@ export class RetrievalEngine {
                 rankingReasons: [],
                 confidenceTier: EvidenceUnifier.normalizeConfidenceTier(n.status),
                 untrustedRepositoryContent: false,
+                trustLevel: "deterministic_metadata",
                 direction: dir === "dependencies" ? "dependency" : "dependent",
                 sourceTarget: seed,
                 targetNodeIdentity: n.nodeIdentity,
@@ -373,15 +450,24 @@ export class RetrievalEngine {
               };
               candidates.push(depItem);
             }
-          } catch {
-            // Seed target might have no graph node (e.g. non-source asset or unindexed target)
+          } catch (err: any) {
+            const errMsg = ContentSanitizer.sanitizeMetadataText(err?.message ?? String(err)).text;
+            if (!/not found/i.test(errMsg)) {
+              warnings.push({
+                code: "PARTIAL_DOMAIN_ERROR",
+                severity: "warning",
+                message: `Dependency traversal failed for '${seed}' (${dir}): ${errMsg}`,
+                entity: seed,
+              });
+              limitations.push(`dependency traversal partial error on '${seed}': ${errMsg}`);
+            }
           }
         }
       }
 
       // Include structural cycles when relevant
       try {
-        const cycleRes = await queryEngine.getCycles({ scanId, limit: 5 });
+        const cycleRes = await queryEngine.getCycles({ scanId, limit: Math.min(5, depStepLimit) });
         for (const c of cycleRes.data.cycles) {
           const cycleId = `cycle:${c.cycle.join("->")}`;
           const item: RankedDependencyItem = {
@@ -392,6 +478,7 @@ export class RetrievalEngine {
             rankingReasons: [],
             confidenceTier: "CONFIRMED",
             untrustedRepositoryContent: false,
+            trustLevel: "deterministic_metadata",
             direction: "cycle",
             sourceTarget: c.cycle[0],
             targetNodeIdentity: `file:${c.cycle[0]}`,
@@ -412,16 +499,29 @@ export class RetrievalEngine {
           };
           candidates.push(item);
         }
-      } catch {
-        // Ignore if cycle analyzer finds nothing or throws
+      } catch (err: any) {
+        const errMsg = ContentSanitizer.sanitizeMetadataText(err?.message ?? String(err)).text;
+        warnings.push({
+          code: "PARTIAL_DOMAIN_ERROR",
+          severity: "warning",
+          message: `Circular dependency inspection failed for scan ${scanId}: ${errMsg}`,
+          entity: "cycles",
+        });
+        limitations.push(`cycle analysis error on scan ${scanId}: ${errMsg}`);
       }
     }
 
     // 4f. Tests
+    this.throwIfAborted(request.signal);
     if (plannedDomains.has("tests")) {
+      const testStepLimit = this.getStepLimit(plan, "tests", 40);
       try {
-        const testRes = await queryEngine.getTests(undefined, { scanId, limit: 40 });
+        const testRes = await queryEngine.getTests(undefined, {
+          scanId,
+          limit: Math.max(testStepLimit * 2, 16),
+        });
         for (const assoc of testRes.data.associations) {
+          const safeDesc = ContentSanitizer.sanitizeMetadataText(assoc.evidenceDescription).text;
           const item: RankedTestAssociationItem = {
             id: `test:${assoc.testFilePath}=>${assoc.sourceFilePath}`,
             domain: "tests",
@@ -430,6 +530,7 @@ export class RetrievalEngine {
             rankingReasons: [],
             confidenceTier: assoc.associationStatus,
             untrustedRepositoryContent: false,
+            trustLevel: "deterministic_metadata",
             testFilePath: assoc.testFilePath,
             sourceFilePath: assoc.sourceFilePath,
             associationStatus: assoc.associationStatus,
@@ -441,21 +542,34 @@ export class RetrievalEngine {
                 confidence: assoc.confidence,
                 confidenceTier: assoc.associationStatus,
                 verificationStatus: "STATIC_INDEX",
-                description: assoc.evidenceDescription,
+                description: safeDesc,
               },
             ],
           };
           candidates.push(item);
         }
-      } catch {
-        // Ignore if tests unavailable
+      } catch (err: any) {
+        const errMsg = ContentSanitizer.sanitizeMetadataText(err?.message ?? String(err)).text;
+        warnings.push({
+          code: "PARTIAL_DOMAIN_ERROR",
+          severity: "warning",
+          message: `Test association retrieval failed for scan ${scanId}: ${errMsg}`,
+          entity: "tests",
+        });
+        limitations.push(`tests domain error on scan ${scanId}: ${errMsg}`);
       }
     }
 
-    // 4g. Decisions (ADRs)
+    // 4g. Decisions (ADRs — snapshot-hash isolated, never live-disk contaminated)
+    this.throwIfAborted(request.signal);
     if (plannedDomains.has("decisions")) {
+      const adrStepLimit = this.getStepLimit(plan, "decisions", 30);
       try {
-        const adrRes = await queryEngine.getDecisions({ scanId, limit: 30 });
+        const adrRes = await queryEngine.getDecisions({
+          scanId,
+          limit: Math.max(adrStepLimit * 2, 16),
+          requireSha256: true,
+        });
         for (const adr of adrRes.data.decisions) {
           const sanitizedTitle = ContentSanitizer.sanitizeUntrustedText(adr.title, adr.filePath);
           const sanitizedSummary = ContentSanitizer.sanitizeUntrustedText(
@@ -466,45 +580,90 @@ export class RetrievalEngine {
             warnings.push({
               code: "PROMPT_INJECTION_SIGNAL",
               severity: "warning",
-              message: `Prompt-injection-like text detected inside ADR '${adr.filePath}'; preserved strictly as untrusted data.`,
+              message: `Prompt-injection-like text detected inside ADR '${adr.filePath}'; fenced strictly as untrusted data.`,
+              entity: adr.adrId,
+            });
+          }
+          if (sanitizedTitle.redacted || sanitizedSummary.redacted) {
+            warnings.push({
+              code: "INLINE_SECRET_REDACTED",
+              severity: "warning",
+              message: `Inline secret pattern redacted inside ADR '${adr.filePath}'.`,
               entity: adr.adrId,
             });
           }
 
-          const adrConfidenceTier = adr.confidence >= 0.9 ? "CONFIRMED" : "INFERRED";
+          const isUnverifiedSnapshot =
+            adr.isFallback === true ||
+            (adr.verificationStatus !== undefined &&
+              adr.verificationStatus !== "CONFIRMED" &&
+              adr.verificationStatus !== "SNAPSHOT_METADATA");
+          if (isUnverifiedSnapshot) {
+            warnings.push({
+              code: "ADR_SNAPSHOT_UNVERIFIED",
+              severity: "warning",
+              message: `ADR '${adr.adrId}' (${adr.filePath}) could not be SHA-256 verified against snapshot ${scanId} (${adr.verificationStatus ?? "UNVERIFIED"}); using snapshot fallback metadata only.`,
+              entity: adr.adrId,
+            });
+            limitations.push(
+              `ADR ${adr.adrId} snapshot verification status: ${adr.verificationStatus ?? "UNVERIFIED"} (live disk edits excluded).`,
+            );
+          }
+
+          const adrConfidenceTier = isUnverifiedSnapshot
+            ? "INFERRED"
+            : adr.confidence >= 0.9
+              ? "CONFIRMED"
+              : "INFERRED";
+          const evStatus =
+            adr.verificationStatus === "CONFIRMED"
+              ? "VERIFIED_ON_DISK"
+              : (adr.verificationStatus ?? "STATIC_INDEX");
+
           const item: RankedAdrItem = {
             id: `adr:${adr.adrId}`,
             domain: "decisions",
-            title: `${adr.adrId}: ${sanitizedTitle.text}`,
+            title: `${adr.adrId}: ${sanitizedTitle.inlineFencedText}`,
             rankScore: 0,
             rankingReasons: [],
             confidenceTier: adrConfidenceTier,
             untrustedRepositoryContent: true,
+            trustLevel: "fenced_untrusted_content",
             adrId: adr.adrId,
             adrNumber: adr.number,
             adrStatus: adr.status,
             filePath: adr.filePath,
             governedComponents: adr.governedComponents,
-            summaryText: sanitizedSummary.text,
+            summaryText: sanitizedSummary.fencedText,
+            verificationStatus: adr.verificationStatus,
+            isFallback: adr.isFallback,
             evidence: [
               {
-                sourceType: "adr_document",
+                sourceType: adr.isFallback ? "adr_snapshot_fallback" : "adr_document",
                 filePath: adr.filePath,
                 confidence: adr.confidence,
                 confidenceTier: adrConfidenceTier,
-                verificationStatus: "STATIC_INDEX",
-                description: sanitizedSummary.text,
+                verificationStatus: evStatus,
+                description: sanitizedSummary.inlineFencedText,
               },
             ],
           };
           candidates.push(item);
         }
-      } catch {
-        // Ignore if ADRs unavailable
+      } catch (err: any) {
+        const errMsg = ContentSanitizer.sanitizeMetadataText(err?.message ?? String(err)).text;
+        warnings.push({
+          code: "PARTIAL_DOMAIN_ERROR",
+          severity: "warning",
+          message: `ADR retrieval failed for scan ${scanId}: ${errMsg}`,
+          entity: "decisions",
+        });
+        limitations.push(`decisions domain error on scan ${scanId}: ${errMsg}`);
       }
     }
 
     // 4h. Engineering Memories (read-only verification)
+    this.throwIfAborted(request.signal);
     if (plannedDomains.has("memories")) {
       const memResult = EvidenceUnifier.loadAndVerifyMemories({
         db,
@@ -551,11 +710,12 @@ export class RetrievalEngine {
         const item: RankedMemoryItem = {
           id: `memory:${mem.record.memoryKey}`,
           domain: "memories",
-          title: `${mem.record.memoryKey}: ${sanitizedTitle.text} [${mem.liveStatus}]`,
+          title: `${mem.record.memoryKey}: ${sanitizedTitle.inlineFencedText} [${mem.liveStatus}]`,
           rankScore: 0,
           rankingReasons: [],
           confidenceTier: EvidenceUnifier.normalizeConfidenceTier(mem.record.confidenceTier),
           untrustedRepositoryContent: true,
+          trustLevel: "fenced_untrusted_content",
           memoryId: mem.record.id,
           memoryKey: mem.record.memoryKey,
           category: mem.record.category,
@@ -572,7 +732,9 @@ export class RetrievalEngine {
     }
 
     // 4i. Safe Bounded Snippets (only if enabled by policy/override, SAFE files only)
+    this.throwIfAborted(request.signal);
     if (plan.includeSnippets && plannedDomains.has("snippets")) {
+      const snippetStepLimit = Math.max(1, this.getStepLimit(plan, "snippets", 8));
       const snippetTargets = new Map<string, { startLine?: number; endLine?: number }>();
       for (const loc of matchedSymbolLocations) {
         if (!snippetTargets.has(loc.filePath)) {
@@ -593,8 +755,13 @@ export class RetrievalEngine {
         }
       }
 
-      for (const [filePath, range] of Array.from(snippetTargets.entries()).slice(0, 8)) {
-        const meta = fileMetaByPath.get(filePath) ?? this.getSingleFileMeta(scanId, filePath);
+      for (const [filePath, range] of Array.from(snippetTargets.entries()).slice(
+        0,
+        Math.max(snippetStepLimit, 8),
+      )) {
+        this.throwIfAborted(request.signal);
+        const meta =
+          fileMetaByPath.get(filePath) ?? this.getSingleFileMeta(repo.id, scanId, filePath);
         if (!meta) continue;
 
         const snip = ContentSanitizer.readSafeSnippet({
@@ -642,14 +809,16 @@ export class RetrievalEngine {
           });
         }
 
+        const safePath = ContentSanitizer.sanitizeMetadataText(filePath).text;
         const snippetItem: SafeCodeSnippet = {
           id: `snippet:${filePath}:${snip.lineRange?.[0] ?? 1}-${snip.lineRange?.[1] ?? 1}`,
           domain: "snippets",
-          title: `Snippet ${filePath}:${snip.lineRange?.[0] ?? 1}-${snip.lineRange?.[1] ?? 1}`,
+          title: `Snippet ${safePath}:${snip.lineRange?.[0] ?? 1}-${snip.lineRange?.[1] ?? 1}`,
           rankScore: 0,
           rankingReasons: [],
           confidenceTier: "CONFIRMED",
           untrustedRepositoryContent: true,
+          trustLevel: "fenced_untrusted_content",
           filePath,
           lineRange: snip.lineRange ?? [1, 1],
           content: snip.content ?? "",
@@ -673,6 +842,7 @@ export class RetrievalEngine {
     }
 
     // 4j. Optional Evolution Analysis (read-only: persistEvents: false, applyLifecycle: false)
+    this.throwIfAborted(request.signal);
     let evolution: RetrievalEvolutionSummary | null = null;
     const reqBaseScan = boundedRequest.baseScanId ?? classification.extractedTargets.baseScanId;
     const reqTargetScan =
@@ -690,7 +860,7 @@ export class RetrievalEngine {
       plannedDomains.has("evolution") &&
       classification.primaryTaskType === "evolution_review"
     ) {
-      resolvedPair = this.findLatestCompletedScanPair(repo.id);
+      resolvedPair = this.findLatestCompletedScanPair(repo.id, allowPartial);
     }
 
     if (resolvedPair) {
@@ -701,38 +871,65 @@ export class RetrievalEngine {
           {
             persistEvents: false,
             applyLifecycle: false,
-            allowPartial: boundedRequest.allowPartialSnapshot ?? true,
+            allowPartial,
             maxRecordsPerDomain: 50,
             expectedRepositoryId: repo.id,
           },
         );
+
+        const sanitizeEvoHighlight = (
+          rawTitle: string,
+          kindLabel: "drift" | "decision_correlation" | "debt" | "file_change",
+        ): string => {
+          const san = ContentSanitizer.sanitizeUntrustedText(rawTitle, `evolution:${kindLabel}`);
+          if (san.redacted) {
+            warnings.push({
+              code: "INLINE_SECRET_REDACTED",
+              severity: "warning",
+              message: `Inline secret pattern redacted inside evolution ${kindLabel} highlight.`,
+              entity: kindLabel,
+            });
+          }
+          if (san.promptInjectionDetected) {
+            warnings.push({
+              code: "PROMPT_INJECTION_SIGNAL",
+              severity: "warning",
+              message: `Prompt-injection-like pattern detected inside evolution ${kindLabel} highlight; fenced strictly as untrusted data.`,
+              entity: kindLabel,
+            });
+          }
+          return san.inlineFencedText;
+        };
 
         const highlights: RetrievalEvolutionSummary["highlights"] = [];
         for (const d of evo.drift.findings.slice(0, 5)) {
           highlights.push({
             kind: "drift",
             severity: d.severity,
-            title: d.title,
+            title: sanitizeEvoHighlight(d.title, "drift"),
             confidenceTier: d.confidenceTier,
             relevantPaths: d.relevantPaths.slice(0, 5),
+            untrustedRepositoryContent: true,
           });
         }
         for (const c of evo.decisions.correlations.slice(0, 5)) {
           highlights.push({
             kind: "decision_correlation",
             severity: c.severity,
-            title: c.title,
+            title: sanitizeEvoHighlight(c.title, "decision_correlation"),
             confidenceTier: c.confidenceTier,
             relevantPaths: c.relevantPaths.slice(0, 5),
+            untrustedRepositoryContent: true,
           });
         }
         for (const debt of evo.debt.items.slice(0, 5)) {
           highlights.push({
             kind: "debt",
             severity: debt.severity,
-            title: debt.title,
+            title: sanitizeEvoHighlight(debt.title, "debt"),
             confidenceTier: debt.confidenceTier,
             relevantPaths: debt.relevantPaths.slice(0, 5),
+            untrustedRepositoryContent: true,
           });
         }
 
@@ -759,38 +956,362 @@ export class RetrievalEngine {
         warnings.push({
           code: "EVOLUTION_UNAVAILABLE",
           severity: "info",
-          message: `Evolution comparison skipped: ${err?.message ?? String(err)}`,
+          message: `Evolution comparison skipped: ${ContentSanitizer.sanitizeMetadataText(err?.message ?? String(err)).text}`,
         });
       }
     }
 
-    // 5. Rank deterministically across all domains & enforce budget
+    // 5. Rank deterministically across all domains & enforce true serialized envelope budget
+    this.throwIfAborted(request.signal);
     const ranked = RelevanceRanker.rank(candidates, {
       classification,
       policy: resolvedPolicy.policy,
       seedFiles,
     });
 
-    const baseChars =
-      (overview ? JSON.stringify(overview).length : 0) +
-      (evolution ? JSON.stringify(evolution).length : 0);
+    const preliminaryWarnings = this.dedupeWarnings(warnings);
+    const preliminaryLimitations = Array.from(new Set(limitations)).sort((a, b) =>
+      a.localeCompare(b),
+    );
+    const envelopePlaceholder: RetrievalResponse = {
+      contract: "frontier-engineer/retrieval",
+      version: 1,
+      retrievalId: "ret-0000000000000000",
+      repository: {
+        repositoryId: repo.id,
+        repositoryIdentity: repo.identity,
+        rootPath: repo.rootPath,
+        displayName: repo.displayName,
+        schemaVersion: repo.schemaVersion,
+      },
+      snapshot: {
+        scanId,
+        status: resolvedScan.status,
+        freshness,
+        ...(evolution
+          ? { baseScanId: evolution.baseScanId, targetScanId: evolution.targetScanId }
+          : {}),
+      },
+      agentId: boundedRequest.agentId,
+      policyVersion: resolvedPolicy.policy.policyVersion,
+      classification,
+      plan,
+      context: {
+        overview,
+        components: [],
+        files: [],
+        symbols: [],
+        dependencies: [],
+        tests: [],
+        decisions: [],
+        memories: [],
+        evolution,
+        snippets: [],
+      },
+      confidenceSummary: {
+        confirmedCount: 0,
+        inferredCount: 0,
+        candidateCount: 0,
+        unresolvedCount: 0,
+        isMixedConfidence: false,
+      },
+      warnings: preliminaryWarnings,
+      budget: {
+        limitsConfigured: plan.effectiveLimits,
+        usedChars: 100000,
+        serializedChars: 100000,
+        estimatedTokens: 25000,
+        totalCandidatesFound: ranked.length,
+        includedCount: 0,
+        truncatedCount: 0,
+        truncatedDomains: [],
+        omittedItemIds: [],
+        budgetOverflowed: false,
+      },
+      limitations: preliminaryLimitations,
+    };
+
+    const envelopeOverheadChars = JSON.stringify(envelopePlaceholder).length + 220;
 
     const allocation = ContextBudgeter.allocate(
       ranked,
       plan.effectiveLimits,
       resolvedPolicy.policy,
-      baseChars,
+      envelopeOverheadChars,
     );
 
-    if (allocation.budget.truncatedCount > 0) {
-      warnings.push({
-        code: "BUDGET_TRUNCATED",
-        severity: "info",
-        message: `Truncated ${allocation.budget.truncatedCount} lower-priority item(s) across [${allocation.budget.truncatedDomains.join(", ")}] to honor retrieval budget (${plan.effectiveLimits.maxItems} items / ${plan.effectiveLimits.maxTotalChars} chars / ${plan.effectiveLimits.maxTokens} tokens).`,
+    const selected = [...allocation.selected];
+    const omitted = [...allocation.omitted];
+
+    const assembleResponse = (
+      sel: AnyRankedItem[],
+      omit: AnyRankedItem[],
+      budgetOverride?: Partial<BudgetReport>,
+    ): RetrievalResponse => {
+      const domainBuckets = this.partitionSelectedItems(sel);
+      const localWarnings = [...warnings];
+      if (omit.length > 0) {
+        const omitDomains = Array.from(new Set(omit.map((i) => i.domain))).sort((a, b) =>
+          a.localeCompare(b),
+        );
+        localWarnings.push({
+          code: "BUDGET_TRUNCATED",
+          severity: "info",
+          message: `Truncated ${omit.length} lower-priority item(s) across [${omitDomains.join(", ")}] to honor retrieval budget (${plan.effectiveLimits.maxItems} items / ${plan.effectiveLimits.maxTotalChars} chars / ${plan.effectiveLimits.maxTokens} tokens).`,
+        });
+      }
+      const dedupedWarnings = this.dedupeWarnings(localWarnings);
+      const confSummary = this.computeConfidenceSummary(sel);
+      const retrievalId = this.computeDeterministicId({
+        repositoryIdentity: repo.identity,
+        scanId,
+        agentId: boundedRequest.agentId,
+        taskSummary: boundedRequest.taskSummary,
+        taskType: classification.primaryTaskType,
+        selectedIds: sel.map((s) => `${s.id}@${s.rankScore}`),
+        freshnessStatus: freshness.status,
+        baseScanId: evolution?.baseScanId,
+        targetScanId: evolution?.targetScanId,
       });
+
+      const truncatedDomains = Array.from(new Set(omit.map((i) => i.domain))).sort((a, b) =>
+        a.localeCompare(b),
+      );
+      const initialUsed = allocation.budget.usedChars;
+      const budget: BudgetReport = {
+        limitsConfigured: plan.effectiveLimits,
+        usedChars: budgetOverride?.usedChars ?? initialUsed,
+        serializedChars: budgetOverride?.serializedChars ?? initialUsed,
+        estimatedTokens:
+          budgetOverride?.estimatedTokens ?? ContextBudgeter.estimateTokens(initialUsed),
+        totalCandidatesFound: allocation.budget.totalCandidatesFound,
+        includedCount: sel.length,
+        truncatedCount: omit.length,
+        truncatedDomains,
+        omittedItemIds: omit.slice(0, 50).map((i) => i.id),
+        budgetOverflowed: budgetOverride?.budgetOverflowed ?? allocation.budget.budgetOverflowed,
+      };
+
+      return {
+        contract: "frontier-engineer/retrieval",
+        version: 1,
+        retrievalId,
+        repository: envelopePlaceholder.repository,
+        snapshot: envelopePlaceholder.snapshot,
+        agentId: boundedRequest.agentId,
+        policyVersion: resolvedPolicy.policy.policyVersion,
+        classification,
+        plan,
+        context: {
+          overview,
+          ...domainBuckets,
+          evolution,
+        },
+        confidenceSummary: confSummary,
+        warnings: dedupedWarnings,
+        budget,
+        limitations: preliminaryLimitations,
+      };
+    };
+
+    // Trim lowest-ranked selected items if full JSON serialization exceeds maxTotalChars/maxTokens
+    let response = assembleResponse(selected, omitted, {
+      usedChars: 100000,
+      serializedChars: 100000,
+      estimatedTokens: 25000,
+      budgetOverflowed: false,
+    });
+    let actualSerializedChars = JSON.stringify(response).length;
+    while (
+      selected.length > 0 &&
+      (actualSerializedChars > plan.effectiveLimits.maxTotalChars ||
+        ContextBudgeter.estimateTokens(actualSerializedChars) > plan.effectiveLimits.maxTokens)
+    ) {
+      const removed = selected.pop()!;
+      omitted.push(removed);
+      response = assembleResponse(selected, omitted, {
+        usedChars: 100000,
+        serializedChars: 100000,
+        estimatedTokens: 25000,
+        budgetOverflowed: false,
+      });
+      actualSerializedChars = JSON.stringify(response).length;
     }
 
-    // 6. Partition selected items cleanly by domain
+    const preliminaryTokens = ContextBudgeter.estimateTokens(actualSerializedChars);
+    response = assembleResponse(selected, omitted, {
+      usedChars: actualSerializedChars,
+      serializedChars: actualSerializedChars,
+      estimatedTokens: preliminaryTokens,
+      budgetOverflowed:
+        actualSerializedChars > plan.effectiveLimits.maxTotalChars ||
+        preliminaryTokens > plan.effectiveLimits.maxTokens,
+    });
+
+    // Final convergence passes ensure budget.serializedChars equals compact JSON.stringify(response).length
+    // while trimming if digit-width variance pushed the final payload slightly over budget.
+    for (let pass = 0; pass < 3; pass += 1) {
+      const exactChars = JSON.stringify(response).length;
+      const exactTokens = ContextBudgeter.estimateTokens(exactChars);
+      if (
+        selected.length > 0 &&
+        (exactChars > plan.effectiveLimits.maxTotalChars ||
+          exactTokens > plan.effectiveLimits.maxTokens)
+      ) {
+        const removed = selected.pop()!;
+        omitted.push(removed);
+        response = assembleResponse(selected, omitted, {
+          usedChars: exactChars,
+          serializedChars: exactChars,
+          estimatedTokens: exactTokens,
+          budgetOverflowed: true,
+        });
+        continue;
+      }
+      const exactOverflowed =
+        exactChars > plan.effectiveLimits.maxTotalChars ||
+        exactTokens > plan.effectiveLimits.maxTokens;
+      if (
+        exactChars === response.budget.serializedChars &&
+        exactOverflowed === response.budget.budgetOverflowed
+      ) {
+        break;
+      }
+      response.budget.usedChars = exactChars;
+      response.budget.serializedChars = exactChars;
+      response.budget.estimatedTokens = exactTokens;
+      response.budget.budgetOverflowed = exactOverflowed;
+    }
+
+    return response;
+  }
+
+  public static buildHandoffAttachment(response: RetrievalResponse): HandoffRetrievalContext {
+    const allSelected: AnyRankedItem[] = [
+      ...response.context.components,
+      ...response.context.files,
+      ...response.context.symbols,
+      ...response.context.dependencies,
+      ...response.context.tests,
+      ...response.context.decisions,
+      ...response.context.memories,
+      ...response.context.snippets,
+    ].sort((a, b) => b.rankScore - a.rankScore || a.id.localeCompare(b.id));
+
+    const highlights: HandoffContextHighlight[] = allSelected.slice(0, 12).map((item) => ({
+      domain: item.domain,
+      idOrPath: item.id,
+      summary: item.untrustedRepositoryContent
+        ? item.title
+        : ContentSanitizer.sanitizeMetadataText(item.title).text,
+      confidenceTier: item.confidenceTier,
+      ...(item.evidence[0]?.filePath ? { evidenceFile: item.evidence[0].filePath } : {}),
+      untrustedRepositoryContent: item.untrustedRepositoryContent,
+    }));
+
+    // Preserve all critical security/integrity/freshness/disputed warnings; never drop them behind info notices
+    const critical: RetrievalWarning[] = [];
+    const nonCritical: RetrievalWarning[] = [];
+    for (const w of response.warnings) {
+      if (this.getWarningPriority(w) <= 2 || w.severity === "error") {
+        critical.push(w);
+      } else {
+        nonCritical.push(w);
+      }
+    }
+
+    const chosenWarnings: RetrievalWarning[] = [...critical.slice(0, 20)];
+    const remainingSlots = Math.max(0, 8 - chosenWarnings.length);
+    chosenWarnings.push(...nonCritical.slice(0, remainingSlots));
+
+    const omittedCount = response.warnings.length - chosenWarnings.length;
+    const formattedWarnings = chosenWarnings.map(
+      (w) => `[${w.code}] ${ContentSanitizer.sanitizeMetadataText(w.message).text}`,
+    );
+    if (omittedCount > 0) {
+      formattedWarnings.push(
+        `[WARNINGS_OVERFLOW] ${omittedCount} additional warning(s) omitted from compact handoff; inspect full RetrievalResponse.`,
+      );
+    }
+
+    return {
+      contract: "frontier-engineer/retrieval-attachment",
+      version: 1,
+      retrievalId: response.retrievalId,
+      repositoryIdentity: response.repository.repositoryIdentity,
+      scanId: response.snapshot.scanId,
+      snapshotStatus: String(response.snapshot.status),
+      freshnessStatus: response.snapshot.freshness.status,
+      isStale: response.snapshot.freshness.isStale,
+      taskType: response.classification.primaryTaskType,
+      confidenceSummary: response.confidenceSummary,
+      highlights,
+      warnings: formattedWarnings,
+      budget: {
+        includedCount: response.budget.includedCount,
+        truncatedCount: response.budget.truncatedCount,
+        estimatedTokens: response.budget.estimatedTokens,
+      },
+    };
+  }
+
+  private static getWarningPriority(w: RetrievalWarning): number {
+    if (w.severity === "error") return 0;
+    const code: RetrievalWarningCode = w.code;
+    if (
+      code === "SENSITIVE_FILE_REDACTED" ||
+      code === "INLINE_SECRET_REDACTED" ||
+      code === "PROMPT_INJECTION_SIGNAL" ||
+      code === "UNSAFE_TARGET_IGNORED" ||
+      code === "REPOSITORY_IDENTITY_MISMATCH"
+    ) {
+      return 1;
+    }
+    if (
+      code === "MEMORY_DISPUTED" ||
+      code === "PARTIAL_SNAPSHOT" ||
+      code === "INDEX_STALE" ||
+      code === "ADR_SNAPSHOT_UNVERIFIED"
+    ) {
+      return 2;
+    }
+    if (
+      code === "MEMORY_STALE" ||
+      code === "MEMORY_EVIDENCE_UNVERIFIED" ||
+      code === "SNAPSHOT_VALIDATING" ||
+      code === "PARTIAL_DOMAIN_ERROR" ||
+      code === "DISK_FILE_MISSING" ||
+      code === "INVALID_WORKSPACE_CONFIG"
+    ) {
+      return 3;
+    }
+    if (w.severity === "warning") return 4;
+    return 5;
+  }
+
+  private throwIfAborted(signal?: AbortSignal): void {
+    if (signal?.aborted) {
+      const err = new Error("Retrieval cancelled via AbortSignal.");
+      err.name = "AbortError";
+      throw err;
+    }
+  }
+
+  private getStepLimit(plan: RetrievalPlan, domain: RetrievalDomain, fallback: number): number {
+    const step = plan.steps.find((s) => s.domain === domain);
+    return step ? step.maxItems : fallback;
+  }
+
+  private partitionSelectedItems(selected: AnyRankedItem[]): {
+    components: RankedComponentItem[];
+    files: RankedFileItem[];
+    symbols: RankedSymbolItem[];
+    dependencies: RankedDependencyItem[];
+    tests: RankedTestAssociationItem[];
+    decisions: RankedAdrItem[];
+    memories: RankedMemoryItem[];
+    snippets: SafeCodeSnippet[];
+  } {
     const components: RankedComponentItem[] = [];
     const files: RankedFileItem[] = [];
     const symbols: RankedSymbolItem[] = [];
@@ -800,7 +1321,7 @@ export class RetrievalEngine {
     const memories: RankedMemoryItem[] = [];
     const snippets: SafeCodeSnippet[] = [];
 
-    for (const item of allocation.selected) {
+    for (const item of selected) {
       switch (item.domain) {
         case "components":
           components.push(item);
@@ -829,109 +1350,14 @@ export class RetrievalEngine {
       }
     }
 
-    const confidenceSummary = this.computeConfidenceSummary(allocation.selected);
-    const dedupedWarnings = this.dedupeWarnings(warnings);
-    const dedupedLimitations = Array.from(new Set(limitations)).sort((a, b) => a.localeCompare(b));
-
-    const retrievalId = this.computeDeterministicId({
-      repositoryIdentity: repo.identity,
-      scanId,
-      agentId: boundedRequest.agentId,
-      taskSummary: boundedRequest.taskSummary,
-      taskType: classification.primaryTaskType,
-      selectedIds: allocation.selected.map((s) => `${s.id}@${s.rankScore}`),
-      freshnessStatus: freshness.status,
-      baseScanId: evolution?.baseScanId,
-      targetScanId: evolution?.targetScanId,
-    });
-
-    return {
-      contract: "frontier-engineer/retrieval",
-      version: 1,
-      retrievalId,
-      repository: {
-        repositoryId: repo.id,
-        repositoryIdentity: repo.identity,
-        rootPath: repo.rootPath,
-        displayName: repo.displayName,
-        schemaVersion: repo.schemaVersion,
-      },
-      snapshot: {
-        scanId,
-        status: resolvedScan.status,
-        freshness,
-        ...(evolution
-          ? { baseScanId: evolution.baseScanId, targetScanId: evolution.targetScanId }
-          : {}),
-      },
-      agentId: boundedRequest.agentId,
-      policyVersion: resolvedPolicy.policy.policyVersion,
-      classification,
-      plan,
-      context: {
-        overview,
-        components,
-        files,
-        symbols,
-        dependencies,
-        tests,
-        decisions,
-        memories,
-        evolution,
-        snippets,
-      },
-      confidenceSummary,
-      warnings: dedupedWarnings,
-      budget: allocation.budget,
-      limitations: dedupedLimitations,
-    };
-  }
-
-  public static buildHandoffAttachment(response: RetrievalResponse): HandoffRetrievalContext {
-    const allSelected: AnyRankedItem[] = [
-      ...response.context.components,
-      ...response.context.files,
-      ...response.context.symbols,
-      ...response.context.dependencies,
-      ...response.context.tests,
-      ...response.context.decisions,
-      ...response.context.memories,
-      ...response.context.snippets,
-    ].sort((a, b) => b.rankScore - a.rankScore || a.id.localeCompare(b.id));
-
-    const highlights: HandoffContextHighlight[] = allSelected.slice(0, 12).map((item) => ({
-      domain: item.domain,
-      idOrPath: item.id,
-      summary: item.title,
-      confidenceTier: item.confidenceTier,
-      evidenceFile: item.evidence[0]?.filePath,
-    }));
-
-    return {
-      contract: "frontier-engineer/retrieval-attachment",
-      version: 1,
-      retrievalId: response.retrievalId,
-      repositoryIdentity: response.repository.repositoryIdentity,
-      scanId: response.snapshot.scanId,
-      snapshotStatus: String(response.snapshot.status),
-      freshnessStatus: response.snapshot.freshness.status,
-      isStale: response.snapshot.freshness.isStale,
-      taskType: response.classification.primaryTaskType,
-      confidenceSummary: response.confidenceSummary,
-      highlights,
-      warnings: response.warnings.slice(0, 8).map((w) => `[${w.code}] ${w.message}`),
-      budget: {
-        includedCount: response.budget.includedCount,
-        truncatedCount: response.budget.truncatedCount,
-        estimatedTokens: response.budget.estimatedTokens,
-      },
-    };
+    return { components, files, symbols, dependencies, tests, decisions, memories, snippets };
   }
 
   private resolveTargetScan(
     repositoryId: number,
     activeScanId: number | null,
     explicitScanId?: number,
+    allowPartialSnapshot = true,
   ): ScanRecord {
     const db = this.connectionManager.getDatabase();
     const scanId = explicitScanId ?? activeScanId;
@@ -969,25 +1395,36 @@ export class RetrievalEngine {
       );
     }
 
-    if (row.status === "FAILED" || row.status === "CANCELLED" || row.status === "RUNNING") {
+    if (
+      row.status === "FAILED" ||
+      row.status === "CANCELLED" ||
+      row.status === "RUNNING" ||
+      row.status === "VALIDATING"
+    ) {
       throw new Error(
         `Repository index snapshot ${scanId} has status '${row.status}' and is unavailable for retrieval.`,
+      );
+    }
+
+    if (row.status === "PARTIAL" && allowPartialSnapshot === false) {
+      throw new Error(
+        `Repository index snapshot ${scanId} has status 'PARTIAL' and allowPartialSnapshot is false.`,
       );
     }
 
     return row;
   }
 
-  private getSingleFileMeta(scanId: number, normalizedPath: string) {
+  private getSingleFileMeta(repositoryId: number, scanId: number, normalizedPath: string) {
     const db = this.connectionManager.getDatabase();
     return db
       .prepare(
         `SELECT
           id, normalized_path AS normalizedPath, language, classification,
           sensitivity_status AS sensitivityStatus, size_bytes AS sizeBytes
-         FROM files WHERE scan_id = ? AND normalized_path = ?`,
+         FROM files WHERE repository_id = ? AND scan_id = ? AND normalized_path = ?`,
       )
-      .get(scanId, normalizedPath) as
+      .get(repositoryId, scanId, normalizedPath) as
       | {
           id: number;
           normalizedPath: string;
@@ -999,21 +1436,56 @@ export class RetrievalEngine {
       | undefined;
   }
 
-  private getFileCounts(
+  private getBatchFileCounts(
+    repositoryId: number,
     scanId: number,
-    fileId: number,
-  ): { exportsCount: number; importsCount: number } {
+    fileIds: number[],
+  ): Map<number, { exportsCount: number; importsCount: number }> {
+    const result = new Map<number, { exportsCount: number; importsCount: number }>();
+    if (fileIds.length === 0) return result;
+
     const db = this.connectionManager.getDatabase();
-    const exp = db
-      .prepare("SELECT COUNT(*) AS count FROM exports WHERE scan_id = ? AND file_id = ?")
-      .get(scanId, fileId) as { count: number };
-    const imp = db
-      .prepare("SELECT COUNT(*) AS count FROM imports WHERE scan_id = ? AND source_file_id = ?")
-      .get(scanId, fileId) as { count: number };
-    return { exportsCount: exp.count, importsCount: imp.count };
+    const chunkSize = 400;
+    for (let offset = 0; offset < fileIds.length; offset += chunkSize) {
+      const chunk = fileIds.slice(offset, offset + chunkSize);
+      const placeholders = chunk.map(() => "?").join(",");
+
+      const expRows = db
+        .prepare(
+          `SELECT file_id AS fileId, COUNT(*) AS count
+           FROM exports
+           WHERE repository_id = ? AND scan_id = ? AND file_id IN (${placeholders})
+           GROUP BY file_id`,
+        )
+        .all(repositoryId, scanId, ...chunk) as Array<{ fileId: number; count: number }>;
+
+      const impRows = db
+        .prepare(
+          `SELECT source_file_id AS fileId, COUNT(*) AS count
+           FROM imports
+           WHERE repository_id = ? AND scan_id = ? AND source_file_id IN (${placeholders})
+           GROUP BY source_file_id`,
+        )
+        .all(repositoryId, scanId, ...chunk) as Array<{ fileId: number; count: number }>;
+
+      for (const id of chunk) {
+        result.set(id, { exportsCount: 0, importsCount: 0 });
+      }
+      for (const r of expRows) {
+        const entry = result.get(r.fileId);
+        if (entry) entry.exportsCount = r.count;
+      }
+      for (const r of impRows) {
+        const entry = result.get(r.fileId);
+        if (entry) entry.importsCount = r.count;
+      }
+    }
+
+    return result;
   }
 
   private selectCandidateFiles(
+    repositoryId: number,
     scanId: number,
     explicitFiles: string[],
     keywords: string[],
@@ -1041,10 +1513,10 @@ export class RetrievalEngine {
           `SELECT id, normalized_path AS normalizedPath, language, classification,
                   sensitivity_status AS sensitivityStatus, size_bytes AS sizeBytes
            FROM files
-           WHERE scan_id = ? AND normalized_path IN (${placeholders})
+           WHERE repository_id = ? AND scan_id = ? AND normalized_path IN (${placeholders})
            ORDER BY normalized_path ASC`,
         )
-        .all(scanId, ...allSeeds) as any[];
+        .all(repositoryId, scanId, ...allSeeds) as any[];
       for (const r of rows) byPath.set(r.normalizedPath, r);
     }
 
@@ -1055,11 +1527,11 @@ export class RetrievalEngine {
           `SELECT id, normalized_path AS normalizedPath, language, classification,
                   sensitivity_status AS sensitivityStatus, size_bytes AS sizeBytes
            FROM files
-           WHERE scan_id = ? AND LOWER(normalized_path) LIKE ?
+           WHERE repository_id = ? AND scan_id = ? AND LOWER(normalized_path) LIKE ?
            ORDER BY normalized_path ASC
            LIMIT ?`,
         )
-        .all(scanId, `%${kw.toLowerCase()}%`, 15) as any[];
+        .all(repositoryId, scanId, `%${kw.toLowerCase()}%`, 15) as any[];
       for (const r of rows) {
         if (!byPath.has(r.normalizedPath)) {
           byPath.set(r.normalizedPath, r);
@@ -1073,11 +1545,11 @@ export class RetrievalEngine {
           `SELECT id, normalized_path AS normalizedPath, language, classification,
                   sensitivity_status AS sensitivityStatus, size_bytes AS sizeBytes
            FROM files
-           WHERE scan_id = ? AND classification IN ('source', 'configuration', 'documentation')
+           WHERE repository_id = ? AND scan_id = ? AND classification IN ('source', 'configuration', 'documentation')
            ORDER BY normalized_path ASC
            LIMIT ?`,
         )
-        .all(scanId, maxCandidates) as any[];
+        .all(repositoryId, scanId, maxCandidates) as any[];
       for (const r of topRows) {
         if (byPath.size >= maxCandidates) break;
         if (!byPath.has(r.normalizedPath)) {
@@ -1090,6 +1562,7 @@ export class RetrievalEngine {
   }
 
   private selectCandidateSymbols(
+    repositoryId: number,
     scanId: number,
     explicitSymbols: string[],
     targetFiles: string[],
@@ -1120,12 +1593,12 @@ export class RetrievalEngine {
                   f.normalized_path AS filePath
            FROM symbols s
            JOIN files f ON f.id = s.file_id
-           WHERE s.scan_id = ? AND f.sensitivity_status = 'SAFE'
+           WHERE s.repository_id = ? AND f.repository_id = ? AND s.scan_id = ? AND f.sensitivity_status = 'SAFE'
              AND (s.name = ? OR s.symbol_identity = ? OR LOWER(s.name) LIKE ?)
            ORDER BY s.is_exported DESC, s.symbol_identity ASC
            LIMIT 15`,
         )
-        .all(scanId, clean, clean, `%${clean.toLowerCase()}%`) as any[];
+        .all(repositoryId, repositoryId, scanId, clean, clean, `%${clean.toLowerCase()}%`) as any[];
       for (const r of rows) byIdentity.set(r.symbolIdentity, r);
     }
 
@@ -1138,12 +1611,12 @@ export class RetrievalEngine {
                   f.normalized_path AS filePath
            FROM symbols s
            JOIN files f ON f.id = s.file_id
-           WHERE s.scan_id = ? AND f.sensitivity_status = 'SAFE'
+           WHERE s.repository_id = ? AND f.repository_id = ? AND s.scan_id = ? AND f.sensitivity_status = 'SAFE'
              AND f.normalized_path IN (${placeholders})
            ORDER BY s.is_exported DESC, s.start_line ASC
            LIMIT ?`,
         )
-        .all(scanId, ...targetFiles, maxCandidates) as any[];
+        .all(repositoryId, repositoryId, scanId, ...targetFiles, maxCandidates) as any[];
       for (const r of rows) {
         if (!byIdentity.has(r.symbolIdentity)) byIdentity.set(r.symbolIdentity, r);
       }
@@ -1159,12 +1632,12 @@ export class RetrievalEngine {
                     f.normalized_path AS filePath
              FROM symbols s
              JOIN files f ON f.id = s.file_id
-             WHERE s.scan_id = ? AND f.sensitivity_status = 'SAFE'
+             WHERE s.repository_id = ? AND f.repository_id = ? AND s.scan_id = ? AND f.sensitivity_status = 'SAFE'
                AND s.is_exported = 1 AND LOWER(s.name) LIKE ?
              ORDER BY s.symbol_identity ASC
              LIMIT 10`,
           )
-          .all(scanId, `%${kw.toLowerCase()}%`) as any[];
+          .all(repositoryId, repositoryId, scanId, `%${kw.toLowerCase()}%`) as any[];
         for (const r of rows) {
           if (!byIdentity.has(r.symbolIdentity)) byIdentity.set(r.symbolIdentity, r);
         }
@@ -1176,12 +1649,14 @@ export class RetrievalEngine {
 
   private findLatestCompletedScanPair(
     repositoryId: number,
+    allowPartial = true,
   ): { baseScanId: number; targetScanId: number } | null {
     const db = this.connectionManager.getDatabase();
+    const statusClause = allowPartial ? "status IN ('COMPLETE', 'PARTIAL')" : "status = 'COMPLETE'";
     const rows = db
       .prepare(
         `SELECT id FROM scan_runs
-         WHERE repository_id = ? AND status IN ('COMPLETE', 'PARTIAL')
+         WHERE repository_id = ? AND ${statusClause}
          ORDER BY id DESC LIMIT 2`,
       )
       .all(repositoryId) as { id: number }[];
@@ -1229,13 +1704,26 @@ export class RetrievalEngine {
     const seen = new Set<string>();
     const result: RetrievalWarning[] = [];
     for (const w of warnings) {
-      const key = `${w.code}:${w.entity ?? ""}:${w.message}`;
+      const sanitizedMsg = ContentSanitizer.sanitizeMetadataText(w.message).text;
+      const sanitizedEntity = w.entity
+        ? ContentSanitizer.sanitizeMetadataText(w.entity).text
+        : undefined;
+      const key = `${w.code}:${sanitizedEntity ?? ""}:${sanitizedMsg}`;
       if (!seen.has(key)) {
         seen.add(key);
-        result.push(w);
+        result.push({
+          ...w,
+          message: sanitizedMsg,
+          ...(sanitizedEntity !== undefined ? { entity: sanitizedEntity } : {}),
+        });
       }
     }
-    result.sort((a, b) => a.code.localeCompare(b.code) || a.message.localeCompare(b.message));
+    result.sort((a, b) => {
+      const prioDiff =
+        RetrievalEngine.getWarningPriority(a) - RetrievalEngine.getWarningPriority(b);
+      if (prioDiff !== 0) return prioDiff;
+      return a.code.localeCompare(b.code) || a.message.localeCompare(b.message);
+    });
     return result;
   }
 

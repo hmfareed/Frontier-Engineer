@@ -184,4 +184,137 @@ describe("CLI Integration: frontier retrieve", () => {
     ]);
     expect(missingScan.status).toBe(4);
   });
+
+  it("enforces contradictory CLI flags, strict integer parsing, prepare-handoff, and validate-handoff commands", async () => {
+    const emptyWs = makeTempDir("fe-cli-ret-empty2-");
+
+    // Contradictory snippet flags
+    expect(
+      runCliProc([
+        "retrieve",
+        "--workspace",
+        emptyWs,
+        "--task",
+        "Check",
+        "--include-snippets",
+        "--no-snippets",
+      ]).status,
+    ).toBe(2);
+
+    // Contradictory partial flags
+    expect(
+      runCliProc([
+        "retrieve",
+        "--workspace",
+        emptyWs,
+        "--task",
+        "Check",
+        "--allow-partial",
+        "--no-allow-partial",
+      ]).status,
+    ).toBe(2);
+
+    // Invalid strict integer
+    expect(
+      runCliProc(["retrieve", "--workspace", emptyWs, "--task", "Check", "--limit", "12abc"])
+        .status,
+    ).toBe(2);
+
+    // Conflicting scan-id + base/target scan pair
+    expect(
+      runCliProc([
+        "retrieve",
+        "--workspace",
+        emptyWs,
+        "--task",
+        "Compare",
+        "--scan-id",
+        "1",
+        "--base-scan-id",
+        "1",
+        "--target-scan-id",
+        "2",
+      ]).status,
+    ).toBe(2);
+
+    // Conflicting --task + positional text
+    expect(
+      runCliProc(["retrieve", "--workspace", emptyWs, "--task", "Inspect", "extra_arg"]).status,
+    ).toBe(2);
+
+    // prepare-handoff on unindexed fails exit 3 cleanly without creating .frontier
+    expect(
+      runCliProc([
+        "prepare-handoff",
+        "--workspace",
+        emptyWs,
+        "--agent",
+        "architect",
+        "--task",
+        "Review arch",
+      ]).status,
+    ).toBe(3);
+    expect(fs.existsSync(path.join(emptyWs, ".frontier"))).toBe(false);
+
+    // prepare-handoff with --allow-unindexed emits valid degraded handoff
+    const degraded = runCliProc([
+      "prepare-handoff",
+      "--workspace",
+      emptyWs,
+      "--agent",
+      "architect",
+      "--task-id",
+      "FE-DEG-1",
+      "--task",
+      "Review arch without index",
+      "--allow-unindexed",
+      "--format",
+      "json",
+    ]);
+    expect(degraded.status).toBe(0);
+    const degradedParsed = JSON.parse(degraded.stdout);
+    expect(degradedParsed.status).toBe("DEGRADED_UNINDEXED");
+    expect(degradedParsed.schemaValidation.handoffValid).toBe(true);
+
+    // prepare-handoff on indexed workspace + validate-handoff round-trip
+    const ws = await seedWorkspace();
+    const readyProc = runCliProc([
+      "prepare-handoff",
+      "--workspace",
+      ws,
+      "--agent",
+      "implementation-engineer",
+      "--task-id",
+      "FE-CLI-100",
+      "--task",
+      "Update runService in src/service.ts",
+      "--file",
+      "src/service.ts",
+      "--max-tokens",
+      "4000",
+      "--format",
+      "text",
+    ]);
+    expect(readyProc.status).toBe(0);
+    expect(readyProc.stdout).toContain("<<<FRONTIER_HANDOFF_JSON>>>");
+
+    const bundleFile = path.join(ws, "delegation-prompt.txt");
+    fs.writeFileSync(bundleFile, readyProc.stdout, "utf8");
+
+    const valOk = runCliProc(["validate-handoff", "--input", bundleFile, "--format", "json"]);
+    expect(valOk.status).toBe(0);
+    const valReport = JSON.parse(valOk.stdout);
+    expect(valReport.valid).toBe(true);
+    expect(valReport.untrustedWarningPresent).toBe(true);
+
+    // Invalid handoff file fails with exit 2
+    const badFile = path.join(ws, "bad-handoff.json");
+    fs.writeFileSync(
+      badFile,
+      JSON.stringify({ contract: "frontier-engineer/handoff", version: 1, extraBadField: true }),
+      "utf8",
+    );
+    expect(runCliProc(["validate-handoff", badFile]).status).toBe(2);
+    expect(runCliProc(["validate-handoff", path.join(ws, "missing.json")]).status).toBe(4);
+  });
 });

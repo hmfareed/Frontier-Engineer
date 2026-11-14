@@ -430,4 +430,222 @@ describe("RetrievalEngine (End-to-End Orchestration, Freshness, Memory & Evoluti
     ).c;
     expect(eventsAfter).toBe(eventsBefore);
   });
+
+  it("enforces conjunctive memory evidence soundness (UNVERIFIED on partial verification) and historical ADR SHA-256 tamper isolation", async () => {
+    const { ws, cm, sm, inventory, extractions } = await buildIndexedRepo();
+    const db = cm.getDatabase();
+    const repo = cm.getRepository();
+
+    // Update ADR row with actual SHA-256 content hash of docs/adr/ADR-001-token-auth.md
+    const adrRel = "docs/adr/ADR-001-token-auth.md";
+    const adrAbs = path.join(ws, adrRel);
+    const adrBytes = fs.readFileSync(adrAbs);
+    const crypto = await import("node:crypto");
+    const adrSha = crypto.createHash("sha256").update(adrBytes).digest("hex");
+
+    // Store ADR with real SHA-256 hash on scan 1
+    db.prepare(
+      "UPDATE files SET content_hash = ? WHERE repository_id = ? AND normalized_path = ?",
+    ).run(adrSha, repo.id, adrRel);
+
+    const activeScan = cm.getRepository().activeScanId!;
+
+    // Memory with 1 VERIFIED evidence + 1 UNVERIFIED evidence (never promoted to VERIFIED)
+    const memStore = new MemoryStore(db);
+    const mixedMem = memStore.createMemory({
+      repositoryId: repo.id,
+      memoryKey: "mixed-ev-mem",
+      category: "architectural_decision",
+      title: "Token verification invariant",
+      content: "Tokens must validate length and issuer.",
+      confidence: 0.9,
+      confidenceTier: "CONFIRMED",
+      firstSeenScanId: activeScan,
+      lastSeenScanId: activeScan,
+    });
+    memStore.addEvidence({
+      repositoryId: repo.id,
+      memoryId: mixedMem.id,
+      scanId: activeScan,
+      evidenceType: "source_file",
+      sourcePath: "src/auth/token.ts",
+      description: "Existing file evidence",
+    });
+    memStore.addEvidence({
+      repositoryId: repo.id,
+      memoryId: mixedMem.id,
+      scanId: activeScan,
+      evidenceType: "manual",
+      sourcePath: "manual",
+      description: "Manual review evidence outside automated static index",
+    });
+
+    // Mutate ADR file on disk after snapshot (tampering live disk relative to indexed SHA-256)
+    fs.writeFileSync(
+      adrAbs,
+      "# ADR-999: Tampered Live Edit\n\n- **Status:** Deprecated\n\nTampered content.",
+      "utf8",
+    );
+
+    const engine = new RetrievalEngine(cm);
+    const res = await engine.retrieve({
+      agentId: "architect",
+      taskSummary: "Review auth ADR-001 and mixed memory",
+      scanId: activeScan,
+    });
+
+    const memOut = res.context.memories.find((m) => m.memoryKey === "mixed-ev-mem");
+    expect(memOut).toBeDefined();
+    expect(memOut?.liveVerificationStatus).toBe("UNVERIFIED");
+    expect(res.warnings.some((w) => w.code === "MEMORY_EVIDENCE_UNVERIFIED")).toBe(true);
+
+    // Tampered live ADR must NOT masquerade as confirmed snapshot content
+    const adrOut = res.context.decisions.find((d) => d.filePath === adrRel);
+    expect(adrOut).toBeDefined();
+    expect(adrOut?.verificationStatus).toBe("DISK_HASH_MISMATCH");
+    expect(adrOut?.isFallback).toBe(true);
+    expect(adrOut?.title).not.toContain("Tampered Live Edit");
+    expect(res.warnings.some((w) => w.code === "ADR_SNAPSHOT_UNVERIFIED")).toBe(true);
+
+    // Silence unused variable warning while testing schema
+    void sm;
+    void inventory;
+    void extractions;
+  });
+
+  it("enforces VALIDATING scan rejection, allowPartialSnapshot=false rejection, identity check, AbortSignal, and explicit includeSnippets for architect/frontier-engineer", async () => {
+    const { ws, cm } = await buildIndexedRepo();
+    const db = cm.getDatabase();
+    const repo = cm.getRepository();
+    const now = new Date().toISOString();
+
+    const validatingScan = Number(
+      db
+        .prepare(
+          `INSERT INTO scan_runs (repository_id, started_at, completed_at, status, files_discovered, files_indexed, files_skipped, files_failed, diagnostic_count, scanner_version, extractor_version, is_active)
+           VALUES (?, ?, ?, 'VALIDATING', 0, 0, 0, 0, 0, '0.6.3', '0.6.3', 0)`,
+        )
+        .run(repo.id, now, null).lastInsertRowid,
+    );
+    const partialScan = Number(
+      db
+        .prepare(
+          `INSERT INTO scan_runs (repository_id, started_at, completed_at, status, files_discovered, files_indexed, files_skipped, files_failed, diagnostic_count, scanner_version, extractor_version, is_active)
+           VALUES (?, ?, ?, 'PARTIAL', 1, 1, 0, 0, 0, '0.6.3', '0.6.3', 0)`,
+        )
+        .run(repo.id, now, now).lastInsertRowid,
+    );
+
+    const engine = new RetrievalEngine(cm);
+
+    await expect(
+      engine.retrieve({
+        agentId: "architect",
+        taskSummary: "Inspect validating scan",
+        scanId: validatingScan,
+      }),
+    ).rejects.toThrow(/VALIDATING/);
+
+    await expect(
+      engine.retrieve({
+        agentId: "architect",
+        taskSummary: "Inspect partial scan strictly",
+        scanId: partialScan,
+        allowPartialSnapshot: false,
+      }),
+    ).rejects.toThrow(/allowPartialSnapshot is false/);
+
+    await expect(
+      engine.retrieve({
+        agentId: "architect",
+        taskSummary: "Wrong identity",
+        expectedRepositoryIdentity: "non-matching-identity",
+      }),
+    ).rejects.toThrow(/Expected repository identity/i);
+
+    const ac = new AbortController();
+    ac.abort(new Error("User cancelled"));
+    await expect(
+      engine.retrieve({
+        agentId: "architect",
+        taskSummary: "Aborted retrieval",
+        signal: ac.signal,
+      }),
+    ).rejects.toThrow(/RETRIEVAL_CANCELLED|cancelled/i);
+
+    // DEFECT-RET-03: explicit includeSnippets: true for architect returns snippets cleanly
+    const withSnippets = await engine.retrieve({
+      agentId: "architect",
+      taskSummary: "Inspect verifyToken implementation in src/auth/token.ts",
+      targetFiles: ["src/auth/token.ts"],
+      includeSnippets: true,
+    });
+    expect(withSnippets.plan.includeSnippets).toBe(true);
+    expect(withSnippets.context.snippets.length).toBeGreaterThan(0);
+
+    // Avoid unused helper warning
+    void ws;
+  });
+
+  it("enforces exact serializedChars envelope budgets, batched SQL queries, and critical warning preservation on handoff overflow", async () => {
+    const { cm } = await buildIndexedRepo();
+    const db = cm.getDatabase();
+
+    const preparedSql: string[] = [];
+    const origPrepare = db.prepare.bind(db);
+    (db as any).prepare = (sql: string) => {
+      preparedSql.push(sql);
+      return origPrepare(sql);
+    };
+
+    const engine = new RetrievalEngine(cm);
+    const res = await engine.retrieve({
+      agentId: "implementation-engineer",
+      taskSummary: "Update verifyToken in src/auth/token.ts",
+      targetFiles: ["src/auth/token.ts"],
+      limits: {
+        maxTotalChars: 3500,
+        maxTokens: 900,
+        maxItems: 20,
+      },
+    });
+    (db as any).prepare = origPrepare;
+
+    const perFileCountQueries = preparedSql.filter(
+      (sql) =>
+        (sql.includes("FROM exports") || sql.includes("FROM imports")) && sql.includes("COUNT("),
+    );
+    expect(perFileCountQueries.length).toBeLessThanOrEqual(4);
+    expect(res.budget.serializedChars).toBe(JSON.stringify(res).length);
+    if (!res.budget.budgetOverflowed) {
+      expect(JSON.stringify(res).length).toBeLessThanOrEqual(3500);
+    }
+
+    // Critical warnings NEVER dropped behind >10 info warnings
+    const overloadedWarningsResponse = {
+      ...res,
+      warnings: [
+        ...Array.from({ length: 12 }, (_, idx) => ({
+          code: "EVOLUTION_UNAVAILABLE" as const,
+          severity: "info" as const,
+          message: `Info notice ${idx}`,
+        })),
+        {
+          code: "PROMPT_INJECTION_SIGNAL" as const,
+          severity: "warning" as const,
+          message: "Prompt injection detected in file snippet.",
+        },
+        {
+          code: "MEMORY_DISPUTED" as const,
+          severity: "error" as const,
+          message: "Active memory #1 is disputed.",
+        },
+      ],
+    };
+    const attachment = RetrievalEngine.buildHandoffAttachment(overloadedWarningsResponse);
+    const joined = attachment.warnings.join("\n");
+    expect(joined).toContain("[PROMPT_INJECTION_SIGNAL]");
+    expect(joined).toContain("[MEMORY_DISPUTED]");
+    expect(joined).toContain("[WARNINGS_OVERFLOW]");
+  });
 });

@@ -26,7 +26,7 @@ Frontmatter fields used by this adapter: `name`, `description`, `mainAgent`, `su
 
 ## Delegation and communication
 
-The coordinator delegates with the verified `invoke_subagent` tool. Subagents start with a clean context, run concurrently, and return a result message to the parent. Inter-agent messages use conversation IDs; nesting is limited to 10 levels. The [handoff contract](../handoff-contract.md) fields are carried in the delegation prompt and parsed from the result message by the coordinator — this is a structured convention, **not** a claim that Antigravity natively validates the contract.
+The coordinator delegates with the verified `invoke_subagent` tool. Subagents start with a clean context, run concurrently, and return a result message to the parent. Inter-agent messages use conversation IDs; nesting is limited to 10 levels. The [handoff contract](../handoff-contract.md) fields are carried in the delegation prompt (optionally serialized as a validated `<<<FRONTIER_HANDOFF_JSON>>>` block via `prepare-handoff` / `prepareDelegationHandoff`, and checked on secrets or malformed blocks by `PreToolUse`) and parsed from the result message by the coordinator — this is a structured convention, **not** a claim that Antigravity natively validates or executes the contract.
 
 `agy plugin validate --strict .` validates manifest and component discovery. Runtime invocation of these agents has **not** been tested; see [known limitations](../../docs/04-AGENT-SPECIFICATIONS.md).
 

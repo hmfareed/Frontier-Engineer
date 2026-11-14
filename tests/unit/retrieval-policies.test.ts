@@ -108,4 +108,34 @@ describe("Agent Retrieval Policies & Configuration Precedence", () => {
     expect(resolved.warnings.some((w) => w.code === "INVALID_WORKSPACE_CONFIG")).toBe(true);
     expect(resolved.effectiveLimits).toEqual(AGENT_RETRIEVAL_POLICIES["qa-engineer"].defaultLimits);
   });
+
+  it("grants a bounded non-zero snippets quota whenever includeSnippets is enabled across every agent (DEFECT-RET-03)", () => {
+    const ws = makeTempWorkspace();
+    for (const id of AGENT_IDS) {
+      const enabled = resolveEffectivePolicy(ws, {
+        agentId: id as AgentId,
+        taskSummary: "Inspect code",
+        includeSnippets: true,
+      });
+      expect(enabled.includeSnippets).toBe(true);
+      expect((enabled.policy.domainQuotas.snippets ?? 0) > 0).toBe(true);
+
+      const disabled = resolveEffectivePolicy(ws, {
+        agentId: id as AgentId,
+        taskSummary: "Inspect code",
+        includeSnippets: false,
+      });
+      expect(disabled.includeSnippets).toBe(false);
+      expect(disabled.policy.domainQuotas.snippets).toBe(0);
+    }
+
+    // Minimum floor alignment with schemas/retrieval-config.schema.json
+    const minClamped = resolveEffectivePolicy(ws, {
+      agentId: "architect",
+      taskSummary: "Tiny budget check",
+      limits: { maxTotalChars: 50, maxTokens: 10 },
+    });
+    expect(minClamped.effectiveLimits.maxTotalChars).toBe(1024);
+    expect(minClamped.effectiveLimits.maxTokens).toBe(256);
+  });
 });

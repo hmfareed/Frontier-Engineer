@@ -87,23 +87,39 @@
         },
         "highlights": {
           "type": "array",
+          "maxItems": 24,
           "items": {
             "type": "object",
             "additionalProperties": false,
             "required": ["domain", "idOrPath", "summary", "confidenceTier"],
             "properties": {
-              "domain": { "type": "string", "minLength": 1 },
-              "idOrPath": { "type": "string", "minLength": 1 },
-              "summary": { "type": "string", "minLength": 1 },
+              "domain": {
+                "type": "string",
+                "enum": [
+                  "overview",
+                  "components",
+                  "files",
+                  "symbols",
+                  "dependencies",
+                  "tests",
+                  "decisions",
+                  "memories",
+                  "evolution",
+                  "snippets"
+                ]
+              },
+              "idOrPath": { "type": "string", "minLength": 1, "maxLength": 512 },
+              "summary": { "type": "string", "minLength": 1, "maxLength": 2000 },
               "confidenceTier": {
                 "type": "string",
                 "enum": ["CONFIRMED", "INFERRED", "CANDIDATE", "UNRESOLVED"]
               },
-              "evidenceFile": { "type": "string" }
+              "evidenceFile": { "type": "string", "maxLength": 512 },
+              "untrustedRepositoryContent": { "type": "boolean" }
             }
           }
         },
-        "warnings": { "type": "array", "items": { "type": "string" } },
+        "warnings": { "type": "array", "maxItems": 32, "items": { "type": "string" } },
         "budget": {
           "type": "object",
           "additionalProperties": false,

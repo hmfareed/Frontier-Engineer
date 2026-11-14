@@ -33,15 +33,28 @@ export class ContextBudgeter {
     policy: AgentRetrievalPolicy,
     baseMetadataChars = 0,
   ): BudgetSelectionResult {
+    // Deduplicate candidate IDs deterministically while preserving ranked order
+    const seenIds = new Set<string>();
+    const uniqueCandidates: AnyRankedItem[] = [];
+    for (const candidate of rankedCandidates) {
+      if (!seenIds.has(candidate.id)) {
+        seenIds.add(candidate.id);
+        uniqueCandidates.push(candidate);
+      }
+    }
+
     const selected: AnyRankedItem[] = [];
     const omitted: AnyRankedItem[] = [];
     const domainCounts = new Map<RetrievalDomain, number>();
 
     let usedChars = baseMetadataChars;
+    const budgetOverflowed =
+      baseMetadataChars > limits.maxTotalChars ||
+      this.estimateTokens(baseMetadataChars) > limits.maxTokens;
 
     // Pass 1: Respect per-domain quotas + item/char/token caps
     const deferred: AnyRankedItem[] = [];
-    for (const candidate of rankedCandidates) {
+    for (const candidate of uniqueCandidates) {
       if (selected.length >= limits.maxItems) {
         omitted.push(candidate);
         continue;
@@ -50,7 +63,12 @@ export class ContextBudgeter {
       const quota = policy.domainQuotas[candidate.domain];
       const currentDomCount = domainCounts.get(candidate.domain) ?? 0;
       if (quota !== undefined && currentDomCount >= quota) {
-        deferred.push(candidate);
+        // Explicit quota === 0 (e.g. snippets disabled) omits immediately instead of deferring
+        if (quota === 0) {
+          omitted.push(candidate);
+        } else {
+          deferred.push(candidate);
+        }
         continue;
       }
 
@@ -74,7 +92,7 @@ export class ContextBudgeter {
         omitted.push(candidate);
         continue;
       }
-      // Never backfill snippets if role quota explicitly set to 0
+      // Never backfill domains whose quota is explicitly set to 0
       if (policy.domainQuotas[candidate.domain] === 0) {
         omitted.push(candidate);
         continue;
@@ -100,12 +118,14 @@ export class ContextBudgeter {
     const budget: BudgetReport = {
       limitsConfigured: limits,
       usedChars,
+      serializedChars: usedChars,
       estimatedTokens: this.estimateTokens(usedChars),
-      totalCandidatesFound: rankedCandidates.length,
+      totalCandidatesFound: uniqueCandidates.length,
       includedCount: selected.length,
       truncatedCount: omitted.length,
       truncatedDomains,
       omittedItemIds: omitted.slice(0, 50).map((i) => i.id),
+      budgetOverflowed,
     };
 
     return {

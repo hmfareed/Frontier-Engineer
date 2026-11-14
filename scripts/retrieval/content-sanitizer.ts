@@ -5,19 +5,42 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { evaluateSensitivePath, scanBufferForSecrets } from "../scanner/sensitive-filter.ts";
+import {
+  evaluateSensitivePath,
+  redactPemPrivateKeys,
+  scanBufferForSecrets,
+} from "../scanner/sensitive-filter.ts";
 
 const HARD_EXCLUDED_SEGMENTS = new Set([".frontier", ".git", ".agents", ".ssh", ".aws", ".gnupg"]);
-const MAX_SNIPPET_FILE_BYTES = 64 * 1024;
+const MAX_SNIPPET_FILE_BYTES = 256 * 1024;
+const PEM_MARKER = "[REDACTED_SECRET:PRIVATE_KEY]";
 
-const EXTRA_SECRET_PATTERNS: Array<{ type: string; regex: RegExp }> = [
+const EXTRA_SECRET_PATTERNS: Array<{
+  type: string;
+  regex: RegExp;
+  replacer?: (...args: string[]) => string;
+}> = [
   {
     type: "BEARER_TOKEN",
     regex: /\bBearer\s+[A-Za-z0-9._\-+/=]{20,}\b/g,
   },
   {
+    type: "DB_PASSWORD",
+    regex: /((?:postgres|postgresql|mysql|mongodb|redis):\/\/[^:\s/]+:)[^@\s/]+(@)/gi,
+    replacer: (_m: string, p1: string, p2: string) => `${p1}[REDACTED_SECRET:DB_PASSWORD]${p2}`,
+  },
+  {
+    type: "SENTRY_TOKEN",
+    regex: /\bsntrys_[A-Za-z0-9]{32,}\b/g,
+  },
+  {
+    type: "STRIPE_KEY",
+    regex: /\b(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{16,}\b/g,
+  },
+  {
     type: "ASSIGNED_SECRET",
-    regex: /\b(?:password|passwd|client_secret|private_key)\s*[:=]\s*['"][^'"]{10,}['"]/gi,
+    regex:
+      /\b(?:password|passwd|client_secret|private_key|access_token|auth_token|jwt_secret|secret_key|api_secret)\s*[:=]\s*(?:(['"])([^\r\n'"]{8,})\1|([A-Za-z0-9+/_=-]{16,}))/gi,
   },
 ];
 
@@ -29,7 +52,8 @@ const INJECTION_SIGNAL_PATTERNS: Array<{ label: string; regex: RegExp }> = [
   },
   {
     label: "system_prompt_spoof",
-    regex: /(?:<\|?system\|?>|^\s*SYSTEM\s*:|^\s*DEVELOPER\s*:)/im,
+    regex:
+      /(?:<\|?(?:system|assistant|developer|im_start)\|?>|<<SYS>>|\[INST\]|^\s*(?:SYSTEM|DEVELOPER|ASSISTANT)\s*:)/im,
   },
   {
     label: "tool_invocation_spoof",
@@ -40,6 +64,7 @@ const INJECTION_SIGNAL_PATTERNS: Array<{ label: string; regex: RegExp }> = [
 export interface SanitizedTextResult {
   text: string;
   fencedText: string;
+  inlineFencedText: string;
   redacted: boolean;
   redactionCount: number;
   promptInjectionDetected: boolean;
@@ -106,13 +131,15 @@ export class ContentSanitizer {
     rawText: string,
     label = "repo_content",
   ): SanitizedTextResult {
-    // 1. Strip dangerous non-printable control characters while retaining newline/tab
-    let clean = rawText.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "");
+    // 1. Strip dangerous non-printable control & BiDi override characters while retaining newline/tab
+    let clean = rawText
+      .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, "")
+      .replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF]/g, "");
 
     // 2. Neutralize any fence breakout sequences
     clean = clean
-      .replace(/<<<UNTRUSTED_REPO_CONTENT/g, "[ESCAPED_OPEN_FENCE]")
-      .replace(/<<<END_UNTRUSTED_REPO_CONTENT>>>/g, "[ESCAPED_CLOSE_FENCE]");
+      .replace(/<<<UNTRUSTED_REPO_CONTENT/gi, "[ESCAPED_OPEN_FENCE]")
+      .replace(/<<<END_UNTRUSTED_REPO_CONTENT>>>/gi, "[ESCAPED_CLOSE_FENCE]");
 
     // 3. Apply Frontier secret scanner + additive inline secret checks
     const primaryScan = scanBufferForSecrets(Buffer.from(clean, "utf8"));
@@ -124,7 +151,9 @@ export class ContentSanitizer {
       if (extra.regex.test(redactedText)) {
         redactionCount++;
         extra.regex.lastIndex = 0;
-        redactedText = redactedText.replace(extra.regex, `[REDACTED_SECRET:${extra.type}]`);
+        redactedText = extra.replacer
+          ? redactedText.replace(extra.regex, extra.replacer)
+          : redactedText.replace(extra.regex, `[REDACTED_SECRET:${extra.type}]`);
       }
     }
 
@@ -136,19 +165,42 @@ export class ContentSanitizer {
       }
     }
 
+    const safeLabel = label.replace(/[\r\n"<>\\]/g, "_");
     const fencedText = [
-      `<<<UNTRUSTED_REPO_CONTENT source="${label}" trust="untrusted_data">>>`,
+      `<<<UNTRUSTED_REPO_CONTENT source="${safeLabel}" trust="untrusted_data">>>`,
       redactedText,
       "<<<END_UNTRUSTED_REPO_CONTENT>>>",
     ].join("\n");
 
+    const singleLineBody = redactedText.replace(/\s+/g, " ").trim();
+    const inlineFencedText = `<<<UNTRUSTED_REPO_CONTENT source="${safeLabel}" trust="untrusted_data">>> ${singleLineBody} <<<END_UNTRUSTED_REPO_CONTENT>>>`;
+
     return {
       text: redactedText,
       fencedText,
+      inlineFencedText,
       redacted: redactionCount > 0,
       redactionCount,
       promptInjectionDetected: injectionLabels.length > 0,
       injectionLabels,
+    };
+  }
+
+  /**
+   * Sanitizes deterministic metadata labels (file paths, symbol names, warning messages)
+   * without wrapping them in multi-line fences, ensuring no control characters, BiDi overrides,
+   * secrets, or spoofed delimiter tags survive.
+   */
+  public static sanitizeMetadataText(rawText: string): {
+    text: string;
+    redacted: boolean;
+    promptInjectionDetected: boolean;
+  } {
+    const res = this.sanitizeUntrustedText(rawText, "metadata");
+    return {
+      text: res.text.replace(/[\r\n]+/g, " ").trim(),
+      redacted: res.redacted,
+      promptInjectionDetected: res.promptInjectionDetected,
     };
   }
 
@@ -230,35 +282,65 @@ export class ContentSanitizer {
     endLine?: number,
     maxLines = 40,
   ): SafeSnippetReadResult {
-    const allLines = rawText.split(/\r?\n/);
+    // Redact complete & mid-block PEM private keys across the full buffer BEFORE slicing lines
+    // so mid-block slices without visible BEGIN/END headers never leak base64 key material.
+    const fullPemScan = redactPemPrivateKeys(rawText, PEM_MARKER, { preserveLineCount: true });
+    const allLines = fullPemScan.redactedText.split(/\r?\n/);
     const total = allLines.length;
     if (total === 0) {
       return {
         allowed: true,
         content: "",
         lineRange: [1, 1],
-        redacted: false,
-        redactionCount: 0,
+        redacted: fullPemScan.detected,
+        redactionCount: fullPemScan.redactionCount,
         promptInjectionDetected: false,
         injectionLabels: [],
       };
     }
 
     const from = Math.max(1, startLine ?? 1);
+    if (from > total) {
+      return {
+        allowed: false,
+        reason: "LINE_RANGE_OUT_OF_BOUNDS",
+        redacted: fullPemScan.detected,
+        redactionCount: fullPemScan.redactionCount,
+        promptInjectionDetected: false,
+        injectionLabels: [],
+      };
+    }
     const boundedMax = Math.max(1, maxLines);
     const to = Math.min(
       total,
       endLine ? Math.min(endLine, from + boundedMax - 1) : from + boundedMax - 1,
     );
-    const sliced = allLines.slice(from - 1, to).join("\n");
 
+    const slicedLines = allLines.slice(from - 1, to);
+    let sliceContainedPreRedactedPem = false;
+    const collapsedLines: string[] = [];
+    for (const line of slicedLines) {
+      if (line.trim() === PEM_MARKER) {
+        sliceContainedPreRedactedPem = true;
+        if (collapsedLines.length > 0 && collapsedLines[collapsedLines.length - 1] === line) {
+          continue;
+        }
+      }
+      collapsedLines.push(line);
+    }
+
+    const sliced = collapsedLines.join("\n");
     const sanitized = this.sanitizeUntrustedText(sliced, `${filePath}:${from}-${to}`);
+    const wasRedacted = sanitized.redacted || sliceContainedPreRedactedPem;
+    const totalRedactions =
+      sanitized.redactionCount + (sliceContainedPreRedactedPem && !sanitized.redacted ? 1 : 0);
+
     return {
       allowed: true,
       content: sanitized.fencedText,
       lineRange: [from, to],
-      redacted: sanitized.redacted,
-      redactionCount: sanitized.redactionCount,
+      redacted: wasRedacted,
+      redactionCount: totalRedactions,
       promptInjectionDetected: sanitized.promptInjectionDetected,
       injectionLabels: sanitized.injectionLabels,
     };

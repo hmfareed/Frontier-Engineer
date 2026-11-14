@@ -251,6 +251,16 @@ npm run frontier -- memory <memory_key_or_id> [--format text|json]
 - **Workspace Repository Ownership:** `compare`, `evolution`, `drift`, `debt`, `memories --scan-id <id>`, and `memory <id>` validate `expectedRepositoryId` against the resolved workspace repository before evaluating or persisting data. Foreign scan IDs exit with code `2`, foreign memory IDs exit with code `4` (without leaking `memory_versions` across repositories), and rejected invocations perform zero workspace database mutations even when `--persist-events` or `--apply-lifecycle` is supplied.
 - All commands accept `--scan-id <id>` to target an explicit historical scan (and `memories`/`memory` preserve full repository-scoped version lookup).
 
+#### Agent Retrieval & Orchestration Commands (Phase 7.6)
+
+```bash
+npm run frontier -- retrieve --agent <agent-id> --task "<summary>" [--file <path>] [--max-chars <n>] [--max-tokens <n>] [--format text|json]
+npm run frontier -- prepare-handoff --agent <target-agent> --task-id <id> --task "<summary>" [--allow-unindexed] [--format text|json]
+npm run frontier -- validate-handoff [--input <path>] [<path>] [--format text|json]
+```
+
+- `retrieve` and `prepare-handoff` validate positive integers strictly, reject mutually exclusive options (`--include-snippets` with `--no-snippets`, `--allow-partial` with `--no-allow-partial`, `--scan-id` with `--base-scan-id`/`--target-scan-id`, `--task` with extra positional arguments), and never create `.frontier/` on unindexed workspaces. See [Agent Retrieval & Orchestration](40-AGENT-RETRIEVAL-ORCHESTRATION.md).
+
 ### 3.2 Output Formats
 
 - **Terminal Output (`--format text`, default):** Human-readable, structured layout with status badges, aligned tables, dependency trees, and truncation indicators. Displays `[PARTIAL SNAPSHOT]` warning banner when inspecting partial snapshots.

@@ -142,9 +142,9 @@ export class ArchitectureAnalyzer implements ArchitectureIntelligenceInterface {
         scanId: resolvedScanId,
         category: "architecture_decision",
         subjectEntity: adr.adrId,
-        status: "CONFIRMED",
+        status: adr.isFallback ? "INFERRED" : "CONFIRMED",
         confidence: adr.confidence,
-        detectionMethod: "adr_markdown_provenance",
+        detectionMethod: adr.isFallback ? "adr_snapshot_fallback" : "adr_markdown_provenance",
         evidenceDescription: adr.evidenceDescription,
         relevantFilePaths: [adr.filePath],
       });
@@ -223,9 +223,13 @@ export class ArchitectureAnalyzer implements ArchitectureIntelligenceInterface {
     return TestAssociationEngine.associate(this.db, repositoryId, resolvedScanId);
   }
 
-  public async getDecisions(repositoryId: number, scanId?: number): Promise<AdrFinding[]> {
+  public async getDecisions(
+    repositoryId: number,
+    scanId?: number,
+    options?: { requireSha256?: boolean },
+  ): Promise<AdrFinding[]> {
     const { resolvedScanId, rootPath } = this.resolveScanIdAndRoot(repositoryId, scanId);
-    return AdrDetector.detect(this.db, repositoryId, resolvedScanId, rootPath);
+    return AdrDetector.detect(this.db, repositoryId, resolvedScanId, rootPath, options);
   }
 
   public async getCycles(

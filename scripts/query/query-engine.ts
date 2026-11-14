@@ -1078,9 +1078,13 @@ export class ArchitectureQueryEngine {
   }
 
   // 12. Decisions (ADRs)
-  public async getDecisions(options: QueryOptions = {}): Promise<QueryResult<DecisionListData>> {
+  public async getDecisions(
+    options: QueryOptions & { requireSha256?: boolean } = {},
+  ): Promise<QueryResult<DecisionListData>> {
     const { scanId } = this.resolveScanId(options.scanId);
-    const decisions = await this.architectureAnalyzer.getDecisions(this.repository.id, scanId);
+    const decisions = await this.architectureAnalyzer.getDecisions(this.repository.id, scanId, {
+      requireSha256: options.requireSha256,
+    });
 
     const limit = options.limit ?? 50;
     const paged = decisions.slice(0, limit);
@@ -1091,10 +1095,26 @@ export class ArchitectureQueryEngine {
       totalCount: decisions.length,
     };
 
+    const unverifiedAdrs = paged.filter(
+      (d) =>
+        d.isFallback ||
+        (d.verificationStatus !== undefined &&
+          d.verificationStatus !== "CONFIRMED" &&
+          d.verificationStatus !== "SNAPSHOT_METADATA" &&
+          d.verificationStatus !== "LEGACY_ACTIVE_MOCK"),
+    );
+
+    const warnings: string[] = [];
+    if (unverifiedAdrs.length > 0) {
+      warnings.push(
+        `Warning: ${unverifiedAdrs.length} ADR(s) in scan ${scanId} could not be SHA-256 verified against disk (fallback metadata returned).`,
+      );
+    }
+
     const evidence: QueryEvidence[] = paged.map((d) => ({
       file: d.filePath,
       description: d.evidenceDescription,
-      evidenceType: "adr_document",
+      evidenceType: d.isFallback ? "adr_snapshot_fallback" : "adr_document",
       confidence: d.confidence,
     }));
 
@@ -1103,7 +1123,9 @@ export class ArchitectureQueryEngine {
       scanId,
       data,
       evidence,
-      confidence: "CONFIRMED",
+      confidence: unverifiedAdrs.length > 0 ? "INFERRED" : "CONFIRMED",
+      isMixedConfidence: unverifiedAdrs.length > 0 && unverifiedAdrs.length < paged.length,
+      warnings,
       limits: {
         resultLimit: limit,
         truncated,
@@ -1114,10 +1136,12 @@ export class ArchitectureQueryEngine {
   // 13. Decision Detail
   public async getDecision(
     id: string,
-    options: QueryOptions = {},
+    options: QueryOptions & { requireSha256?: boolean } = {},
   ): Promise<QueryResult<DecisionDetailData>> {
     const { scanId } = this.resolveScanId(options.scanId);
-    const decisions = await this.architectureAnalyzer.getDecisions(this.repository.id, scanId);
+    const decisions = await this.architectureAnalyzer.getDecisions(this.repository.id, scanId, {
+      requireSha256: options.requireSha256,
+    });
 
     const norm = id.trim().toLowerCase().replace(/^adr:/, "");
     const match = decisions.find(
@@ -1146,11 +1170,25 @@ export class ArchitectureQueryEngine {
       governedComponents: governed,
     };
 
+    const isUnverified =
+      match.isFallback ||
+      (match.verificationStatus !== undefined &&
+        match.verificationStatus !== "CONFIRMED" &&
+        match.verificationStatus !== "SNAPSHOT_METADATA" &&
+        match.verificationStatus !== "LEGACY_ACTIVE_MOCK");
+
+    const warnings: string[] = [];
+    if (isUnverified) {
+      warnings.push(
+        `Warning: ADR '${match.adrId}' in scan ${scanId} could not be SHA-256 verified against disk (fallback metadata returned).`,
+      );
+    }
+
     const evidence: QueryEvidence[] = [
       {
         file: match.filePath,
         description: match.evidenceDescription,
-        evidenceType: "adr_document",
+        evidenceType: match.isFallback ? "adr_snapshot_fallback" : "adr_document",
         confidence: match.confidence,
       },
     ];
@@ -1161,7 +1199,8 @@ export class ArchitectureQueryEngine {
       scanId,
       data,
       evidence,
-      confidence: "CONFIRMED",
+      confidence: isUnverified ? "INFERRED" : "CONFIRMED",
+      warnings,
     });
   }
 

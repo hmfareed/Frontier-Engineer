@@ -15,6 +15,7 @@ import type {
   MemoryLifecycleStatus,
 } from "../storage/types.ts";
 import type { MemoryLiveStatus, RetrievalWarning, UnifiedEvidenceRef } from "./types.ts";
+import { ContentSanitizer } from "./content-sanitizer.ts";
 
 export interface UnifiedMemoryEvaluation {
   record: EngineeringMemoryRecord;
@@ -113,20 +114,30 @@ export class EvidenceUnifier {
       const rawEvidence = store.getMemoryEvidence(params.repositoryId, mem.id);
       const evaluation = evaluationsById.get(mem.id) ?? null;
       const liveStatus = this.deriveLiveStatus(mem.status, evaluation);
+      const safeReason = evaluation?.reason
+        ? ContentSanitizer.sanitizeMetadataText(evaluation.reason).text
+        : undefined;
 
-      if (params.surfaceWarnings) {
+      if (params.surfaceWarnings && !isHistorical) {
         if (liveStatus === "DISPUTED") {
           warnings.push({
             code: "MEMORY_DISPUTED",
             severity: "warning",
-            message: `Engineering memory '${mem.memoryKey}' is DISPUTED by contradictory evidence (${evaluation?.reason ?? mem.title}).`,
+            message: `Engineering memory '${mem.memoryKey}' is DISPUTED by contradictory evidence (${safeReason ?? "contradictory repository evidence detected"}).`,
             entity: mem.memoryKey,
           });
         } else if (liveStatus === "STALE" || liveStatus === "MISSING") {
           warnings.push({
             code: "MEMORY_STALE",
             severity: "warning",
-            message: `Engineering memory '${mem.memoryKey}' may be STALE against scan ${params.scanId}: ${evaluation?.reason ?? "evidence drift detected"}.`,
+            message: `Engineering memory '${mem.memoryKey}' may be ${liveStatus} against scan ${params.scanId}: ${safeReason ?? "evidence drift detected"}.`,
+            entity: mem.memoryKey,
+          });
+        } else if (liveStatus === "UNVERIFIED") {
+          warnings.push({
+            code: "MEMORY_EVIDENCE_UNVERIFIED",
+            severity: "warning",
+            message: `Engineering memory '${mem.memoryKey}' could not be positively verified against scan ${params.scanId} (${safeReason ?? "unverified or incomplete supporting evidence"}).`,
             entity: mem.memoryKey,
           });
         }
@@ -138,6 +149,9 @@ export class EvidenceUnifier {
 
       const evidenceRefs: UnifiedEvidenceRef[] = rawEvidence.map((ev) => {
         const evalItem = evalByEvId.get(ev.id);
+        const safeDesc = ContentSanitizer.sanitizeMetadataText(
+          evalItem?.reason ?? ev.description ?? "",
+        ).text;
         return {
           sourceType: `memory_${ev.evidenceType}`,
           filePath: ev.sourcePath,
@@ -146,7 +160,7 @@ export class EvidenceUnifier {
           confidence: ev.confidence,
           confidenceTier: this.normalizeConfidenceTier(mem.confidenceTier),
           verificationStatus: evalItem?.status ?? "UNVERIFIED",
-          description: evalItem?.reason ?? ev.description,
+          description: safeDesc,
         };
       });
 
@@ -180,7 +194,8 @@ export class EvidenceUnifier {
     }
     if (evaluation.missingCount > 0) return "MISSING";
     if (evaluation.proposedStatus === "STALE") return "STALE";
-    if (evaluation.unverifiedCount > 0 && evaluation.verifiedCount === 0) return "UNVERIFIED";
+    // Conjunctive evidence soundness: any unverified item bars VERIFIED status.
+    if (evaluation.unverifiedCount > 0) return "UNVERIFIED";
     if (evaluation.verifiedCount > 0) return "VERIFIED";
     if (storedStatus === "STALE") return "STALE";
     if (storedStatus === "DISPUTED") return "DISPUTED";

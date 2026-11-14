@@ -12,3 +12,5 @@ export * from "./relevance-ranker.ts";
 export * from "./context-budgeter.ts";
 export * from "./retrieval-engine.ts";
 export * from "./retrieval-formatter.ts";
+export * from "./schema-validator.ts";
+export * from "./orchestrator.ts";

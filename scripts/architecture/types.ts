@@ -73,6 +73,15 @@ export interface TestAssociation {
   evidenceDescription: string;
 }
 
+export type AdrVerificationStatus =
+  | "CONFIRMED"
+  | "SNAPSHOT_METADATA"
+  | "DISK_HASH_MISMATCH"
+  | "DISK_FILE_MISSING"
+  | "MISSING_CONTENT_HASH"
+  | "UNVERIFIED_HASH"
+  | "LEGACY_ACTIVE_MOCK";
+
 export interface AdrFinding {
   adrId: string;
   number: number;
@@ -85,6 +94,9 @@ export interface AdrFinding {
   relatedDocuments: string[];
   evidenceDescription: string;
   confidence: number;
+  verificationStatus?: AdrVerificationStatus;
+  snapshotHash?: string | null;
+  isFallback?: boolean;
 }
 
 export interface ArchitectureAnalysisResult {
@@ -109,6 +121,10 @@ export interface ArchitectureIntelligenceInterface {
     options?: { fanoutThreshold?: number },
   ): Promise<ArchitectureDependencyReport>;
   getTestAssociations(repositoryId: number, scanId?: number): Promise<TestAssociation[]>;
-  getDecisions(repositoryId: number, scanId?: number): Promise<AdrFinding[]>;
+  getDecisions(
+    repositoryId: number,
+    scanId?: number,
+    options?: { requireSha256?: boolean },
+  ): Promise<AdrFinding[]>;
   getCycles(repositoryId: number, scanId?: number): Promise<CircularDependencyCandidate[]>;
 }

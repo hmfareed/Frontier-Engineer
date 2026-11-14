@@ -115,6 +115,12 @@ const TASK_PATTERNS: Array<{ taskType: TaskType; regex: RegExp; weight: number }
     weight: 2,
   },
   {
+    taskType: "database_change",
+    regex:
+      /\b(database|sql|sqlite|postgres(?:ql)?|mysql|db\s+schema|schema\s+migration|database\s+migration|foreign\s+key|composite\s+index|transaction)\b/i,
+    weight: 4,
+  },
+  {
     taskType: "feature_implementation",
     regex:
       /\b(implement\w*|build|creat\w*|update|modify|extend|add\s+(?:a|an|new|support)|develop|integrat\w*|endpoint|feature|cli\s+command)\b/i,
@@ -170,14 +176,64 @@ export class TaskClassifier {
     );
 
     let primaryTaskType: TaskType;
+    let confidenceTier: "CONFIRMED" | "INFERRED" | "CANDIDATE" | "UNRESOLVED" = "CONFIRMED";
+    let confidenceScore = 1.0;
+    let isAmbiguous = false;
+
+    const hasAnyTarget =
+      extractedTargets.files.length > 0 ||
+      extractedTargets.symbols.length > 0 ||
+      extractedTargets.components.length > 0 ||
+      extractedTargets.adrs.length > 0 ||
+      (extractedTargets.baseScanId !== undefined && extractedTargets.targetScanId !== undefined);
+
     if (request.taskType) {
       primaryTaskType = request.taskType;
+      confidenceTier = "CONFIRMED";
+      confidenceScore = 1.0;
       signals.unshift(`explicit override: ${request.taskType}`);
     } else if (sortedTypes.length > 0) {
       primaryTaskType = sortedTypes[0][0];
+      const topScore = sortedTypes[0][1];
+      const runnerUpScore = sortedTypes.length > 1 ? sortedTypes[1][1] : 0;
+      const gap = topScore - runnerUpScore;
+
+      if (sortedTypes.length > 1 && gap <= 1) {
+        isAmbiguous = true;
+        confidenceTier = "CANDIDATE";
+        confidenceScore = 0.55;
+        signals.push(
+          `ambiguous_classification: top intents close (${sortedTypes[0][0]}=${topScore} vs ${sortedTypes[1][0]}=${runnerUpScore})`,
+        );
+      } else if (gap <= 3 || topScore < 4) {
+        confidenceTier = "INFERRED";
+        confidenceScore = 0.75;
+      } else {
+        confidenceTier = "CONFIRMED";
+        confidenceScore = Math.min(0.98, Number((0.78 + Math.min(topScore, 10) * 0.02).toFixed(2)));
+      }
     } else {
       primaryTaskType = "general_inspection";
-      signals.push("default fallback: general_inspection");
+      const explicitOverviewMatch =
+        /\b(overview|summarize|summary|orientation|structure|architecture\s+status|codebase\s+layout)\b/i.test(
+          intentText,
+        );
+      if (explicitOverviewMatch) {
+        confidenceTier = "INFERRED";
+        confidenceScore = 0.72;
+        signals.push("explicit overview/orientation inquiry: general_inspection");
+      } else {
+        isAmbiguous = true;
+        signals.push("default fallback: general_inspection");
+        if (!hasAnyTarget && extractedTargets.keywords.length === 0) {
+          confidenceTier = "UNRESOLVED";
+          confidenceScore = 0.15;
+          signals.push("unrecognized_or_nonlexical_input");
+        } else {
+          confidenceTier = hasAnyTarget ? "INFERRED" : "CANDIDATE";
+          confidenceScore = hasAnyTarget ? 0.6 : 0.3;
+        }
+      }
     }
 
     const intents: TaskType[] = [primaryTaskType];
@@ -190,6 +246,9 @@ export class TaskClassifier {
     return {
       primaryTaskType,
       intents,
+      confidenceTier,
+      confidenceScore,
+      isAmbiguous,
       extractedTargets,
       classificationSignals: signals,
     };

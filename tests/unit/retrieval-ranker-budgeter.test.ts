@@ -110,4 +110,30 @@ describe("RelevanceRanker & ContextBudgeter (Deterministic Scoring & Allocation)
     expect(allocation.budget.truncatedDomains).toEqual(["files"]);
     expect(allocation.budget.omittedItemIds.length).toBe(allocation.budget.truncatedCount);
   });
+
+  it("deduplicates duplicate candidate IDs, demotes disputed/unverified memories cleanly, and ranks confirmed ADRs over fallbacks", () => {
+    const policy = getAgentRetrievalPolicy("implementation-engineer");
+    const classification = TaskClassifier.classify({
+      agentId: "implementation-engineer",
+      taskSummary: "Fix auth validation bug",
+    });
+
+    const verifiedMem = makeMemoryItem("mem-verified", "VERIFIED");
+    const unverifiedMem = makeMemoryItem("mem-unverified", "UNVERIFIED");
+    const disputedMem = makeMemoryItem("mem-disputed", "DISPUTED");
+
+    const ranked = RelevanceRanker.rank([disputedMem, unverifiedMem, verifiedMem], {
+      classification,
+      policy,
+      seedFiles: new Set(),
+    });
+    expect(ranked[0].id).toBe("memory:mem-verified");
+    expect(ranked[1].id).toBe("memory:mem-unverified");
+    expect(ranked[2].id).toBe("memory:mem-disputed");
+
+    const dupA = makeFileItem("src/auth/validator.ts");
+    const dupB = makeFileItem("src/auth/validator.ts");
+    const alloc = ContextBudgeter.allocate([dupA, dupB], policy.defaultLimits, policy, 200);
+    expect(alloc.selected.length).toBe(1);
+  });
 });

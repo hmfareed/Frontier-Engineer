@@ -18,6 +18,15 @@ const TASK_DOMAIN_BOOSTS: Record<TaskType, RetrievalDomain[]> = {
   feature_implementation: ["files", "symbols", "dependencies", "tests", "snippets", "memories"],
   bug_fix: ["files", "symbols", "dependencies", "tests", "snippets", "memories"],
   refactoring: ["dependencies", "components", "files", "symbols", "tests", "decisions"],
+  database_change: [
+    "components",
+    "files",
+    "symbols",
+    "decisions",
+    "dependencies",
+    "memories",
+    "tests",
+  ],
   security_audit: ["components", "dependencies", "files", "decisions", "memories", "snippets"],
   test_generation: ["tests", "files", "symbols", "components", "memories"],
   ui_ux_work: ["components", "files", "symbols", "snippets", "decisions", "tests"],
@@ -47,23 +56,45 @@ export class RetrievalPlanner {
       (request.baseScanId ?? classification.extractedTargets.baseScanId) !== undefined &&
       (request.targetScanId ?? classification.extractedTargets.targetScanId) !== undefined;
 
+    const isLowSignalFallback =
+      classification.confidenceTier === "UNRESOLVED" ||
+      (classification.isAmbiguous === true &&
+        !hasTargetFiles &&
+        !hasTargetSymbols &&
+        !hasTargetComponents &&
+        !hasTargetAdrs &&
+        !hasEvolutionPair);
+
     const candidates = new Set<RetrievalDomain>(priorityDomains);
-    // Always include core orientation + target-matching domains
-    candidates.add("components");
-    candidates.add("files");
-    candidates.add("memories");
-    candidates.add("decisions");
-    if (hasTargetSymbols || classification.primaryTaskType !== "documentation") {
-      candidates.add("symbols");
-    }
-    if (hasTargetFiles || hasTargetComponents || taskBoosts.has("dependencies")) {
-      candidates.add("dependencies");
-    }
-    if (taskBoosts.has("tests") || hasTargetFiles || hasTargetComponents) {
-      candidates.add("tests");
-    }
-    if (hasEvolutionPair || classification.intents.includes("evolution_review")) {
-      candidates.add("evolution");
+    // Keep low-signal/unintelligible fallback plans tightly bounded to orientation + core governance domains
+    if (isLowSignalFallback) {
+      for (const dom of Array.from(candidates)) {
+        if (!["overview", "components", "decisions", "memories", "files"].includes(dom)) {
+          candidates.delete(dom);
+        }
+      }
+      candidates.add("overview");
+      candidates.add("components");
+      candidates.add("decisions");
+      candidates.add("memories");
+    } else {
+      // Always include core orientation + target-matching domains
+      candidates.add("components");
+      candidates.add("files");
+      candidates.add("memories");
+      candidates.add("decisions");
+      if (hasTargetSymbols || classification.primaryTaskType !== "documentation") {
+        candidates.add("symbols");
+      }
+      if (hasTargetFiles || hasTargetComponents || taskBoosts.has("dependencies")) {
+        candidates.add("dependencies");
+      }
+      if (taskBoosts.has("tests") || hasTargetFiles || hasTargetComponents) {
+        candidates.add("tests");
+      }
+      if (hasEvolutionPair || classification.intents.includes("evolution_review")) {
+        candidates.add("evolution");
+      }
     }
     if (!includeSnippets) {
       candidates.delete("snippets");

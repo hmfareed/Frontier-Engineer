@@ -88,4 +88,37 @@ describe("TaskClassifier (Deterministic Intent & Target Extraction)", () => {
     expect(res.primaryTaskType).toBe("general_inspection");
     expect(res.classificationSignals).toContain("default fallback: general_inspection");
   });
+
+  it("classifies database schema/migration tasks and emits deterministic confidence & ambiguity signals", () => {
+    const dbTask = TaskClassifier.classify({
+      agentId: "architect",
+      taskSummary:
+        "Design zero-downtime SQLite schema migration and composite index in migrations/",
+    });
+    expect(dbTask.primaryTaskType).toBe("database_change");
+    expect(dbTask.confidenceTier).toBe("CONFIRMED");
+    expect((dbTask.confidenceScore ?? 0) > 0.6).toBe(true);
+    expect(dbTask.isAmbiguous).toBe(false);
+
+    const balanced = TaskClassifier.classify({
+      agentId: "frontier-engineer",
+      taskSummary: "Refactor helper and write tests",
+    });
+    expect(balanced.intents.length).toBeGreaterThanOrEqual(2);
+    expect(balanced.isAmbiguous).toBe(true);
+
+    const gibberish = TaskClassifier.classify({
+      agentId: "frontier-engineer",
+      taskSummary: "xyzzy plugh qqqq",
+    });
+    expect(gibberish.primaryTaskType).toBe("general_inspection");
+    expect(gibberish.confidenceTier).toBe("CANDIDATE");
+
+    const nonLexical = TaskClassifier.classify({
+      agentId: "frontier-engineer",
+      taskSummary: "??? ... !!",
+    });
+    expect(nonLexical.primaryTaskType).toBe("general_inspection");
+    expect(nonLexical.confidenceTier).toBe("UNRESOLVED");
+  });
 });

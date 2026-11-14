@@ -54,13 +54,22 @@
         "targetScanId": { "type": "integer", "minimum": 1 },
         "freshness": {
           "type": "object",
-          "additionalProperties": true,
+          "additionalProperties": false,
           "required": ["status", "isStale", "isPartial"],
           "properties": {
-            "status": { "type": "string" },
+            "status": {
+              "type": "string",
+              "enum": ["FRESH", "COMPLETE", "PARTIAL", "STALE", "FAILED", "NONE"]
+            },
+            "lastIndexedAt": { "type": ["string", "null"] },
             "isStale": { "type": "boolean" },
+            "staleReason": { "type": "string" },
+            "activeScanId": { "type": ["integer", "null"] },
             "isPartial": { "type": "boolean" },
-            "staleReason": { "type": "string" }
+            "checkedFilesCount": { "type": "integer", "minimum": 0 },
+            "strategy": { "type": "string", "enum": ["INVENTORY_METADATA", "CONTENT_HASH"] },
+            "disclosures": { "type": "array", "items": { "type": "string" } },
+            "limitations": { "type": "array", "items": { "type": "string" } }
           }
         }
       }
@@ -82,22 +91,11 @@
       "additionalProperties": false,
       "required": ["primaryTaskType", "intents", "extractedTargets", "classificationSignals"],
       "properties": {
-        "primaryTaskType": {
-          "type": "string",
-          "enum": [
-            "architecture_design",
-            "feature_implementation",
-            "bug_fix",
-            "refactoring",
-            "security_audit",
-            "test_generation",
-            "ui_ux_work",
-            "documentation",
-            "evolution_review",
-            "general_inspection"
-          ]
-        },
-        "intents": { "type": "array", "items": { "type": "string" } },
+        "primaryTaskType": { "$ref": "#/definitions/taskType" },
+        "intents": { "type": "array", "items": { "$ref": "#/definitions/taskType" } },
+        "confidenceTier": { "$ref": "#/definitions/confidenceTier" },
+        "confidenceScore": { "type": "number", "minimum": 0, "maximum": 1 },
+        "isAmbiguous": { "type": "boolean" },
         "extractedTargets": {
           "type": "object",
           "additionalProperties": false,
@@ -135,7 +133,7 @@
             "additionalProperties": false,
             "required": ["domain", "priority", "reason", "maxItems", "depth"],
             "properties": {
-              "domain": { "type": "string" },
+              "domain": { "$ref": "#/definitions/retrievalDomain" },
               "priority": { "type": "integer", "minimum": 1 },
               "reason": { "type": "string" },
               "maxItems": { "type": "integer", "minimum": 0 },
@@ -162,16 +160,18 @@
         "snippets"
       ],
       "properties": {
-        "overview": { "type": ["object", "null"] },
-        "components": { "type": "array", "items": { "$ref": "#/definitions/rankedItem" } },
-        "files": { "type": "array", "items": { "$ref": "#/definitions/rankedItem" } },
-        "symbols": { "type": "array", "items": { "$ref": "#/definitions/rankedItem" } },
-        "dependencies": { "type": "array", "items": { "$ref": "#/definitions/rankedItem" } },
-        "tests": { "type": "array", "items": { "$ref": "#/definitions/rankedItem" } },
-        "decisions": { "type": "array", "items": { "$ref": "#/definitions/rankedItem" } },
-        "memories": { "type": "array", "items": { "$ref": "#/definitions/rankedItem" } },
-        "evolution": { "type": ["object", "null"] },
-        "snippets": { "type": "array", "items": { "$ref": "#/definitions/rankedItem" } }
+        "overview": { "oneOf": [{ "$ref": "#/definitions/overviewSummary" }, { "type": "null" }] },
+        "components": { "type": "array", "items": { "$ref": "#/definitions/componentItem" } },
+        "files": { "type": "array", "items": { "$ref": "#/definitions/fileItem" } },
+        "symbols": { "type": "array", "items": { "$ref": "#/definitions/symbolItem" } },
+        "dependencies": { "type": "array", "items": { "$ref": "#/definitions/dependencyItem" } },
+        "tests": { "type": "array", "items": { "$ref": "#/definitions/testItem" } },
+        "decisions": { "type": "array", "items": { "$ref": "#/definitions/decisionItem" } },
+        "memories": { "type": "array", "items": { "$ref": "#/definitions/memoryItem" } },
+        "evolution": {
+          "oneOf": [{ "$ref": "#/definitions/evolutionSummary" }, { "type": "null" }]
+        },
+        "snippets": { "type": "array", "items": { "$ref": "#/definitions/snippetItem" } }
       }
     },
     "confidenceSummary": {
@@ -222,17 +222,61 @@
       "properties": {
         "limitsConfigured": { "$ref": "#/definitions/limits" },
         "usedChars": { "type": "integer", "minimum": 0 },
+        "serializedChars": { "type": "integer", "minimum": 0 },
         "estimatedTokens": { "type": "integer", "minimum": 0 },
         "totalCandidatesFound": { "type": "integer", "minimum": 0 },
         "includedCount": { "type": "integer", "minimum": 0 },
         "truncatedCount": { "type": "integer", "minimum": 0 },
-        "truncatedDomains": { "type": "array", "items": { "type": "string" } },
-        "omittedItemIds": { "type": "array", "items": { "type": "string" } }
+        "truncatedDomains": {
+          "type": "array",
+          "items": { "$ref": "#/definitions/retrievalDomain" }
+        },
+        "omittedItemIds": { "type": "array", "items": { "type": "string" } },
+        "budgetOverflowed": { "type": "boolean" }
       }
     },
     "limitations": { "type": "array", "items": { "type": "string" } }
   },
   "definitions": {
+    "taskType": {
+      "type": "string",
+      "enum": [
+        "architecture_design",
+        "feature_implementation",
+        "bug_fix",
+        "refactoring",
+        "database_change",
+        "security_audit",
+        "test_generation",
+        "ui_ux_work",
+        "documentation",
+        "evolution_review",
+        "general_inspection"
+      ]
+    },
+    "retrievalDomain": {
+      "type": "string",
+      "enum": [
+        "overview",
+        "components",
+        "files",
+        "symbols",
+        "dependencies",
+        "tests",
+        "decisions",
+        "memories",
+        "evolution",
+        "snippets"
+      ]
+    },
+    "confidenceTier": {
+      "type": "string",
+      "enum": ["CONFIRMED", "INFERRED", "CANDIDATE", "UNRESOLVED"]
+    },
+    "trustLevel": {
+      "type": "string",
+      "enum": ["deterministic_metadata", "sanitized_untrusted_text", "fenced_untrusted_content"]
+    },
     "limits": {
       "type": "object",
       "additionalProperties": false,
@@ -254,26 +298,116 @@
         "filePath": { "type": "string" },
         "lineRange": {
           "type": "array",
-          "items": { "type": "integer", "minimum": 1 },
+          "items": { "type": "integer", "minimum": 0 },
           "minItems": 2,
           "maxItems": 2
         },
         "symbolIdentity": { "type": "string" },
         "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
-        "confidenceTier": {
-          "type": "string",
-          "enum": ["CONFIRMED", "INFERRED", "CANDIDATE", "UNRESOLVED"]
-        },
+        "confidenceTier": { "$ref": "#/definitions/confidenceTier" },
         "verificationStatus": {
           "type": "string",
-          "enum": ["VERIFIED", "MISSING", "CONTRADICTED", "UNVERIFIED", "STATIC_INDEX"]
+          "enum": [
+            "VERIFIED",
+            "MISSING",
+            "CONTRADICTED",
+            "UNVERIFIED",
+            "STATIC_INDEX",
+            "VERIFIED_ON_DISK",
+            "SNAPSHOT_METADATA",
+            "CONFIRMED",
+            "DISK_HASH_MISMATCH",
+            "DISK_FILE_MISSING",
+            "MISSING_CONTENT_HASH",
+            "UNVERIFIED_HASH",
+            "LEGACY_ACTIVE_MOCK"
+          ]
         },
         "description": { "type": "string" }
       }
     },
-    "rankedItem": {
+    "overviewSummary": {
       "type": "object",
-      "additionalProperties": true,
+      "additionalProperties": false,
+      "required": [
+        "languages",
+        "packageManagers",
+        "frameworks",
+        "componentCount",
+        "entrypointPaths",
+        "cycleCount",
+        "decisionCount"
+      ],
+      "properties": {
+        "languages": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["language", "fileCount"],
+            "properties": {
+              "language": { "type": "string" },
+              "fileCount": { "type": "integer", "minimum": 0 }
+            }
+          }
+        },
+        "packageManagers": { "type": "array", "items": { "type": "string" } },
+        "frameworks": { "type": "array", "items": { "type": "string" } },
+        "componentCount": { "type": "integer", "minimum": 0 },
+        "entrypointPaths": { "type": "array", "items": { "type": "string" } },
+        "cycleCount": { "type": "integer", "minimum": 0 },
+        "decisionCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "evolutionSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "baseScanId",
+        "targetScanId",
+        "status",
+        "filesAdded",
+        "filesModified",
+        "filesDeleted",
+        "driftFindingsCount",
+        "adrCorrelationsCount",
+        "debtItemsCount",
+        "highlights"
+      ],
+      "properties": {
+        "baseScanId": { "type": "integer", "minimum": 1 },
+        "targetScanId": { "type": "integer", "minimum": 1 },
+        "status": { "type": "string" },
+        "filesAdded": { "type": "integer", "minimum": 0 },
+        "filesModified": { "type": "integer", "minimum": 0 },
+        "filesDeleted": { "type": "integer", "minimum": 0 },
+        "driftFindingsCount": { "type": "integer", "minimum": 0 },
+        "adrCorrelationsCount": { "type": "integer", "minimum": 0 },
+        "debtItemsCount": { "type": "integer", "minimum": 0 },
+        "highlights": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "severity", "title", "confidenceTier", "relevantPaths"],
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": ["drift", "decision_correlation", "debt", "file_change"]
+              },
+              "severity": { "type": "string" },
+              "title": { "type": "string" },
+              "confidenceTier": { "$ref": "#/definitions/confidenceTier" },
+              "relevantPaths": { "type": "array", "items": { "type": "string" } },
+              "untrustedRepositoryContent": { "type": "boolean" }
+            }
+          }
+        }
+      }
+    },
+    "componentItem": {
+      "type": "object",
+      "additionalProperties": false,
       "required": [
         "id",
         "domain",
@@ -282,24 +416,337 @@
         "rankingReasons",
         "confidenceTier",
         "untrustedRepositoryContent",
-        "evidence"
+        "evidence",
+        "componentIdentity",
+        "name",
+        "category",
+        "rootPath",
+        "filesCount",
+        "sampleFiles"
       ],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
-        "domain": { "type": "string", "minLength": 1 },
+        "domain": { "const": "components" },
         "title": { "type": "string", "minLength": 1 },
         "rankScore": { "type": "number", "minimum": 0, "maximum": 100 },
         "rankingReasons": { "type": "array", "items": { "type": "string" } },
-        "confidenceTier": {
-          "type": "string",
-          "enum": ["CONFIRMED", "INFERRED", "CANDIDATE", "UNRESOLVED"]
-        },
+        "confidenceTier": { "$ref": "#/definitions/confidenceTier" },
         "untrustedRepositoryContent": { "type": "boolean" },
-        "evidence": {
-          "type": "array",
-          "items": { "$ref": "#/definitions/evidenceRef" }
-        }
+        "trustLevel": { "$ref": "#/definitions/trustLevel" },
+        "evidence": { "type": "array", "items": { "$ref": "#/definitions/evidenceRef" } },
+        "componentIdentity": { "type": "string" },
+        "name": { "type": "string" },
+        "category": { "type": "string" },
+        "rootPath": { "type": "string" },
+        "filesCount": { "type": "integer", "minimum": 0 },
+        "sampleFiles": { "type": "array", "items": { "type": "string" } }
       }
+    },
+    "fileItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "domain",
+        "title",
+        "rankScore",
+        "rankingReasons",
+        "confidenceTier",
+        "untrustedRepositoryContent",
+        "evidence",
+        "filePath",
+        "language",
+        "classification",
+        "sensitivityStatus",
+        "exportedSymbolsCount",
+        "importsCount"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "domain": { "const": "files" },
+        "title": { "type": "string", "minLength": 1 },
+        "rankScore": { "type": "number", "minimum": 0, "maximum": 100 },
+        "rankingReasons": { "type": "array", "items": { "type": "string" } },
+        "confidenceTier": { "$ref": "#/definitions/confidenceTier" },
+        "untrustedRepositoryContent": { "type": "boolean" },
+        "trustLevel": { "$ref": "#/definitions/trustLevel" },
+        "evidence": { "type": "array", "items": { "$ref": "#/definitions/evidenceRef" } },
+        "filePath": { "type": "string" },
+        "language": { "type": "string" },
+        "classification": { "type": "string" },
+        "sensitivityStatus": { "type": "string" },
+        "componentAssociation": { "type": "string" },
+        "exportedSymbolsCount": { "type": "integer", "minimum": 0 },
+        "importsCount": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "symbolItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "domain",
+        "title",
+        "rankScore",
+        "rankingReasons",
+        "confidenceTier",
+        "untrustedRepositoryContent",
+        "evidence",
+        "symbolIdentity",
+        "name",
+        "kind",
+        "filePath",
+        "startLine",
+        "endLine",
+        "isExported"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "domain": { "const": "symbols" },
+        "title": { "type": "string", "minLength": 1 },
+        "rankScore": { "type": "number", "minimum": 0, "maximum": 100 },
+        "rankingReasons": { "type": "array", "items": { "type": "string" } },
+        "confidenceTier": { "$ref": "#/definitions/confidenceTier" },
+        "untrustedRepositoryContent": { "type": "boolean" },
+        "trustLevel": { "$ref": "#/definitions/trustLevel" },
+        "evidence": { "type": "array", "items": { "$ref": "#/definitions/evidenceRef" } },
+        "symbolIdentity": { "type": "string" },
+        "name": { "type": "string" },
+        "kind": { "type": "string" },
+        "filePath": { "type": "string" },
+        "startLine": { "type": "integer", "minimum": 0 },
+        "endLine": { "type": "integer", "minimum": 0 },
+        "isExported": { "type": "boolean" }
+      }
+    },
+    "dependencyItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "domain",
+        "title",
+        "rankScore",
+        "rankingReasons",
+        "confidenceTier",
+        "untrustedRepositoryContent",
+        "evidence",
+        "direction",
+        "sourceTarget",
+        "targetNodeIdentity",
+        "targetName",
+        "relationship",
+        "depth",
+        "unresolvedSpecifiers"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "domain": { "const": "dependencies" },
+        "title": { "type": "string", "minLength": 1 },
+        "rankScore": { "type": "number", "minimum": 0, "maximum": 100 },
+        "rankingReasons": { "type": "array", "items": { "type": "string" } },
+        "confidenceTier": { "$ref": "#/definitions/confidenceTier" },
+        "untrustedRepositoryContent": { "type": "boolean" },
+        "trustLevel": { "$ref": "#/definitions/trustLevel" },
+        "evidence": { "type": "array", "items": { "$ref": "#/definitions/evidenceRef" } },
+        "direction": { "type": "string", "enum": ["dependency", "dependent", "cycle"] },
+        "sourceTarget": { "type": "string" },
+        "targetNodeIdentity": { "type": "string" },
+        "targetName": { "type": "string" },
+        "relationship": { "type": "string" },
+        "depth": { "type": "integer", "minimum": 0 },
+        "unresolvedSpecifiers": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "testItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "domain",
+        "title",
+        "rankScore",
+        "rankingReasons",
+        "confidenceTier",
+        "untrustedRepositoryContent",
+        "evidence",
+        "testFilePath",
+        "sourceFilePath",
+        "associationStatus",
+        "evidenceType"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "domain": { "const": "tests" },
+        "title": { "type": "string", "minLength": 1 },
+        "rankScore": { "type": "number", "minimum": 0, "maximum": 100 },
+        "rankingReasons": { "type": "array", "items": { "type": "string" } },
+        "confidenceTier": { "$ref": "#/definitions/confidenceTier" },
+        "untrustedRepositoryContent": { "type": "boolean" },
+        "trustLevel": { "$ref": "#/definitions/trustLevel" },
+        "evidence": { "type": "array", "items": { "$ref": "#/definitions/evidenceRef" } },
+        "testFilePath": { "type": "string" },
+        "sourceFilePath": { "type": "string" },
+        "associationStatus": { "$ref": "#/definitions/confidenceTier" },
+        "evidenceType": { "type": "string" }
+      }
+    },
+    "decisionItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "domain",
+        "title",
+        "rankScore",
+        "rankingReasons",
+        "confidenceTier",
+        "untrustedRepositoryContent",
+        "evidence",
+        "adrId",
+        "adrNumber",
+        "adrStatus",
+        "filePath",
+        "governedComponents",
+        "summaryText"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "domain": { "const": "decisions" },
+        "title": { "type": "string", "minLength": 1 },
+        "rankScore": { "type": "number", "minimum": 0, "maximum": 100 },
+        "rankingReasons": { "type": "array", "items": { "type": "string" } },
+        "confidenceTier": { "$ref": "#/definitions/confidenceTier" },
+        "untrustedRepositoryContent": { "type": "boolean" },
+        "trustLevel": { "$ref": "#/definitions/trustLevel" },
+        "evidence": { "type": "array", "items": { "$ref": "#/definitions/evidenceRef" } },
+        "adrId": { "type": "string" },
+        "adrNumber": { "type": "integer", "minimum": 0 },
+        "adrStatus": { "type": "string" },
+        "filePath": { "type": "string" },
+        "governedComponents": { "type": "array", "items": { "type": "string" } },
+        "summaryText": { "type": "string" },
+        "verificationStatus": {
+          "type": "string",
+          "enum": [
+            "CONFIRMED",
+            "DISK_HASH_MISMATCH",
+            "DISK_FILE_MISSING",
+            "MISSING_CONTENT_HASH",
+            "UNVERIFIED_HASH",
+            "LEGACY_ACTIVE_MOCK"
+          ]
+        },
+        "isFallback": { "type": "boolean" }
+      }
+    },
+    "memoryItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "domain",
+        "title",
+        "rankScore",
+        "rankingReasons",
+        "confidenceTier",
+        "untrustedRepositoryContent",
+        "evidence",
+        "memoryId",
+        "memoryKey",
+        "category",
+        "lifecycleStatus",
+        "liveVerificationStatus",
+        "supersededById",
+        "version",
+        "content",
+        "promptInjectionDetected"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "domain": { "const": "memories" },
+        "title": { "type": "string", "minLength": 1 },
+        "rankScore": { "type": "number", "minimum": 0, "maximum": 100 },
+        "rankingReasons": { "type": "array", "items": { "type": "string" } },
+        "confidenceTier": { "$ref": "#/definitions/confidenceTier" },
+        "untrustedRepositoryContent": { "type": "boolean" },
+        "trustLevel": { "$ref": "#/definitions/trustLevel" },
+        "evidence": { "type": "array", "items": { "$ref": "#/definitions/evidenceRef" } },
+        "memoryId": { "type": "integer", "minimum": 1 },
+        "memoryKey": { "type": "string" },
+        "category": { "type": "string" },
+        "lifecycleStatus": { "type": "string" },
+        "liveVerificationStatus": {
+          "type": "string",
+          "enum": [
+            "VERIFIED",
+            "STALE",
+            "DISPUTED",
+            "SUPERSEDED",
+            "ARCHIVED",
+            "MISSING",
+            "UNVERIFIED"
+          ]
+        },
+        "supersededById": { "type": ["integer", "null"] },
+        "version": { "type": "integer", "minimum": 1 },
+        "content": { "type": "string" },
+        "promptInjectionDetected": { "type": "boolean" }
+      }
+    },
+    "snippetItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "domain",
+        "title",
+        "rankScore",
+        "rankingReasons",
+        "confidenceTier",
+        "untrustedRepositoryContent",
+        "evidence",
+        "filePath",
+        "lineRange",
+        "content",
+        "redacted",
+        "redactionCount",
+        "promptInjectionDetected"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "domain": { "const": "snippets" },
+        "title": { "type": "string", "minLength": 1 },
+        "rankScore": { "type": "number", "minimum": 0, "maximum": 100 },
+        "rankingReasons": { "type": "array", "items": { "type": "string" } },
+        "confidenceTier": { "$ref": "#/definitions/confidenceTier" },
+        "untrustedRepositoryContent": { "type": "boolean" },
+        "trustLevel": { "$ref": "#/definitions/trustLevel" },
+        "evidence": { "type": "array", "items": { "$ref": "#/definitions/evidenceRef" } },
+        "filePath": { "type": "string" },
+        "lineRange": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 1 },
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "content": { "type": "string" },
+        "redacted": { "type": "boolean" },
+        "redactionCount": { "type": "integer", "minimum": 0 },
+        "promptInjectionDetected": { "type": "boolean" }
+      }
+    },
+    "rankedItem": {
+      "oneOf": [
+        { "$ref": "#/definitions/componentItem" },
+        { "$ref": "#/definitions/fileItem" },
+        { "$ref": "#/definitions/symbolItem" },
+        { "$ref": "#/definitions/dependencyItem" },
+        { "$ref": "#/definitions/testItem" },
+        { "$ref": "#/definitions/decisionItem" },
+        { "$ref": "#/definitions/memoryItem" },
+        { "$ref": "#/definitions/snippetItem" }
+      ]
     }
   }
 }
