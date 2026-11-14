@@ -2,7 +2,7 @@
 
 **Specification version:** 1.0.0  
 **Phase:** 7.6 — Agent Retrieval & Orchestration  
-**Project Version:** 0.6.3  
+**Project Version:** 0.7.0  
 **Schema Version:** 3
 
 ---
@@ -40,7 +40,7 @@ RetrievalRequest (agentId, taskSummary, targets, scanId, limits, signal)
 5. **Untrusted Content Defense & Containment:** Retrieved snippets, ADR text, evolution highlights, and engineering memory payloads carry `untrustedRepositoryContent: true`, delimiter fencing (`<<<UNTRUSTED_REPO_CONTENT ...>>>`), linear-time complete and unterminated/short-EOF PEM private-key (`dA==`, header-only EOF, CRLF, multi-block) & inline secret redaction across scanner, self-contained extractor diagnostics, hook stdout/stderr emitters, and audit logs, BiDi/zero-width stripping, `PROMPT_INJECTION_SIGNAL` warnings, `evaluateSensitivePath` blocking, and `fs.realpathSync` containment checks.
 6. **Antigravity Delegation Boundary:** `PreToolUse` validates `invoke_subagent`, `delegate_agent`, `spawn_subagent`, `send_message`, and marker-bearing tool arguments across any tool: it denies plain-text delegation to Frontier specialist roles (`architect`, `implementation-engineer`, `security-auditor`, `qa-engineer`, `design-engineer`), unknown target agents, unredacted secrets, and semantically invalid/stale/partial/stripped/wrong-repo `<<<FRONTIER_HANDOFF_JSON>>>` bundles while never auto-approving unrecognized tools (`force_ask`). With `FRONTIER_AUTO_PREPARE_HANDOFF=1`, `prepareAndGateSubagentToolCall` attaches a verified bundle via documented `PreToolUse` `overwrite` and fails closed on preparation errors. Because Antigravity `PreInvocation` receives only step counters/metadata and has no `SubagentStart` event, delegation enforcement operates in `PreToolUse`. Live Antigravity GUI host invocation and `overwrite` behavior remain outside automated unit/integration test scope and are documented as not runtime-verified.
 
-## 4. Capability Classification (Phase 7.7)
+## 4. Capability Classification (v0.7.0)
 
 - **IMPLEMENTED AND VERIFIED:** Role-aware retrieval engine, strict request/response schema validation, 32-warning `WARNINGS_OVERFLOW` cap, secret redaction across scanner/extractor/retrieval/hooks, atomic snapshot promotion and crash recovery guards, and local `frontier` CLI `retrieve`/`prepare-handoff`/`validate-handoff` execution.
 - **IMPLEMENTED, HOST-DEPENDENT:** `PreToolUse` subagent delegation gating, `FRONTIER_AUTO_PREPARE_HANDOFF=1` `overwrite` injection, and strict `FRONTIER_REQUIRE_HANDOFF=1` enforcement inside a live Antigravity GUI session.

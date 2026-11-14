@@ -3,7 +3,7 @@
 **Specification version:** 1.0.0  
 **Phase:** 7.5 — Engineering Memory & Repository Evolution Intelligence  
 **Stage:** 3 — Snapshot Comparator & Deterministic Repository Diff Engine  
-**Project Version:** 0.6.3  
+**Project Version:** 0.7.0  
 **Schema Version:** 3
 
 ---

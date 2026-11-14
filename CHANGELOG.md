@@ -2,6 +2,41 @@
 
 All notable changes to Frontier Engineer are documented here. This project follows [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] - 2026-11-14
+
+Official Phase 7 Closure release (**Phases 7.1–7.8.1**: Project Intelligence, Engineering Memory, Retrieval Orchestration & Security Hardening; SQLite schema remains at version `3`).
+
+### Phase 7 Capabilities
+
+- **Repository Scanning (`scripts/scanner/`)**:
+  - Deterministic file inventory, `.gitignore` stack conformance, workspace-root symlink/junction containment, limit and cancellation handling (`CANCELLED`, `FATAL_ERROR`), and sensitive-file / inline-secret classification.
+- **Structural Extraction (`scripts/extractor/`)**:
+  - Self-contained bundled TypeScript parser execution with zero external repository imports, AST symbol declaration extraction, line-independent symbol identity and token fingerprinting, and deterministic module/import resolution.
+- **Storage & Graph Engine (`scripts/storage/`, `scripts/graph/`)**:
+  - Workspace-scoped SQLite repository intelligence index (`.frontier/intelligence/index.sqlite`, `CURRENT_SCHEMA_VERSION = 3`) with transactional staging, atomic snapshot promotion preserving prior `COMPLETE` scans, composite foreign-key isolation, repository-scoped crash recovery, `StorageManager.validateIntegrity()`, and cycle-safe dependency graph traversal.
+- **Architecture Intelligence & Query CLI (`scripts/architecture/`, `scripts/query/`, `scripts/cli/frontier-cli.ts`)**:
+  - Evidence-based component, entrypoint, test, and ADR discovery; Tarjan SCC cycle detection; deterministic Snapshot Comparator diffing across files, symbols, imports, components, and ADRs; and read-only `frontier` CLI subcommands (`status`, `overview`, `freshness`, `components`, `dependencies`, `cycles`, `compare`, `evolution`, `memories`, `retrieve`, `prepare-handoff`, `validate-handoff`) with exit codes `0..4`.
+- **Engineering Memory (`scripts/memory/`, `scripts/evolution/`)**:
+  - Append-versioned `engineering_memories` protected by SQLite immutability triggers (`003-engineering-memory-evolution.sql`), conjunctive evidence verification, strict default `allowPartial = false` snapshot eligibility, and repository evolution drift/debt analysis.
+- **Agent Retrieval & Orchestration (`scripts/retrieval/`)**:
+  - Role-aware deterministic task classification, bounded multi-signal ranking and JSON-envelope budgeting across all 6 specialist roles, schema-validated `RetrievalResponse` (`schemas/retrieval-context.schema.json`), fail-closed `prepareDelegationHandoff` (`READY` / `DEGRADED_UNINDEXED` / `VALIDATION_FAILED`), strict semantic consumer validation (`parseAndValidateHandoffBundle`), and `PreToolUse` delegation gating (`invoke_subagent`, `send_message`, marker-bearing arguments, and optional `FRONTIER_AUTO_PREPARE_HANDOFF=1`).
+- **Security Hardening (`scripts/hooks/`)**:
+  - Six Antigravity lifecycle hooks (`SessionStart`, `PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`) with global matcher `*`, conceptual semantic capability classification, authoritative `TRUSTED_MCP_TOOLS` server binding, fail-closed dispatcher error handling (exiting `0` with `deny`), `FATAL_ERROR` -> `FAILED` snapshot persistence mapping, and repository-scoped staging rollback cleanup.
+- **Secret Redaction & Audit Logging Resilience (`scripts/scanner/sensitive-filter.ts`, `scripts/extractor/index.ts`, `scripts/retrieval/content-sanitizer.ts`, `scripts/hooks/lib/secret-redactor.ts`, `scripts/hooks/runtime/logger.ts`, `scripts/hooks/runtime/output.ts`)**:
+  - Cross-layer canonical secret-redaction parity (`xox[baprs]-`, `sk-`/`sk-proj-`, `gh[pousr]_`/`github_pat_`, `sntrys_`, AWS keys, Bearer/Basic headers, RFC-3986 database URIs, and multi-block/unterminated/single-line inline PEM private keys), iterative cycle-safe `redactValue()` skipping hostile `toJSON` hooks/getters/`Proxy` enumeration traps, `BigInt`-safe `writeAuditLog()` with post-serialization `containsUnredactedSecrets()` fail-closed verification and redacted JSONL fallback, and resilient `logDiagnostic()`.
+
+### Acceptance Milestones
+
+- **Phase 7.8 Remediation (`3a72ae1`)**: Closed `AUD-C-01`, `AUD-C-02`, `AUD-C-03`, `AUD-B-01`, `AUD-B-02`, and `AUD-A-01`, verified independently with strict read-only audit and full gate execution.
+- **Phase 7.8.1 Residual Security Remediation (`9990e71`)**: Closed residual findings `RES-01` (single-line unterminated PEM with inline trailing prose) and `RES-03` (`redactValue()` / `writeAuditLog()` hostile serialization resistance), verified independently as **ACCEPTED** across adversarial probes, `agy plugin validate --strict --json .`, and `vitest run` (`92` files, `614` tests).
+
+### Known Limitations & Documented Boundaries
+
+- **Live Antigravity host behavior:** Interactive `force_ask` UI prompts (bypassing cached Always Allow), live host PostgreSQL MCP interception, live multi-agent GUI delegation, and live `PreToolUse` `overwrite` payload mutation have not been verified in live interactive Antigravity GUI sessions; coverage reflects headless unit, handler, CLI, and dispatcher subprocess tests plus `agy plugin validate --strict .`.
+- **Windows file symlinks:** Automated file-symlink creation inside `tests/unit/scanner-filesystem-boundary.test.ts` requires Windows Developer Mode or elevated symlink privileges and skips cleanly (`[SKIPPED: Windows EPERM on file symlinks without Developer Mode]`) when unprivileged.
+- **Documented redaction boundaries:** Database URI redaction enforces the RFC-3986 percent-encoding boundary for `@` inside passwords (`%40` and `/` are redacted; unencoded `@` inside malformed multi-`@` passwords splits userinfo from host to avoid cross-token over-redaction), and Slack token matching supports hyphen-delimited segments up to 255 body characters (excluding underscores).
+- **Platform adapters & scoring:** Only the Google Antigravity plugin adapter is implemented (`claude_code`, `cursor`, `codex` remain planned), and no quality evaluation score is assigned.
+
 ## [0.6.3] - Phase 7.8.1 Residual Security Remediation (0.7.0 Reserved)
 
 > Package and plugin manifest version remains `0.6.3` (`0.7.0` is reserved until formal `0.7.0` release bump). Intelligence database schema remains version `3`.

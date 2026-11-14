@@ -1,6 +1,6 @@
 ---
-version: "0.6.3"
-lastUpdated: "2026-11-11"
+version: "0.7.0"
+lastUpdated: "2026-11-14"
 hooks:
   - id: "frontier-session-init"
     name: "Frontier Session Initialization"
