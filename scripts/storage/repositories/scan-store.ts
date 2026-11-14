@@ -224,10 +224,14 @@ export class ScanStore {
         return 0;
       }
 
-      const deleteFilesStmt = this.db.prepare("DELETE FROM files WHERE scan_id = ?");
-      const deleteNodesStmt = this.db.prepare("DELETE FROM graph_nodes WHERE scan_id = ?");
+      const deleteFilesStmt = this.db.prepare(
+        "DELETE FROM files WHERE repository_id = ? AND scan_id = ?",
+      );
+      const deleteNodesStmt = this.db.prepare(
+        "DELETE FROM graph_nodes WHERE repository_id = ? AND scan_id = ?",
+      );
       const deleteComponentsStmt = this.db.prepare(
-        "DELETE FROM architecture_components WHERE scan_id = ?",
+        "DELETE FROM architecture_components WHERE repository_id = ? AND scan_id = ?",
       );
       const clearActiveRepoStmt = this.db.prepare(
         "UPDATE repositories SET active_scan_id = NULL, updated_at = ? WHERE id = ? AND active_scan_id = ?",
@@ -235,9 +239,9 @@ export class ScanStore {
 
       for (const row of interrupted) {
         clearActiveRepoStmt.run(now, repositoryId, row.id);
-        deleteFilesStmt.run(row.id);
-        deleteNodesStmt.run(row.id);
-        deleteComponentsStmt.run(row.id);
+        deleteFilesStmt.run(repositoryId, row.id);
+        deleteNodesStmt.run(repositoryId, row.id);
+        deleteComponentsStmt.run(repositoryId, row.id);
       }
 
       const res = this.db

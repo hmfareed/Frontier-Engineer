@@ -11,7 +11,7 @@ import { ConnectionManager } from "../storage/connection-manager.ts";
 import { SqliteDatabase } from "../storage/database.ts";
 import { FreshnessEvaluator } from "../query/freshness-evaluator.ts";
 import { redactString } from "../hooks/lib/secret-redactor.ts";
-import { scanBufferForSecrets } from "../scanner/sensitive-filter.ts";
+import { containsUnredactedSecrets } from "../scanner/sensitive-filter.ts";
 import { AGENT_RETRIEVAL_POLICIES } from "./agent-policies.ts";
 import { ContentSanitizer } from "./content-sanitizer.ts";
 import { RetrievalEngine } from "./retrieval-engine.ts";
@@ -1091,12 +1091,7 @@ export function parseAndValidateHandoffBundle(
     };
   }
 
-  const secretCheck = scanBufferForSecrets(Buffer.from(rawJson, "utf8"));
-  const rawTokenMatch =
-    /\b(?:ghp_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{36,}|sntrys_[A-Za-z0-9]{32,})\b/.test(
-      rawJson,
-    );
-  if (secretCheck.detected || rawTokenMatch) {
+  if (containsUnredactedSecrets(rawJson)) {
     return {
       found: true,
       valid: false,

@@ -42,20 +42,34 @@ function isValidCanonicalPath(p: string): boolean {
 function redactSecrets(msg: string): string {
   return msg
     .replace(
-      /-----BEGIN [A-Z0-9 ]{0,48}PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z0-9 ]{0,48}PRIVATE KEY-----|$)/g,
+      /-----BEGIN [A-Z0-9 ]{0,48}PRIVATE KEY(?: BLOCK)?-----[\s\S]*?(?:-----END [A-Z0-9 ]{0,48}PRIVATE KEY(?: BLOCK)?-----|$)/g,
       "[REDACTED_PRIVATE_KEY]",
     )
+    .replace(/-----END [A-Z0-9 ]{0,48}PRIVATE KEY(?: BLOCK)?-----/g, "[REDACTED_PRIVATE_KEY]")
     .replace(
-      /\b(?:gh[pousr]_[A-Za-z0-9_]{20,255}|github_pat_[A-Za-z0-9_]{20,255})\b/g,
+      /\b(?:gh[pousr]_[A-Za-z0-9]{20,255}|github_pat_[A-Za-z0-9_]{20,255})\b/g,
       "[REDACTED_SECRET]",
     )
-    .replace(/\bsk-[A-Za-z0-9_-]{16,255}\b/g, "[REDACTED_SECRET]")
-    .replace(/\b(?:AKIA|ASIA)[A-Z0-9]{16}\b/g, "[REDACTED_SECRET]")
-    .replace(/\bxox[baprs]-[0-9A-Za-z-]{10,128}\b/g, "[REDACTED_SECRET]")
-    .replace(/\bsntrys_[A-Za-z0-9_=-]{16,255}\b/g, "[REDACTED_SECRET]")
-    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,512}/gi, "$1 [REDACTED_SECRET]")
     .replace(
-      /\b((?:postgres|postgresql|mysql|mongodb(?:\+srv)?|redis|rediss|amqp|amqps):\/\/[^:\s/@]+:)[^@\s]+(@)/gi,
+      /\b(?:sk-(?:(?:proj|svcacct|admin|test|live)-[A-Za-z0-9_-]{12,240}|(?=[A-Za-z0-9_-]*[0-9A-Z])[A-Za-z0-9_-]{16,255}|[A-Za-z0-9]{20,255})|(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{16,})\b/g,
+      "[REDACTED_SECRET]",
+    )
+    .replace(
+      /\b(?:A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[A-Z0-9]{16}\b/g,
+      "[REDACTED_SECRET]",
+    )
+    .replace(/\bxox[baprs]-[0-9A-Za-z][0-9A-Za-z-]{8,126}[0-9A-Za-z]\b/g, "[REDACTED_SECRET]")
+    .replace(/\bsntrys_[A-Za-z0-9_=-]{16,255}/g, "[REDACTED_SECRET]")
+    .replace(
+      /\bBearer\s+(?!\[REDACTED[^\]]*\])[A-Za-z0-9._~+/=-]{12,512}/gi,
+      "Bearer [REDACTED_SECRET]",
+    )
+    .replace(
+      /(\bAuthorization\s*[:=]\s*["']?Basic\s+)(?!\[REDACTED[^\]]*\])[A-Za-z0-9._~+/=-]{8,512}/gi,
+      "$1[REDACTED_SECRET]",
+    )
+    .replace(
+      /\b((?:postgres|postgresql|mysql|mongodb(?:\+srv)?|redis|rediss|amqp|amqps):\/\/[^:\s/@]+:)(?!\[REDACTED[^\]]*\])[^@\s"'`<>]+(@(?=[A-Za-z0-9.\[\]-]))/gi,
       "$1[REDACTED_SECRET]$2",
     )
     .replace(

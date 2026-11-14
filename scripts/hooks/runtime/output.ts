@@ -34,10 +34,16 @@ export function logDiagnostic(message: string, context?: unknown): void {
     const timestamp = new Date().toISOString();
     let line = `[FRONTIER_HOOK ${timestamp}] ${redactString(message)}`;
     if (context !== undefined) {
-      line += ` | ${redactString(JSON.stringify(redactValue(context)))}`;
+      try {
+        const serializedContext = JSON.stringify(redactValue(context));
+        line += ` | ${redactString(serializedContext)}`;
+      } catch (contextErr) {
+        const errMsg = contextErr instanceof Error ? contextErr.message : String(contextErr);
+        line += ` | ${JSON.stringify({ contextSerializationError: redactString(errMsg) })}`;
+      }
     }
     process.stderr.write(line + "\n");
   } catch {
-    // Fail silent on stderr write issues
+    // Fail silent only on underlying stderr write errors
   }
 }

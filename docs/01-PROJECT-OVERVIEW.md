@@ -2,14 +2,14 @@
 
 ## Identity
 
-| Property              | Value                                                                                             |
-| --------------------- | ------------------------------------------------------------------------------------------------- |
-| Product               | Frontier Engineer                                                                                 |
-| Category              | AI software-engineering agent system                                                              |
-| Distribution          | Google Antigravity plugin                                                                         |
-| Execution environment | Antigravity App, CLI, or IDE                                                                      |
-| Current version       | 0.6.3 (Phase 7.6 Retrieval Integrity, Handoff Enforcement & Change-Control Compliance; Schema v3) |
-| Target release        | 1.0.0 (Phase 10)                                                                                  |
+| Property              | Value                                                                                                   |
+| --------------------- | ------------------------------------------------------------------------------------------------------- |
+| Product               | Frontier Engineer                                                                                       |
+| Category              | AI software-engineering agent system                                                                    |
+| Distribution          | Google Antigravity plugin                                                                               |
+| Execution environment | Antigravity App, CLI, or IDE                                                                            |
+| Current version       | 0.6.3 (Phases 7.1–7.8 Project Intelligence, Retrieval Integrity & Hardening; Schema v3; 0.7.0 reserved) |
+| Target release        | 1.0.0 (Phase 10)                                                                                        |
 
 ## Vision
 
@@ -59,7 +59,7 @@ Phase 5.1 conducted an empirical technical audit, verified provider packages, re
 
 Phase 6 implemented the Antigravity lifecycle hooks architecture across six events (`SessionStart`, `PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`), generated `hooks.json`, unified file and command interception under a global matcher (`*`), hardened dispatcher fail-closed error boundaries, implemented semantic capability categorization, registered trusted MCP capabilities, and established an extensive 45-test acceptance suite. Phase 6.1.3 reconciled all verification evidence, strictly classifying host-level PostgreSQL MCP interception as NOT VERIFIED, maintaining interactive `force_ask` confirmation bypass as BLOCKED, and confirming strict CLI validation with CLI v1.5.0.
 
-Phase 7 (Phases 7.1–7.7) implemented deterministic repository scanning, AST/symbol extraction, embedded SQLite intelligence persistence (`schemaVersion = 3`), dependency graph traversal and cycle detection, architecture and ADR verification, the `frontier` query/evolution CLI, snapshot comparison, drift/debt tracking, durable engineering memories with conjunctive evidence verification, Phase 7.6 role-aware retrieval orchestration and fail-closed `frontier-engineer/handoff` v1 delegation gating, and Phase 7.7 cross-subsystem hardening (strict `RetrievalEngine` request validation and bounded warnings, self-contained extractor secret redaction, hook output redaction, atomic `promoteScan`/staging crash cleanup, expanded `validateIntegrity`, and synthetic scale/stress verification up to 10,000 files). Version remains `0.6.3` (`0.7.0` reserved pending formal acceptance).
+Phase 7 (Phases 7.1–7.8) implemented deterministic repository scanning, AST/symbol extraction, embedded SQLite intelligence persistence (`schemaVersion = 3`), dependency graph traversal and cycle detection, architecture and ADR verification, the `frontier` query/evolution CLI, snapshot comparison, drift/debt tracking, durable engineering memories with conjunctive evidence verification, Phase 7.6 role-aware retrieval orchestration and fail-closed `frontier-engineer/handoff` v1 delegation gating, Phase 7.7 cross-subsystem hardening and 10,000-file stress benchmarks, and Phase 7.8 final remediation (canonical secret-redaction parity across scanner/extractor/sanitizer/hooks/handoffs, iterative cycle-safe `redactValue`, `logDiagnostic` serialization resilience, `ACTIVE_SCAN_MISMATCH` symmetry checks, repository-scoped staging cleanup, and `FATAL_ERROR` -> `FAILED` persistence mapping). Version remains `0.6.3` (`0.7.0` reserved pending formal acceptance).
 
 Still deliberately deferred: workflows (Phase 8) and release packaging (Phases 9–10).
 

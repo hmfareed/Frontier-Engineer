@@ -2,7 +2,7 @@ import { classifyToolCall } from "../lib/command-classifier.ts";
 import type { ClassificationResult } from "../lib/command-classifier.ts";
 import type { PreToolUsePayload } from "../lib/event-context.ts";
 import { extractCorrelationId } from "../lib/event-context.ts";
-import { scanBufferForSecrets } from "../../scanner/sensitive-filter.ts";
+import { containsUnredactedSecrets } from "../../scanner/sensitive-filter.ts";
 import {
   HANDOFF_BLOCK_END,
   HANDOFF_BLOCK_START,
@@ -30,13 +30,9 @@ const FRONTIER_AGENT_SET = new Set<AgentId>([
   "design-engineer",
 ]);
 const BUILTIN_ANTIGRAVITY_SUBAGENTS = new Set(["browser", "research", "self", "image-generator"]);
-const RAW_SECRET_TOKEN_REGEX =
-  /\b(?:ghp_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{36,}|sntrys_[A-Za-z0-9]{32,})\b/;
 
 function containsUnredactedSecret(text: string): boolean {
-  return (
-    scanBufferForSecrets(Buffer.from(text, "utf8")).detected || RAW_SECRET_TOKEN_REGEX.test(text)
-  );
+  return containsUnredactedSecrets(text);
 }
 
 function normalizeTargetAgentName(rawTarget: unknown): string | null {

@@ -40,7 +40,7 @@ export class SnapshotWriter {
     });
     const scanId = scanRecord.id;
 
-    // Check cancellation prior to staging writes
+    // Check cancellation or fatal scan error prior to staging writes
     if (input.signal?.aborted || input.inventory.scanStatus === "CANCELLED") {
       const cancelMsg =
         input.inventory.scanStatus === "CANCELLED"
@@ -60,6 +60,25 @@ export class SnapshotWriter {
         promoted: false,
         durationMs: Date.now() - startTime,
         diagnostics: [cancelMsg],
+      };
+    }
+
+    if (input.inventory.scanStatus === "FATAL_ERROR") {
+      const fatalMsg = "Scan inventory was marked FATAL_ERROR prior to ingestion";
+      scanStore.failScan(scanId, fatalMsg);
+      return {
+        scanId,
+        repositoryId,
+        status: "FAILED",
+        filesIndexed: 0,
+        symbolsIndexed: 0,
+        importsIndexed: 0,
+        exportsIndexed: 0,
+        nodesCreated: 0,
+        edgesCreated: 0,
+        promoted: false,
+        durationMs: Date.now() - startTime,
+        diagnostics: [fatalMsg],
       };
     }
 
@@ -266,12 +285,20 @@ export class SnapshotWriter {
       const errorMsg = err instanceof Error ? err.message : String(err);
       diagnostics.push(errorMsg);
 
-      // Roll back incomplete staging writes: delete half-written records under scanId
+      // Roll back incomplete staging writes: delete half-written records under repositoryId + scanId
       try {
         db.transaction(() => {
-          db.prepare("DELETE FROM files WHERE scan_id = ?").run(scanId);
-          db.prepare("DELETE FROM graph_nodes WHERE scan_id = ?").run(scanId);
-          db.prepare("DELETE FROM architecture_components WHERE scan_id = ?").run(scanId);
+          db.prepare("DELETE FROM files WHERE repository_id = ? AND scan_id = ?").run(
+            repositoryId,
+            scanId,
+          );
+          db.prepare("DELETE FROM graph_nodes WHERE repository_id = ? AND scan_id = ?").run(
+            repositoryId,
+            scanId,
+          );
+          db.prepare(
+            "DELETE FROM architecture_components WHERE repository_id = ? AND scan_id = ?",
+          ).run(repositoryId, scanId);
         });
       } catch {
         // Suppress cleanup secondary errors

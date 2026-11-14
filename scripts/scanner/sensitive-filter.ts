@@ -278,6 +278,7 @@ export function redactPemPrivateKeys(
       const inlineClosingQuote = tailOnBeginLine.match(/[`"']/);
 
       let endSpan = i;
+      let trailingLineSuffix = "";
       let hasSeenPayload =
         isPemArmorHeaderLine(tailOnBeginLine) || isPemBase64ContinuationLine(tailOnBeginLine, 12);
 
@@ -316,6 +317,17 @@ export function redactPemPrivateKeys(
           break;
         }
 
+        if (hasSeenPayload) {
+          const inlineTailMatch = line.match(
+            /^\s*([A-Za-z0-9+/]+={1,2}|[A-Za-z0-9+/]{12,}[=]{0,2})(\s+.*)$/,
+          );
+          if (inlineTailMatch) {
+            endSpan = j;
+            trailingLineSuffix = inlineTailMatch[2];
+            break;
+          }
+        }
+
         if (line.trim().length === 0 && j + 1 < lines.length) {
           const nextLine = lines[j + 1];
           const nextToken = extractPemBase64Token(nextLine);
@@ -334,12 +346,15 @@ export function redactPemPrivateKeys(
       const suffix =
         endSpan === i && inlineClosingQuote && inlineClosingQuote.index !== undefined
           ? tailOnBeginLine.slice(inlineClosingQuote.index)
-          : "";
+          : trailingLineSuffix;
 
       for (let k = i; k <= endSpan; k++) {
         maskedLineFlags[k] = true;
         if (preserveLineCount) {
-          lines[k] = k === i ? `${prefix}${marker}${suffix}` : marker;
+          if (k === i && k === endSpan) lines[k] = `${prefix}${marker}${suffix}`;
+          else if (k === i) lines[k] = `${prefix}${marker}`;
+          else if (k === endSpan) lines[k] = `${marker}${suffix}`;
+          else lines[k] = marker;
         } else {
           lines[k] = k === i ? `${prefix}${marker}${suffix}` : "";
         }
@@ -433,19 +448,84 @@ export function redactPemPrivateKeys(
   return { redactedText: outputLines.join(lineEnding), detected, redactionCount };
 }
 
-const KNOWN_SECRET_PATTERNS: Array<{ type: string; regex: RegExp }> = [
+export interface SecretPatternDef {
+  type: string;
+  regex: RegExp;
+  replacer?: (...args: string[]) => string;
+}
+
+/**
+ * High-confidence secret patterns used by repository file scanning (scanBufferForSecrets)
+ * and shared across ContentSanitizer, hook redaction, and handoff/tool-use gates.
+ */
+export const CORE_SECRET_PATTERN_DEFS: SecretPatternDef[] = [
   {
     type: "AWS_ACCESS_KEY",
     regex: /\b((?:A3T[A-Z0-9]|AKIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA|ASIA)[0-9A-Z]{16})\b/g,
   },
-  { type: "GITHUB_PAT", regex: /\b(ghp_[0-9a-zA-Z]{36})\b/g },
-  { type: "GITHUB_FINE_GRAINED_PAT", regex: /\b(github_pat_[0-9a-zA-Z_]{82})\b/g },
-  { type: "SLACK_TOKEN", regex: /\b(xox[baprs]-[0-9a-zA-Z]{10,48})\b/g },
+  { type: "GITHUB_PAT", regex: /\b(gh[pousr]_[0-9a-zA-Z]{20,255})\b/g },
+  { type: "GITHUB_FINE_GRAINED_PAT", regex: /\b(github_pat_[0-9a-zA-Z_]{20,255})\b/g },
+  { type: "SLACK_TOKEN", regex: /\b(xox[baprs]-[0-9a-zA-Z][0-9a-zA-Z-]{8,126}[0-9a-zA-Z])\b/g },
+  { type: "STRIPE_KEY", regex: /\b((?:sk|rk)_(?:live|test)_[0-9A-Za-z]{16,})\b/g },
+  {
+    type: "OPENAI_API_KEY",
+    regex:
+      /\b(sk-(?:(?:proj|svcacct|admin|test|live)-[A-Za-z0-9_-]{12,240}|(?=[A-Za-z0-9_-]*[0-9A-Z])[A-Za-z0-9_-]{16,255}|[A-Za-z0-9]{20,255}))\b/g,
+  },
+  { type: "SENTRY_TOKEN", regex: /\bsntrys_[A-Za-z0-9_=-]{16,255}/g },
   {
     type: "GENERIC_API_KEY",
     regex: /\b(?:api[_-]?key|secret[_-]?key)\s*[:=]\s*['"][0-9a-zA-Z_\-]{20,}['"]/gi,
   },
 ];
+
+/**
+ * Context-sensitive inline credential patterns (Bearer/Basic headers, DB connection URIs,
+ * and secret assignments). Kept separate from repository file scanning so .env.example
+ * placeholders are preserved during scans while untrusted text, hooks, and handoffs enforce them.
+ */
+export const CONTEXT_SECRET_PATTERN_DEFS: SecretPatternDef[] = [
+  {
+    type: "BEARER_TOKEN",
+    regex: /\bBearer\s+(?!\[REDACTED[^\]]*\])[A-Za-z0-9._~+/=-]{12,512}/gi,
+  },
+  {
+    type: "BASIC_AUTH_HEADER",
+    regex:
+      /(\bAuthorization\s*[:=]\s*["']?Basic\s+)(?!\[REDACTED[^\]]*\])[A-Za-z0-9._~+/=-]{8,512}/gi,
+    replacer: (_m: string, p1: string) => `${p1}[REDACTED_SECRET:BASIC_AUTH_HEADER]`,
+  },
+  {
+    type: "DB_PASSWORD",
+    regex:
+      /\b((?:postgres|postgresql|mysql|mongodb(?:\+srv)?|redis|rediss|amqp|amqps):\/\/[^:\s/@]+:)(?!\[REDACTED[^\]]*\])[^@\s"'`<>]+(@(?=[A-Za-z0-9.\[\]-]))/gi,
+    replacer: (_m: string, p1: string, p2: string) => `${p1}[REDACTED_SECRET:DB_PASSWORD]${p2}`,
+  },
+  {
+    type: "ASSIGNED_SECRET",
+    regex:
+      /\b(?:password|passwd|client_secret|private_key|access_token|auth_token|jwt_secret|secret_key|api_secret)\s*[:=]\s*(?:(['"])([^\r\n'"]{8,})\1|([A-Za-z0-9+/_=-]{16,}))/gi,
+  },
+];
+
+/**
+ * Checks raw text (such as delegation prompts, handoffs, or untrusted snippets) for any
+ * unredacted core or context-sensitive secret patterns.
+ */
+export function containsUnredactedSecrets(text: string): boolean {
+  if (!text || typeof text !== "string") return false;
+  if (scanBufferForSecrets(Buffer.from(text, "utf8")).detected) {
+    return true;
+  }
+  for (const def of CONTEXT_SECRET_PATTERN_DEFS) {
+    const flags = def.regex.flags.includes("g") ? def.regex.flags : `${def.regex.flags}g`;
+    const re = new RegExp(def.regex.source, flags.replace(/g/g, ""));
+    if (re.test(text)) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /**
  * Scans an in-memory buffer for known secret and credential patterns.
@@ -463,13 +543,18 @@ export function scanBufferForSecrets(buffer: Buffer): SecretScanResult {
     firstSecretType = "PRIVATE_KEY";
   }
 
-  for (const pattern of KNOWN_SECRET_PATTERNS) {
-    pattern.regex.lastIndex = 0;
-    if (pattern.regex.test(redacted)) {
+  for (const pattern of CORE_SECRET_PATTERN_DEFS) {
+    const flags = pattern.regex.flags.includes("g")
+      ? pattern.regex.flags
+      : `${pattern.regex.flags}g`;
+    const re = new RegExp(pattern.regex.source, flags);
+    if (re.test(redacted)) {
       detected = true;
       if (!firstSecretType) firstSecretType = pattern.type;
-      pattern.regex.lastIndex = 0;
-      redacted = redacted.replace(pattern.regex, `[REDACTED_SECRET:${pattern.type}]`);
+      re.lastIndex = 0;
+      redacted = pattern.replacer
+        ? redacted.replace(re, pattern.replacer)
+        : redacted.replace(re, `[REDACTED_SECRET:${pattern.type}]`);
     }
   }
 

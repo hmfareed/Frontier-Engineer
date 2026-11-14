@@ -6,6 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import {
+  CONTEXT_SECRET_PATTERN_DEFS,
   evaluateSensitivePath,
   redactPemPrivateKeys,
   scanBufferForSecrets,
@@ -15,34 +16,7 @@ const HARD_EXCLUDED_SEGMENTS = new Set([".frontier", ".git", ".agents", ".ssh", 
 const MAX_SNIPPET_FILE_BYTES = 256 * 1024;
 const PEM_MARKER = "[REDACTED_SECRET:PRIVATE_KEY]";
 
-const EXTRA_SECRET_PATTERNS: Array<{
-  type: string;
-  regex: RegExp;
-  replacer?: (...args: string[]) => string;
-}> = [
-  {
-    type: "BEARER_TOKEN",
-    regex: /\bBearer\s+[A-Za-z0-9._\-+/=]{20,}\b/g,
-  },
-  {
-    type: "DB_PASSWORD",
-    regex: /((?:postgres|postgresql|mysql|mongodb|redis):\/\/[^:\s/]+:)[^@\s/]+(@)/gi,
-    replacer: (_m: string, p1: string, p2: string) => `${p1}[REDACTED_SECRET:DB_PASSWORD]${p2}`,
-  },
-  {
-    type: "SENTRY_TOKEN",
-    regex: /\bsntrys_[A-Za-z0-9]{32,}\b/g,
-  },
-  {
-    type: "STRIPE_KEY",
-    regex: /\b(?:sk|rk)_(?:live|test)_[0-9A-Za-z]{16,}\b/g,
-  },
-  {
-    type: "ASSIGNED_SECRET",
-    regex:
-      /\b(?:password|passwd|client_secret|private_key|access_token|auth_token|jwt_secret|secret_key|api_secret)\s*[:=]\s*(?:(['"])([^\r\n'"]{8,})\1|([A-Za-z0-9+/_=-]{16,}))/gi,
-  },
-];
+const EXTRA_SECRET_PATTERNS = CONTEXT_SECRET_PATTERN_DEFS;
 
 const INJECTION_SIGNAL_PATTERNS: Array<{ label: string; regex: RegExp }> = [
   {

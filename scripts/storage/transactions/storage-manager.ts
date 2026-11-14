@@ -159,13 +159,38 @@ export class StorageManager implements IntelligenceStorage {
     const repoRow = db
       .prepare("SELECT active_scan_id AS activeScanId FROM repositories WHERE id = ?")
       .get(repositoryId) as { activeScanId: number | null } | undefined;
-    if (repoRow?.activeScanId !== null && repoRow?.activeScanId !== undefined) {
-      const matchesFlag = activeScans.some((s) => s.id === repoRow.activeScanId);
-      if (!matchesFlag) {
+    if (repoRow) {
+      if (repoRow.activeScanId !== null && repoRow.activeScanId !== undefined) {
+        const refScan = db
+          .prepare(
+            "SELECT id, repository_id AS repositoryId, is_active AS isActive FROM scan_runs WHERE id = ?",
+          )
+          .get(repoRow.activeScanId) as
+          { id: number; repositoryId: number; isActive: number } | undefined;
+        if (!refScan || refScan.repositoryId !== repositoryId) {
+          issues.push({
+            severity: "error",
+            code: "ACTIVE_SCAN_MISMATCH",
+            message: `repositories.active_scan_id (${repoRow.activeScanId}) references a missing or cross-repository scan.`,
+            entityId: repoRow.activeScanId,
+            entityType: "scan",
+          });
+        } else if (!refScan.isActive || !activeScans.some((s) => s.id === repoRow.activeScanId)) {
+          issues.push({
+            severity: "error",
+            code: "ACTIVE_SCAN_MISMATCH",
+            message: `repositories.active_scan_id (${repoRow.activeScanId}) disagrees with scan_runs.is_active.`,
+            entityId: repoRow.activeScanId,
+            entityType: "scan",
+          });
+        }
+      } else if (activeScans.length > 0) {
         issues.push({
           severity: "error",
           code: "ACTIVE_SCAN_MISMATCH",
-          message: `repositories.active_scan_id (${repoRow.activeScanId}) disagrees with scan_runs.is_active.`,
+          message: `repositories.active_scan_id is NULL while scan_runs.is_active = 1 is set (scan IDs: ${activeScans.map((s) => s.id).join(", ")}).`,
+          entityId: activeScans[0].id,
+          entityType: "scan",
         });
       }
     }

@@ -96,6 +96,10 @@ Product documentation for Frontier Engineer. The original 26-part specification 
 - [Contributing guide](../CONTRIBUTING.md)
 - [Changelog](../CHANGELOG.md)
 
+## Audit & remediation reports
+
+- [Phase 7.8 final remediation report](audits/PHASE-7.8-FINAL-REMEDIATION-REPORT.md)
+
 ## Implementation plans
 
 - [Phase 3 implementation plan](superpowers/plans/2026-11-10-phase-3-skills-system.md)

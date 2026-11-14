@@ -2,7 +2,26 @@
 
 All notable changes to Frontier Engineer are documented here. This project follows [Semantic Versioning](https://semver.org/).
 
-## [0.6.3] - Phase 7.1–7.7 Hardening & Release Readiness (Uncommitted Working Tree; 0.7.0 Reserved)
+## [0.6.3] - Phase 7.8 Final Security, Storage & Release-Readiness Remediation (0.7.0 Reserved)
+
+> Package and plugin manifest version remains `0.6.3` (`0.7.0` is reserved until formal external acceptance). Intelligence database schema remains version `3`.
+
+### Phase 7.8 Remediation Summary
+
+- **Secret Redaction Parity (`AUD-C-01`, `AUD-C-03`)**:
+  - Consolidated canonical `CORE_SECRET_PATTERN_DEFS`, `CONTEXT_SECRET_PATTERN_DEFS`, and `containsUnredactedSecrets()` in `scripts/scanner/sensitive-filter.ts` covering `xox[baprs]-` short/hyphenated Slack tokens without tail leakage, OpenAI `sk-`/`sk-proj-`, GitHub `gh[pousr]_` and variable-length `github_pat_`, Sentry `sntrys_` (including `_`, `-`, `=`), AWS access keys, full/unterminated/orphan PEM blocks (including `BLOCK` armor), Bearer/Basic auth headers, and DB URIs with slashes and URL-encoded passwords.
+  - Wired `scripts/retrieval/content-sanitizer.ts`, `scripts/hooks/lib/secret-redactor.ts`, `scripts/retrieval/orchestrator.ts` (`parseAndValidateHandoffBundle`), and `scripts/hooks/handlers/pre-tool-use.ts` to share canonical pattern definitions while keeping `scripts/extractor/index.ts` self-contained and pattern-aligned.
+- **Cycle-Safe Value Redaction & Resilient Diagnostics (`AUD-C-02`)**:
+  - Converted `redactValue()` in `scripts/hooks/lib/secret-redactor.ts` to an iterative heap stack with active-ancestor `WeakSet` tracking (`"[Circular]"` on cycles, full redaction on repeated sibling DAG references, and deep nesting without call-stack overflow).
+  - Hardened `logDiagnostic()` in `scripts/hooks/runtime/output.ts` so unexpected context serialization failures emit redacted error context instead of silently dropping diagnostics.
+- **Storage Integrity & Repository-Scoped Recovery (`AUD-B-01`, `AUD-B-02`)**:
+  - Updated `StorageManager.validateIntegrity` (`scripts/storage/transactions/storage-manager.ts`) to detect `ACTIVE_SCAN_MISMATCH` both when `repositories.active_scan_id` is `NULL` alongside `scan_runs.is_active = 1` and when `active_scan_id` points to a missing, inactive, or cross-repository scan.
+  - Scoped staging cleanup `DELETE` statements in `ScanStore.recoverInterruptedScans` and `SnapshotWriter.persist` rollback by both `repository_id` and `scan_id`.
+  - Updated `SnapshotWriter.persist` to map `inventory.scanStatus === "FATAL_ERROR"` to `"FAILED"` (`promoted: false`) while preserving active `COMPLETE` snapshots.
+- **Documentation & Verification Audit Record (`AUD-A-01`)**:
+  - Synchronized `CHANGELOG.md`, `README.md`, and `docs/01-PROJECT-OVERVIEW.md`, and recorded Phase 7.8 evidence in [Phase 7.8 Final Remediation Report](docs/audits/PHASE-7.8-FINAL-REMEDIATION-REPORT.md).
+
+## [0.6.3] - Phase 7.1–7.7 Hardening & Release Readiness (`ccf8ddc`; 0.7.0 Reserved)
 
 > Package and plugin manifest version remains `0.6.3` (`0.7.0` is reserved until formal external acceptance). Intelligence database schema remains version `3`.
 
