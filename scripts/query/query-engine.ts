@@ -155,7 +155,17 @@ export class ArchitectureQueryEngine {
     // Verify evidence files on disk; missing/deleted files produce an honest warning
     if (params.evidence) {
       for (const ev of params.evidence) {
-        if (ev.file && !ev.file.startsWith("comp:") && !ev.file.startsWith("pkg:")) {
+        if (
+          ev.file &&
+          !ev.file.startsWith("comp:") &&
+          !ev.file.startsWith("pkg:") &&
+          !ev.file.startsWith("sym:") &&
+          !ev.file.startsWith("mod:") &&
+          !ev.file.startsWith("dir:") &&
+          !ev.file.startsWith("repo:") &&
+          !ev.file.includes("::") &&
+          !ev.file.includes("#")
+        ) {
           const fullPath = path.join(this.rootPath, ev.file);
           if (!fs.existsSync(fullPath)) {
             warnings.push(
@@ -888,8 +898,19 @@ export class ArchitectureQueryEngine {
           if (pkgNode) {
             nodeIdentity = pkgNode.node_identity;
           } else {
-            // Assume file:cleanTarget
-            nodeIdentity = `file:${cleanTarget}`;
+            // Check symbol by name or identity
+            const symNode = this.db
+              .prepare(
+                "SELECT node_identity FROM graph_nodes WHERE scan_id = ? AND category = 'symbol' AND (node_identity = ? OR name = ?) ORDER BY id ASC LIMIT 1",
+              )
+              .get(scanId, `sym:${cleanTarget}`, cleanTarget) as
+              { node_identity: string } | undefined;
+            if (symNode) {
+              nodeIdentity = symNode.node_identity;
+            } else {
+              // Assume file:cleanTarget
+              nodeIdentity = `file:${cleanTarget}`;
+            }
           }
         }
       }

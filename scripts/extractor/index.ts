@@ -16,14 +16,32 @@ export * from "./parser-loader.ts";
 export * from "./symbol-identity.ts";
 export * from "./types.ts";
 
+const AST_EXTRACTION_EXTENSIONS = new Set([
+  ".ts",
+  ".tsx",
+  ".mts",
+  ".cts",
+  ".js",
+  ".jsx",
+  ".mjs",
+  ".cjs",
+]);
+
+/**
+ * Determines whether a canonical repository path uses a TypeScript or JavaScript
+ * file extension supported by the bundled TypeScript AST parser.
+ */
+export function isAstExtractablePath(canonicalPath: string): boolean {
+  if (!canonicalPath || typeof canonicalPath !== "string") return false;
+  const ext = path.posix.extname(canonicalPath.replace(/\\/g, "/")).toLowerCase();
+  return AST_EXTRACTION_EXTENSIONS.has(ext);
+}
+
 function getScriptKind(canonicalPath: string, parser: ParserApi): number {
-  if (canonicalPath.endsWith(".tsx")) return parser.ScriptKind.TSX;
-  if (canonicalPath.endsWith(".jsx")) return parser.ScriptKind.JSX;
-  if (
-    canonicalPath.endsWith(".js") ||
-    canonicalPath.endsWith(".mjs") ||
-    canonicalPath.endsWith(".cjs")
-  ) {
+  const lower = canonicalPath.toLowerCase();
+  if (lower.endsWith(".tsx")) return parser.ScriptKind.TSX;
+  if (lower.endsWith(".jsx")) return parser.ScriptKind.JSX;
+  if (lower.endsWith(".js") || lower.endsWith(".mjs") || lower.endsWith(".cjs")) {
     return parser.ScriptKind.JS;
   }
   return parser.ScriptKind.TS;
@@ -126,6 +144,19 @@ export async function extractFileSymbols(
           message: `Invalid canonical path "${canonicalPath}": must be a normalized repository-relative path within workspace boundaries.`,
         },
       ],
+    };
+  }
+
+  // 2b. Polyglot safety gate: only parse TypeScript/JavaScript source files with the TS AST parser
+  if (!isAstExtractablePath(canonicalPath)) {
+    return {
+      canonicalPath,
+      symbols: [],
+      imports: [],
+      exports: [],
+      callExpressions: [],
+      status: "SUCCESS",
+      diagnostics: [],
     };
   }
 

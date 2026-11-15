@@ -124,12 +124,16 @@ export class GraphBuilder {
       }
     }
 
+    const fileSymbolNodeByName = new Map<string, Map<string, string>>();
+
     for (const [filePath, extraction] of input.extractions.entries()) {
       if (!eligibleExtractableFiles.has(filePath) || extraction.status === "FAILED") {
         continue;
       }
 
       const fileNodeId = `file:${filePath}`;
+      const symNameMap = new Map<string, string>();
+      fileSymbolNodeByName.set(filePath, symNameMap);
 
       // A. Symbols
       for (const sym of extraction.symbols) {
@@ -146,6 +150,17 @@ export class GraphBuilder {
             lineEnd: sym.sourceEvidence.lineEnd,
           },
         });
+
+        if (sym.parentScope) {
+          symNameMap.set(`${sym.parentScope}.${sym.name}`, symNodeId);
+          if (!symNameMap.has(sym.name)) {
+            symNameMap.set(sym.name, symNodeId);
+          }
+        } else {
+          if (sym.isExported || !symNameMap.has(sym.name)) {
+            symNameMap.set(sym.name, symNodeId);
+          }
+        }
 
         // File DEFINES Symbol
         const defEdgeId = `${fileNodeId}->DEFINES->${symNodeId}`;
@@ -276,6 +291,133 @@ export class GraphBuilder {
               createdAt: now,
             });
           }
+        }
+      }
+    }
+
+    // 6. Resolve Call Expressions into Symbol REFERENCES Edges
+    for (const [filePath, extraction] of input.extractions.entries()) {
+      if (
+        !eligibleExtractableFiles.has(filePath) ||
+        extraction.status === "FAILED" ||
+        !extraction.callExpressions ||
+        extraction.callExpressions.length === 0
+      ) {
+        continue;
+      }
+
+      const fileNodeId = `file:${filePath}`;
+      const localSymMap = fileSymbolNodeByName.get(filePath);
+
+      const importedSymbolToTargetNode = new Map<string, string>();
+      const importedReceiverToTargetPath = new Map<string, string>();
+
+      for (const imp of extraction.imports) {
+        if (!imp.resolvedPath || !eligibleExtractableFiles.has(imp.resolvedPath)) {
+          continue;
+        }
+        const targetSymMap = fileSymbolNodeByName.get(imp.resolvedPath);
+        if (!targetSymMap) continue;
+
+        if (imp.importedSymbols !== "*") {
+          for (const spec of imp.importedSymbols) {
+            const localAlias = spec.alias ?? spec.name;
+            const resolvedSymNode = targetSymMap.get(spec.name);
+            if (resolvedSymNode) {
+              importedSymbolToTargetNode.set(localAlias, resolvedSymNode);
+            }
+            importedReceiverToTargetPath.set(localAlias, imp.resolvedPath);
+          }
+        }
+      }
+
+      for (const call of extraction.callExpressions) {
+        if (call.isDynamicImport || !call.calleeName || call.calleeName === "import") {
+          continue;
+        }
+
+        const callLine = call.sourceEvidence?.lineStart ?? 1;
+        let enclosingSymNodeId: string | null = null;
+        let enclosingClassScope: string | null = null;
+        let smallestSpan = Number.POSITIVE_INFINITY;
+
+        for (const sym of extraction.symbols) {
+          const start = sym.sourceEvidence.lineStart;
+          const end = sym.sourceEvidence.lineEnd;
+          if (start <= callLine && callLine <= end) {
+            const span = end - start;
+            if (span <= smallestSpan) {
+              smallestSpan = span;
+              enclosingSymNodeId = `sym:${sym.symbolId}`;
+              enclosingClassScope =
+                sym.kind === "class"
+                  ? sym.name
+                  : sym.parentScope
+                    ? sym.parentScope.split(".")[0]
+                    : null;
+            }
+          }
+        }
+
+        let targetSymNodeId: string | undefined = importedSymbolToTargetNode.get(call.calleeName);
+
+        if (!targetSymNodeId && call.calleeName.includes(".")) {
+          const dotIdx = call.calleeName.indexOf(".");
+          const receiver = call.calleeName.slice(0, dotIdx);
+          const member = call.calleeName.slice(dotIdx + 1);
+
+          if (receiver === "this" && enclosingClassScope && localSymMap) {
+            targetSymNodeId = localSymMap.get(`${enclosingClassScope}.${member}`);
+          } else if (importedReceiverToTargetPath.has(receiver)) {
+            const targetPath = importedReceiverToTargetPath.get(receiver)!;
+            const targetSymMap = fileSymbolNodeByName.get(targetPath);
+            targetSymNodeId =
+              targetSymMap?.get(`${receiver}.${member}`) ?? targetSymMap?.get(member);
+          } else if (localSymMap) {
+            targetSymNodeId = localSymMap.get(`${receiver}.${member}`);
+          }
+        }
+
+        if (!targetSymNodeId && localSymMap) {
+          targetSymNodeId = localSymMap.get(call.calleeName);
+        }
+
+        if (!targetSymNodeId || !nodesMap.has(targetSymNodeId)) {
+          continue;
+        }
+
+        const callerNodeId = enclosingSymNodeId ?? fileNodeId;
+        if (callerNodeId === targetSymNodeId) {
+          continue;
+        }
+
+        const refEdgeId = `${callerNodeId}->REFERENCES->${targetSymNodeId}`;
+        const existingEdge = edgesMap.get(refEdgeId);
+        if (existingEdge) {
+          const meta = existingEdge.metadata ?? {
+            referenceKind: "call",
+            calleeName: call.calleeName,
+            callCount: 1,
+            lineStart: callLine,
+          };
+          meta.callCount = ((meta.callCount as number) || 1) + 1;
+          existingEdge.metadata = meta;
+        } else {
+          edgesMap.set(refEdgeId, {
+            edgeIdentity: refEdgeId,
+            sourceNodeIdentity: callerNodeId,
+            targetNodeIdentity: targetSymNodeId,
+            relationshipType: "REFERENCES",
+            confidence: 1.0,
+            relationshipStatus: "CONFIRMED",
+            createdAt: now,
+            metadata: {
+              referenceKind: "call",
+              calleeName: call.calleeName,
+              callCount: 1,
+              lineStart: callLine,
+            },
+          });
         }
       }
     }

@@ -40,6 +40,7 @@ import {
   validateRetrievalResponse,
   type AgentId,
 } from "../retrieval/index.ts";
+import { IndexPipeline, type IndexExecutionReport } from "../indexer/index.ts";
 
 export interface CliExecutionResult {
   exitCode: number;
@@ -61,6 +62,7 @@ export async function runCli(argv: string[]): Promise<number> {
   let seenNoAllowPartial = false;
   let allowStaleOpt = false;
   let applyLifecycle = false;
+  let incrementalOpt = false;
   let agentId: AgentId = "frontier-engineer";
   let agentProvided = false;
   let fromAgentOpt: AgentId | undefined;
@@ -331,6 +333,8 @@ export async function runCli(argv: string[]): Promise<number> {
       allowUnindexed = true;
     } else if (arg === "--apply-lifecycle") {
       applyLifecycle = true;
+    } else if (arg === "--incremental") {
+      incrementalOpt = true;
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       return 0;
@@ -377,6 +381,8 @@ export async function runCli(argv: string[]): Promise<number> {
   }
 
   const KNOWN_COMMANDS = new Set([
+    "scan",
+    "refresh",
     "status",
     "overview",
     "components",
@@ -447,7 +453,13 @@ export async function runCli(argv: string[]): Promise<number> {
   }
 
   // ISSUE-CLI-02: Enforce flag compatibility with selected subcommand
-  if (persistEvents && subcommand !== "compare" && subcommand !== "evolution") {
+  if (
+    persistEvents &&
+    subcommand !== "compare" &&
+    subcommand !== "evolution" &&
+    subcommand !== "scan" &&
+    subcommand !== "refresh"
+  ) {
     outputError(
       `--persist-events is only supported for 'compare' and 'evolution' subcommands (got '${subcommand}').`,
       2,
@@ -456,8 +468,22 @@ export async function runCli(argv: string[]): Promise<number> {
     return 2;
   }
 
+  if (incrementalOpt && subcommand !== "scan" && subcommand !== "refresh") {
+    outputError(
+      `--incremental is only supported for 'scan' and 'refresh' subcommands (got '${subcommand}').`,
+      2,
+      format,
+    );
+    return 2;
+  }
+
   if (applyLifecycle) {
-    if (subcommand !== "evolution" && subcommand !== "memories") {
+    if (
+      subcommand !== "evolution" &&
+      subcommand !== "memories" &&
+      subcommand !== "scan" &&
+      subcommand !== "refresh"
+    ) {
       outputError(
         `--apply-lifecycle is only supported for 'evolution' and 'memories --scan-id <id>' subcommands (got '${subcommand}').`,
         2,
@@ -680,6 +706,38 @@ export async function runCli(argv: string[]): Promise<number> {
   if (!fs.existsSync(workspaceRoot)) {
     outputError(`Workspace root does not exist: ${workspaceRoot}`, 3, format);
     return 3;
+  }
+
+  if (subcommand === "scan" || subcommand === "refresh") {
+    try {
+      const report = await IndexPipeline.run({
+        workspaceRoot,
+        incremental: subcommand === "refresh" || incrementalOpt,
+        allowPartialPromotion: allowPartialOpt === true,
+        applyLifecycle,
+        persistEvents,
+      });
+
+      if (format === "json") {
+        process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+      } else {
+        process.stdout.write(formatTerminalIndexReport(report) + "\n");
+      }
+
+      if (
+        report.status === "COMPLETE" ||
+        (report.status === "PARTIAL" && allowPartialOpt === true)
+      ) {
+        return 0;
+      }
+      if (report.status === "PARTIAL" && !report.promoted) {
+        return 3;
+      }
+      return 1;
+    } catch (err: any) {
+      outputError(err?.message || String(err), 1, format);
+      return 1;
+    }
   }
 
   if (subcommand === "prepare-handoff") {
@@ -1421,6 +1479,46 @@ function formatTerminalMemoryDetail(payload: {
   return lines.join("\n");
 }
 
+function formatTerminalIndexReport(report: IndexExecutionReport): string {
+  const lines: string[] = [];
+  lines.push(`================================================================================`);
+  lines.push(`Frontier Engineer — Repository Index Pipeline (${report.mode})`);
+  lines.push(
+    `Repository: ${report.repositoryIdentity} (ID: ${report.repositoryId}) | Status: ${report.status}`,
+  );
+  lines.push(
+    `Scan ID:    ${report.scanId ?? "N/A"} | Previous Scan ID: ${report.previousActiveScanId ?? "N/A"} | Promoted: ${report.promoted}`,
+  );
+  lines.push(`Duration:   ${report.durationMs}ms`);
+  lines.push(`--------------------------------------------------------------------------------`);
+  lines.push(`Discovery & Extraction:`);
+  lines.push(
+    `  Files:      ${report.counts.filesDiscovered} discovered, ${report.counts.filesIndexed} indexed, ${report.counts.filesSkipped} skipped, ${report.counts.filesFailed} failed`,
+  );
+  lines.push(
+    `  Extracted:  ${report.counts.symbolsIndexed} symbols, ${report.counts.importsIndexed} imports, ${report.counts.exportsIndexed} exports`,
+  );
+  lines.push(
+    `  Graph:      ${report.counts.nodesCreated} nodes, ${report.counts.edgesCreated} edges`,
+  );
+  lines.push(
+    `  Components: ${report.counts.componentsDetected} components, ${report.counts.entrypointsDetected} entrypoints, ${report.counts.decisionsDetected} ADRs, ${report.counts.testAssociationsDetected} test links`,
+  );
+  if (report.lifecycleEvaluation) {
+    lines.push(
+      `  Memories:   ${report.lifecycleEvaluation.totalEvaluated} evaluated (stale: ${report.lifecycleEvaluation.transitionedToStale}, disputed: ${report.lifecycleEvaluation.transitionedToDisputed})`,
+    );
+  }
+  if (report.diagnostics.length > 0) {
+    lines.push(`  Diagnostics (${report.diagnostics.length}):`);
+    for (const d of report.diagnostics.slice(0, 10)) {
+      lines.push(`    * ${d}`);
+    }
+  }
+  lines.push(`================================================================================`);
+  return lines.join("\n");
+}
+
 function printHelp(): void {
   process.stdout.write(`
 Frontier Engineer — Architecture Intelligence Query CLI
@@ -1430,6 +1528,10 @@ Usage:
   node scripts/cli/frontier-cli.ts [intelligence] <command> [options]
 
 Commands:
+  # Indexing & Lifecycle Commands (2)
+  scan                       Execute full end-to-end repository indexing and snapshot promotion
+  refresh                    Incrementally refresh repository index when stale and evaluate memory lifecycle
+
   # Primary Architecture Commands (15)
   status                     Show repository identity, database, and index freshness status
   overview                   Provide concise, evidence-backed architectural overview
