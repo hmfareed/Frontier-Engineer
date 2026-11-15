@@ -110,9 +110,14 @@ export function handlePreToolUse(payload: PreToolUsePayload): PreToolUseOutput {
   const toolName = payload.toolCall?.name ?? "";
   const toolArgs = payload.toolCall?.args ?? {};
   const workspaceRoot = payload.workspacePaths?.[0] ?? payload.cwd;
+  const effectiveWorkspaceRoot = Array.isArray(payload.workspacePaths)
+    ? (payload.workspacePaths[0] ?? payload.cwd ?? "")
+    : (payload.cwd ?? process.cwd());
   const flags = resolveEnvFlags();
 
-  let classification = classifyToolCall(toolName, toolArgs);
+  let classification = classifyToolCall(toolName, toolArgs, {
+    workspaceRoot: effectiveWorkspaceRoot,
+  });
 
   // Validate handoff markers wherever they appear, without ever upgrading unknown tools to allow
   if (classification.decision !== "deny") {
