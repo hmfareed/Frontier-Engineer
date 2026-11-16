@@ -450,4 +450,102 @@ describe("Phase 8.5A-R1: Security Boundary Remediation & Adversarial Closure", (
       expect(classifyCommandLine(cmd).decision, cmd).toBe("allow");
     });
   });
+
+  describe("Audit Findings 1–4: env -S options, privilege/modifier wrappers, -S=, and commit metadata", () => {
+    it("Finding 1: resolves env -S injected options and environment assignments completely", () => {
+      expect(classifyCommandLine('env -S "-u HOME rm -rf /"').decision).toBe("deny");
+      expect(classifyCommandLine('env -S "-i bash" -c "rm -rf /"').decision).toBe("deny");
+      expect(classifyCommandLine('echo "git push --force" | env -S "-u HOME bash"').decision).toBe(
+        "force_ask",
+      );
+      expect(
+        classifyCommandLine('env -S "-C /tmp --unset=FOO -a alt -- FOO=1 git push --force"')
+          .decision,
+      ).toBe("force_ask");
+      expect(classifyCommandLine("env -S '-i env -S \"rm -rf /\"'").decision).toBe("deny");
+      expect(classifyCommandLine('env -S "-u HOME node scripts/validate.ts"').decision).toBe(
+        "allow",
+      );
+      expect(classifyCommandLine('env -S "-u"').decision).toBe("force_ask");
+    });
+
+    it("Finding 2: enforces unified doas/sudo privilege unwrapping and deny dominance", () => {
+      expect(classifyCommandLine("doas sh -c 'rm -rf /'").decision).toBe("deny");
+      expect(classifyCommandLine("doas git push --force").decision).toBe("force_ask");
+      expect(classifyCommandLine("doas ls").decision).toBe("force_ask");
+      expect(classifyCommandLine("doas -u wheel rm -rf /").decision).toBe("deny");
+      expect(classifyCommandLine("sudo bash -c 'rm -rf /'").decision).toBe("deny");
+      expect(classifyCommandLine('sudo sh -c "cat .env"').decision).toBe("deny");
+      expect(classifyCommandLine("echo 'rm -rf /' | sudo bash").decision).toBe("deny");
+      expect(classifyCommandLine("echo 'git push --force' | doas sh").decision).toBe("force_ask");
+      expect(classifyCommandLine("sudo git push --force").decision).toBe("force_ask");
+    });
+
+    it("Finding 2: parses timeout, nice, and xargs options without hiding dangerous commands", () => {
+      expect(classifyCommandLine("timeout 5 rm -rf /").decision).toBe("deny");
+      expect(classifyCommandLine("timeout -k 10s -s KILL 5 bash -c 'cat .env'").decision).toBe(
+        "deny",
+      );
+      expect(
+        classifyCommandLine("timeout --signal=TERM 30 node scripts/validate.ts").decision,
+      ).toBe("allow");
+      expect(classifyCommandLine("timeout 5").decision).toBe("force_ask");
+
+      expect(classifyCommandLine("nice -n 10 rm -rf /").decision).toBe("deny");
+      expect(classifyCommandLine("nice --adjustment=-5 git push --force").decision).toBe(
+        "force_ask",
+      );
+      expect(classifyCommandLine("nice -n 10 node scripts/validate.ts").decision).toBe("allow");
+      expect(classifyCommandLine("nice -n bad echo hi").decision).toBe("force_ask");
+
+      expect(classifyCommandLine("xargs rm -rf /").decision).toBe("deny");
+      expect(classifyCommandLine("xargs -0 -P 4 -I {} sh -c 'rm -rf /'").decision).toBe("deny");
+      expect(classifyCommandLine("find src -type f | xargs -0 prettier --check").decision).toBe(
+        "allow",
+      );
+      expect(classifyCommandLine("xargs --unknown-flag echo ok").decision).toBe("force_ask");
+    });
+
+    it("Finding 2: bounds deeply nested wrapper chains conservatively", () => {
+      let deepEnvChain = "echo ok";
+      for (let i = 0; i < 18; i++) {
+        const escaped = deepEnvChain.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+        deepEnvChain = `env -S "${escaped}"`;
+      }
+      expect(classifyCommandLine(deepEnvChain).decision).toBe("force_ask");
+
+      const deepModifiers = `${"nice -n 1 ".repeat(18)}echo ok`;
+      expect(classifyCommandLine(deepModifiers).decision).toBe("force_ask");
+
+      const deepPrivileged = `${"sudo nice -n 1 ".repeat(10)}echo ok`;
+      expect(classifyCommandLine(deepPrivileged).decision).toBe("force_ask");
+    });
+
+    it("Finding 3: rejects or escalates malformed env -S= forms and validates all env -S variants", () => {
+      expect(classifyCommandLine("env -S='rm -rf /'").decision).toBe("deny");
+      expect(classifyCommandLine('env -S="git push --force"').decision).toBe("force_ask");
+      expect(classifyCommandLine('env -S="echo ok"').decision).toBe("force_ask");
+      expect(classifyCommandLine("env -S=").decision).toBe("force_ask");
+
+      expect(classifyCommandLine('env -S "rm -rf /"').decision).toBe("deny");
+      expect(classifyCommandLine('env -S"rm -rf /"').decision).toBe("deny");
+      expect(classifyCommandLine('env --split-string="rm -rf /"').decision).toBe("deny");
+      expect(classifyCommandLine('env --split-string "rm -rf /"').decision).toBe("deny");
+      expect(classifyCommandLine('env -S ""').decision).toBe("force_ask");
+      expect(classifyCommandLine("env -S").decision).toBe("force_ask");
+      expect(classifyCommandLine("env -S 'env -S \"rm -rf /\"'").decision).toBe("deny");
+    });
+
+    it("Finding 4: avoids false-positive escalation inside inert Git commit/tag metadata", () => {
+      expect(classifyCommandLine("git commit -m 'sudo bash -c rm -rf /'").decision).toBe("allow");
+      expect(
+        classifyCommandLine(
+          'git commit -m "chore: document sudo, takeown, Set-MpPreference" -m "and chmod 777 / git reset --hard"',
+        ).decision,
+      ).toBe("allow");
+      expect(classifyCommandLine('git tag -a v1.0 -m "sudo cleanup note"').decision).toBe("allow");
+      expect(classifyCommandLine("sudo git push --force").decision).toBe("force_ask");
+      expect(classifyCommandLine("git push --force").decision).toBe("force_ask");
+    });
+  });
 });

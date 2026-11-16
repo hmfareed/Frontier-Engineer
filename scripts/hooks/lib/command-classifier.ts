@@ -145,26 +145,12 @@ const PROHIBITED_DATABASE_MUTATIONS: Array<{ pattern: RegExp; reason: string }> 
   },
 ];
 
-/** Commands that require human developer review (escalate to 'force_ask'). */
-const HIGH_RISK_COMMANDS: Array<{ pattern: RegExp; reason: string }> = [
-  // Git operations with untracked/uncommitted data loss
-  {
-    pattern: /\bgit\s+clean\s+-(?:[a-z]*f[a-z]*d|[a-z]*d[a-z]*f|fdx|f)/i,
-    reason: "Destructive git clean operations require developer review.",
-  },
-  {
-    pattern: /\bgit\s+reset\s+--hard\b/i,
-    reason: "Hard git reset discards uncommitted work and requires developer confirmation.",
-  },
-  // Dangerous privilege escalation or permission broadening
+/** Permission-broadening or host-security modification commands requiring developer confirmation ('force_ask'). */
+const PERMISSION_HIGH_RISK_COMMANDS: Array<{ pattern: RegExp; reason: string }> = [
   {
     pattern: /\b(?:chmod\s+(?:-R\s+)?(?:777|666)|icacls\s+.*\/grant\s+.*Everyone:F)\b/i,
     reason:
       "Broadening filesystem permissions (777 / Everyone:Full) requires developer confirmation.",
-  },
-  {
-    pattern: /\b(?:sudo\b|takeown\b|Set-MpPreference\b)/i,
-    reason: "Administrative privilege escalation requires developer confirmation.",
   },
 ];
 
@@ -236,8 +222,27 @@ const SHELL_INTERPRETER_BINS = new Set([
   "invoke-expression",
 ]);
 
+const ENV_BOOLEAN_FLAGS = new Set([
+  "-",
+  "-i",
+  "--ignore-environment",
+  "-0",
+  "--null",
+  "-v",
+  "--debug",
+  "--block-signal",
+  "--ignore-signal",
+  "--list-signal-handling",
+]);
 const ENV_VALUE_FLAGS = new Set(["-u", "--unset", "-C", "--chdir", "-a", "--argv0"]);
-const ENV_INLINE_VALUE_FLAG_PREFIXES = ["--unset=", "--chdir=", "--argv0="];
+const ENV_INLINE_VALUE_FLAG_PREFIXES = [
+  "--unset=",
+  "--chdir=",
+  "--argv0=",
+  "--block-signal=",
+  "--ignore-signal=",
+  "--default-signal=",
+];
 const SUDO_VALUE_FLAGS = new Set([
   "-u",
   "-g",
@@ -251,6 +256,50 @@ const SUDO_VALUE_FLAGS = new Set([
   "-T",
   "-U",
 ]);
+const DOAS_VALUE_FLAGS = new Set(["-u", "-C"]);
+const TIMEOUT_BOOLEAN_FLAGS = new Set([
+  "-f",
+  "--foreground",
+  "-p",
+  "--preserve-status",
+  "-v",
+  "--verbose",
+]);
+const TIMEOUT_VALUE_FLAGS = new Set(["-k", "--kill-after", "-s", "--signal"]);
+const XARGS_BOOLEAN_FLAGS = new Set([
+  "-0",
+  "--null",
+  "-o",
+  "--open-tty",
+  "-p",
+  "--interactive",
+  "-r",
+  "--no-run-if-empty",
+  "-t",
+  "--verbose",
+  "-x",
+  "--exit",
+]);
+const XARGS_VALUE_FLAGS = new Set([
+  "-a",
+  "--arg-file",
+  "-d",
+  "--delimiter",
+  "-E",
+  "--eof",
+  "-I",
+  "--replace",
+  "-L",
+  "--max-lines",
+  "-n",
+  "--max-args",
+  "-P",
+  "--max-procs",
+  "-s",
+  "--max-chars",
+  "--process-slot-var",
+]);
+const XARGS_OPTIONAL_NO_SPACE_FLAGS = new Set(["-e", "-i", "-l"]);
 
 /** Executables eligible for destructive-filesystem command pattern checks. */
 const DESTRUCTIVE_FS_BINS = new Set([
@@ -297,16 +346,13 @@ const DB_CLIENT_BINS = new Set([
   "alter",
 ]);
 
-/** Executables eligible for high-risk `force_ask` command pattern checks. */
-const HIGH_RISK_BINS = new Set([
-  "git",
-  "chmod",
-  "icacls",
-  "sudo",
-  "doas",
-  "takeown",
-  "set-mppreference",
-]);
+/** Permission-broadening binaries evaluated against permission-specific regexes. */
+const PERMISSION_HIGH_RISK_BINS = new Set(["chmod", "icacls"]);
+
+/** Built-in host privilege escalation executables requiring fresh confirmation. */
+const HOST_PRIVILEGE_ESCALATION_BINS = new Set(["takeown", "set-mppreference"]);
+
+const MAX_ENV_SPLIT_DEPTH = 8;
 
 interface ShellSegment {
   tokens: string[];
@@ -323,6 +369,7 @@ interface ResolvedCommandSegment {
   pipedFromPrevious: boolean;
   extraPayloads: string[];
   ambiguousReason?: string;
+  privilegeEscalationReason?: string;
 }
 
 /**
@@ -450,22 +497,53 @@ function unescapePosixBackslashes(commandLine: string): string {
   return out;
 }
 
-function resolveEnvInvocation(tokens: string[]): {
+interface UnwrapStepResult {
   effectiveTokens: string[];
   extraPayloads: string[];
   ambiguousReason?: string;
-} {
+}
+
+function resolveEnvInvocation(tokens: string[], envDepth = 0): UnwrapStepResult {
+  if (envDepth >= MAX_ENV_SPLIT_DEPTH) {
+    return {
+      effectiveTokens: tokens.slice(1),
+      extraPayloads: [],
+      ambiguousReason:
+        "Confirmation required: Nested 'env -S' option resolution exceeded depth limit and requires developer confirmation.",
+    };
+  }
+
   let idx = 1;
   let splitPayload: string | null = null;
   let trailingArgs: string[] = [];
+  let preAmbiguousReason: string | undefined;
 
   while (idx < tokens.length) {
     const cur = tokens[idx];
     if (cur === "--") {
       idx++;
-      return { effectiveTokens: tokens.slice(idx), extraPayloads: [] };
+      while (idx < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[idx])) {
+        idx++;
+      }
+      return {
+        effectiveTokens: tokens.slice(idx),
+        extraPayloads: [],
+        ambiguousReason: preAmbiguousReason,
+      };
     }
-    if (cur === "-S" || cur === "--split-string" || /^-[a-zA-Z]*S$/.test(cur)) {
+
+    const malformedSplitEq = cur.match(/^(-[a-zA-Z]*S)=(.*)$/);
+    if (malformedSplitEq) {
+      const malformedPayload = malformedSplitEq[2] ?? "";
+      return {
+        effectiveTokens: [],
+        extraPayloads: malformedPayload.trim().length > 0 ? [malformedPayload] : [],
+        ambiguousReason:
+          "Confirmation required: Malformed 'env -S=' syntax requires developer confirmation.",
+      };
+    }
+
+    if (cur === "-S" || cur === "--split-string" || /^-[i0v]*S$/.test(cur)) {
       if (idx + 1 >= tokens.length) {
         return {
           effectiveTokens: [],
@@ -489,25 +567,43 @@ function resolveEnvInvocation(tokens: string[]): {
       break;
     }
     if (ENV_VALUE_FLAGS.has(cur)) {
+      if (idx + 1 >= tokens.length) {
+        return {
+          effectiveTokens: [],
+          extraPayloads: [],
+          ambiguousReason: `Confirmation required: Missing value for 'env ${cur}' option requires developer confirmation.`,
+        };
+      }
       idx += 2;
       continue;
     }
     if (
       ENV_INLINE_VALUE_FLAG_PREFIXES.some((prefix) => cur.startsWith(prefix)) ||
-      /^-[uCa].+/.test(cur)
+      /^-[uCa].+/.test(cur) ||
+      ENV_BOOLEAN_FLAGS.has(cur) ||
+      /^-[i0v]+$/.test(cur)
     ) {
       idx++;
       continue;
     }
-    if (cur.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(cur)) {
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(cur)) {
       idx++;
       continue;
     }
-    return { effectiveTokens: tokens.slice(idx), extraPayloads: [] };
+    if (cur.startsWith("-")) {
+      preAmbiguousReason ??= `Confirmation required: Unrecognized 'env' option '${cur}' requires developer confirmation.`;
+      idx++;
+      continue;
+    }
+    return {
+      effectiveTokens: tokens.slice(idx),
+      extraPayloads: [],
+      ambiguousReason: preAmbiguousReason,
+    };
   }
 
   if (splitPayload === null) {
-    return { effectiveTokens: [], extraPayloads: [] };
+    return { effectiveTokens: [], extraPayloads: [], ambiguousReason: preAmbiguousReason };
   }
 
   if (splitPayload.trim().length === 0) {
@@ -530,26 +626,233 @@ function resolveEnvInvocation(tokens: string[]): {
     };
   }
 
-  if (parsed.segments.length === 0) {
-    return { effectiveTokens: trailingArgs, extraPayloads: [] };
-  }
-
-  if (parsed.segments.length > 1) {
+  const combinedTokens = [...firstTokens, ...trailingArgs];
+  const extraPayloads = parsed.segments.length > 1 ? [splitPayload] : [];
+  if (combinedTokens.length === 0) {
     return {
-      effectiveTokens: [...firstTokens, ...trailingArgs],
-      extraPayloads: [splitPayload],
+      effectiveTokens: [],
+      extraPayloads,
+      ambiguousReason: preAmbiguousReason,
     };
   }
 
+  // Re-parse tokens injected via `env -S "..."` as `env` options/assignments before resolving command
+  const subRes = resolveEnvInvocation(["env", ...combinedTokens], envDepth + 1);
   return {
-    effectiveTokens: [...firstTokens, ...trailingArgs],
-    extraPayloads: [],
+    effectiveTokens: subRes.effectiveTokens,
+    extraPayloads: [...extraPayloads, ...subRes.extraPayloads],
+    ambiguousReason: preAmbiguousReason ?? subRes.ambiguousReason,
   };
 }
 
+function resolvePrivilegeInvocation(tokens: string[], bin: "sudo" | "doas"): UnwrapStepResult {
+  const valueFlags = bin === "sudo" ? SUDO_VALUE_FLAGS : DOAS_VALUE_FLAGS;
+  let idx = 1;
+  let ambiguousReason: string | undefined;
+
+  while (idx < tokens.length) {
+    const cur = tokens[idx];
+    if (cur === "--") {
+      idx++;
+      break;
+    }
+    if (valueFlags.has(cur)) {
+      if (idx + 1 >= tokens.length) {
+        return {
+          effectiveTokens: [],
+          extraPayloads: [],
+          ambiguousReason: `Confirmation required: Missing argument for '${bin} ${cur}' requires developer confirmation.`,
+        };
+      }
+      idx += 2;
+      continue;
+    }
+    if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(cur)) {
+      idx++;
+      continue;
+    }
+    if (bin === "sudo") {
+      if (
+        /^--(?:user|group|host|prompt|role|type|close-from|chdir|chroot|preserve-env)=/.test(cur) ||
+        /^-[ughprtCDRTU].+/.test(cur) ||
+        /^--(?:askpass|background|bell|preserve-env|set-home|login|remove-timestamp|reset-timestamp|non-interactive|stdin|shell|validate|list|edit|version|help)$/.test(
+          cur,
+        ) ||
+        /^-[AbEHikKlnPSsVv]+$/.test(cur)
+      ) {
+        idx++;
+        continue;
+      }
+    } else if (/^-[Lns]+$/.test(cur) || /^-[uC].+/.test(cur)) {
+      idx++;
+      continue;
+    }
+
+    if (cur.startsWith("-")) {
+      ambiguousReason ??= `Confirmation required: Unrecognized '${bin}' option '${cur}' requires developer confirmation.`;
+      idx++;
+      continue;
+    }
+    break;
+  }
+
+  return {
+    effectiveTokens: tokens.slice(idx),
+    extraPayloads: [],
+    ambiguousReason,
+  };
+}
+
+function resolveModifierInvocation(
+  tokens: string[],
+  bin: "timeout" | "nice" | "xargs",
+): UnwrapStepResult {
+  let idx = 1;
+  let ambiguousReason: string | undefined;
+
+  if (bin === "timeout") {
+    let sawEndOfOptions = false;
+    while (idx < tokens.length && !sawEndOfOptions) {
+      const cur = tokens[idx];
+      if (cur === "--") {
+        idx++;
+        sawEndOfOptions = true;
+        break;
+      }
+      if (TIMEOUT_VALUE_FLAGS.has(cur)) {
+        if (idx + 1 >= tokens.length) {
+          return {
+            effectiveTokens: [],
+            extraPayloads: [],
+            ambiguousReason: `Confirmation required: Missing argument for 'timeout ${cur}' requires developer confirmation.`,
+          };
+        }
+        idx += 2;
+        continue;
+      }
+      if (
+        TIMEOUT_BOOLEAN_FLAGS.has(cur) ||
+        cur.startsWith("--kill-after=") ||
+        cur.startsWith("--signal=") ||
+        /^-[ks].+/.test(cur) ||
+        /^-[fpv]+$/.test(cur)
+      ) {
+        idx++;
+        continue;
+      }
+      if (cur.startsWith("-")) {
+        ambiguousReason ??= `Confirmation required: Unrecognized 'timeout' option '${cur}' requires developer confirmation.`;
+        idx++;
+        continue;
+      }
+      break;
+    }
+
+    const duration = tokens[idx];
+    if (!duration || !/^\d+(?:\.\d+)?[smhd]?$/i.test(duration)) {
+      return {
+        effectiveTokens: tokens.slice(idx),
+        extraPayloads: [],
+        ambiguousReason:
+          ambiguousReason ??
+          "Confirmation required: Malformed or missing 'timeout' duration requires developer confirmation.",
+      };
+    }
+    idx++;
+    if (idx >= tokens.length) {
+      return {
+        effectiveTokens: [],
+        extraPayloads: [],
+        ambiguousReason:
+          ambiguousReason ??
+          "Confirmation required: Incomplete 'timeout' invocation requires developer confirmation.",
+      };
+    }
+    return { effectiveTokens: tokens.slice(idx), extraPayloads: [], ambiguousReason };
+  }
+
+  if (bin === "nice") {
+    while (idx < tokens.length) {
+      const cur = tokens[idx];
+      if (cur === "--") {
+        idx++;
+        break;
+      }
+      if (cur === "-n" || cur === "--adjustment") {
+        const val = tokens[idx + 1];
+        if (!val || !/^[+-]?\d+$/.test(val)) {
+          return {
+            effectiveTokens: val ? tokens.slice(idx + 2) : [],
+            extraPayloads: [],
+            ambiguousReason: `Confirmation required: Malformed 'nice ${cur}' adjustment requires developer confirmation.`,
+          };
+        }
+        idx += 2;
+        continue;
+      }
+      if (
+        (cur.startsWith("--adjustment=") && /^[+-]?\d+$/.test(cur.slice("--adjustment=".length))) ||
+        /^-n[+-]?\d+$/.test(cur) ||
+        /^-\d+$/.test(cur)
+      ) {
+        idx++;
+        continue;
+      }
+      if (cur.startsWith("-")) {
+        ambiguousReason ??= `Confirmation required: Unrecognized 'nice' option '${cur}' requires developer confirmation.`;
+        idx++;
+        continue;
+      }
+      break;
+    }
+    return { effectiveTokens: tokens.slice(idx), extraPayloads: [], ambiguousReason };
+  }
+
+  // xargs option parser
+  while (idx < tokens.length) {
+    const cur = tokens[idx];
+    if (cur === "--") {
+      idx++;
+      break;
+    }
+    if (XARGS_VALUE_FLAGS.has(cur)) {
+      if (idx + 1 >= tokens.length) {
+        return {
+          effectiveTokens: [],
+          extraPayloads: [],
+          ambiguousReason: `Confirmation required: Missing argument for 'xargs ${cur}' requires developer confirmation.`,
+        };
+      }
+      idx += 2;
+      continue;
+    }
+    if (
+      XARGS_BOOLEAN_FLAGS.has(cur) ||
+      XARGS_OPTIONAL_NO_SPACE_FLAGS.has(cur) ||
+      /^-[0oprtx]+$/.test(cur) ||
+      /^-(?:a|d|E|e|I|i|L|l|n|P|s).+/.test(cur) ||
+      /^--(?:arg-file|delimiter|eof|replace|max-lines|max-args|max-procs|max-chars|process-slot-var)=/.test(
+        cur,
+      )
+    ) {
+      idx++;
+      continue;
+    }
+    if (cur.startsWith("-")) {
+      ambiguousReason ??= `Confirmation required: Unrecognized 'xargs' option '${cur}' requires developer confirmation.`;
+      idx++;
+      continue;
+    }
+    break;
+  }
+
+  return { effectiveTokens: tokens.slice(idx), extraPayloads: [], ambiguousReason };
+}
+
 /**
- * Unwraps shell grouping tokens, environment variable assignments, and benign command wrappers
- * (`command`, `nohup`, `env` including `-S` / `--split-string`) into the underlying command argv.
+ * Unwraps shell grouping tokens, environment assignments, benign wrappers (`command`, `nohup`, `env`),
+ * privilege wrappers (`sudo`, `doas`), and command modifiers (`timeout`, `nice`, `xargs`)
+ * into the resolved executable argv while recording privilege/ambiguity signals.
  */
 function resolveCommandSegment(
   rawTokens: string[],
@@ -560,7 +863,20 @@ function resolveCommandSegment(
   let end = tokens.length;
   const extraPayloads: string[] = [];
   let ambiguousReason: string | undefined;
+  let privilegeEscalationReason: string | undefined;
   let unwrapIterations = 0;
+
+  const applyStep = (step: UnwrapStepResult) => {
+    if (step.extraPayloads.length > 0) {
+      extraPayloads.push(...step.extraPayloads);
+    }
+    if (step.ambiguousReason && !ambiguousReason) {
+      ambiguousReason = step.ambiguousReason;
+    }
+    tokens = step.effectiveTokens;
+    idx = 0;
+    end = tokens.length;
+  };
 
   while (idx < end) {
     if (++unwrapIterations > 16) {
@@ -579,17 +895,20 @@ function resolveCommandSegment(
       if (tokens[idx] === "") idx++;
       continue;
     }
-    if (normalizeExecutableName(tok) === "env") {
-      const envRes = resolveEnvInvocation(tokens.slice(idx, end));
-      if (envRes.extraPayloads.length > 0) {
-        extraPayloads.push(...envRes.extraPayloads);
-      }
-      if (envRes.ambiguousReason && !ambiguousReason) {
-        ambiguousReason = envRes.ambiguousReason;
-      }
-      tokens = envRes.effectiveTokens;
-      idx = 0;
-      end = tokens.length;
+
+    const bin = normalizeExecutableName(tok);
+    if (bin === "env") {
+      applyStep(resolveEnvInvocation(tokens.slice(idx, end)));
+      continue;
+    }
+    if (bin === "sudo" || bin === "doas") {
+      privilegeEscalationReason ??=
+        "Confirmation required: Administrative privilege escalation requires developer confirmation.";
+      applyStep(resolvePrivilegeInvocation(tokens.slice(idx, end), bin));
+      continue;
+    }
+    if (bin === "timeout" || bin === "nice" || bin === "xargs") {
+      applyStep(resolveModifierInvocation(tokens.slice(idx, end), bin));
       continue;
     }
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tok)) {
@@ -620,6 +939,7 @@ function resolveCommandSegment(
     pipedFromPrevious,
     extraPayloads,
     ambiguousReason,
+    privilegeEscalationReason,
   };
 }
 
@@ -1385,39 +1705,12 @@ function extractCommandSubstitutions(commandLine: string): {
   return { substitutions };
 }
 
-function unwrapPrivilegeCommandTokens(seg: string[]): string[] | null {
-  const bin = normalizeExecutableName(seg[0]);
-  if (bin !== "sudo" && bin !== "doas") {
-    return null;
-  }
-
-  let idx = 1;
-  while (idx < seg.length) {
-    const cur = seg[idx];
-    if (cur === "--") {
-      idx++;
-      break;
-    }
-    if (SUDO_VALUE_FLAGS.has(cur)) {
-      idx += 2;
-      continue;
-    }
-    if (cur.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(cur)) {
-      idx++;
-      continue;
-    }
-    break;
-  }
-
-  return seg.slice(idx);
-}
-
 /**
  * Evaluates normalized argv tokens against prohibited (`deny`) and high-risk (`force_ask`) command rules.
  * Matching against normalized executable names prevents quote-concatenation bypasses (`'r'm`, `"c"at`)
- * without triggering false positives on inert string arguments (e.g., `echo 'rm -rf /'`).
+ * without triggering false positives on inert string arguments (e.g., `echo 'rm -rf /'`, `git commit -m '...'`).
  */
-function evaluateSegmentPatterns(seg: string[], guardDepth = 0): ClassificationResult | null {
+function evaluateSegmentPatterns(seg: string[]): ClassificationResult | null {
   if (seg.length === 0) return null;
   const bin = normalizeExecutableName(seg[0]);
   const normalizedSegStr = [bin, ...seg.slice(1)].join(" ");
@@ -1461,28 +1754,27 @@ function evaluateSegmentPatterns(seg: string[], guardDepth = 0): ClassificationR
     }
   }
 
-  if (guardDepth < 4) {
-    const innerPriv = unwrapPrivilegeCommandTokens(seg);
-    if (innerPriv && innerPriv.length > 0) {
-      const resolvedInner = resolveCommandSegment(innerPriv, false);
-      const innerHit = evaluateSegmentPatterns(resolvedInner.tokens, guardDepth + 1);
-      if (innerHit?.decision === "deny") {
-        return innerHit;
-      }
-    }
-  }
-
-  if (HIGH_RISK_BINS.has(bin)) {
-    for (const { pattern, reason } of HIGH_RISK_COMMANDS) {
+  if (PERMISSION_HIGH_RISK_BINS.has(bin)) {
+    for (const { pattern, reason } of PERMISSION_HIGH_RISK_COMMANDS) {
       if (pattern.test(normalizedSegStr)) {
         return {
           decision: "force_ask",
           semanticClass: "destructive",
           reason: `Confirmation required: ${reason}`,
-          category: /git/i.test(reason) ? "high_risk_git" : "dangerous_permissions",
+          category: "dangerous_permissions",
         };
       }
     }
+  }
+
+  if (HOST_PRIVILEGE_ESCALATION_BINS.has(bin)) {
+    return {
+      decision: "force_ask",
+      semanticClass: "destructive",
+      reason:
+        "Confirmation required: Administrative privilege escalation requires developer confirmation.",
+      category: "dangerous_permissions",
+    };
   }
 
   return null;
@@ -1535,7 +1827,7 @@ function classifyCommandLineRaw(commandLine: string, depth: number): Classificat
     });
   }
 
-  // 2. Parse into quote-normalized shell segments and resolve wrappers (`env`, `nohup`, `command`)
+  // 2. Parse into quote-normalized shell segments and resolve env/privilege/modifier wrappers
   const parsedShell = splitShellSegmentsWithSeparators(trimmed);
   if (parsedShell.hasUnclosedQuote) {
     recordEscalation({
@@ -1549,7 +1841,13 @@ function classifyCommandLineRaw(commandLine: string, depth: number): Classificat
 
   const resolvedSegments = parsedShell.segments
     .map((s) => resolveCommandSegment(s.tokens, s.pipedFromPrevious))
-    .filter((r) => r.tokens.length > 0 || r.ambiguousReason || r.extraPayloads.length > 0);
+    .filter(
+      (r) =>
+        r.tokens.length > 0 ||
+        Boolean(r.ambiguousReason) ||
+        Boolean(r.privilegeEscalationReason) ||
+        r.extraPayloads.length > 0,
+    );
 
   const inspectNestedPayload = (
     payload: string,
@@ -1583,6 +1881,15 @@ function classifyCommandLineRaw(commandLine: string, depth: number): Classificat
         "Confirmation required: Shell wrapper nesting exceeds inspection depth and requires developer confirmation.",
       );
       if (denied) return denied;
+    }
+
+    if (resolved.privilegeEscalationReason) {
+      recordEscalation({
+        decision: "force_ask",
+        semanticClass: "destructive",
+        reason: resolved.privilegeEscalationReason,
+        category: "dangerous_permissions",
+      });
     }
 
     if (resolved.ambiguousReason) {
