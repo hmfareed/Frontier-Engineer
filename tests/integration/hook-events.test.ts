@@ -27,6 +27,7 @@ describe("hook handler and audit logger integration", () => {
     // 2. PreToolUse - allow
     const preAllow = handlePreToolUse({
       conversationId: "conv-evt-1",
+      workspacePaths: [root],
       toolCall: { name: "run_command", args: { CommandLine: "npm run test" } },
       stepIdx: 1,
     });
@@ -35,6 +36,7 @@ describe("hook handler and audit logger integration", () => {
     // 3. PreToolUse - deny
     const preDeny = handlePreToolUse({
       conversationId: "conv-evt-1",
+      workspacePaths: [root],
       toolCall: { name: "run_command", args: { CommandLine: "rm -rf /" } },
       stepIdx: 2,
     });
@@ -43,6 +45,7 @@ describe("hook handler and audit logger integration", () => {
     // 4. PostToolUse
     const postRes = handlePostToolUse({
       conversationId: "conv-evt-1",
+      workspacePaths: [root],
       toolCall: { name: "run_command", args: { CommandLine: "npm run test" } },
       stepIdx: 3,
       error: "",
@@ -52,6 +55,7 @@ describe("hook handler and audit logger integration", () => {
     // 5. PreInvocation
     const preInv = handlePreInvocation({
       conversationId: "conv-evt-1",
+      workspacePaths: [root],
       invocationNum: 1,
     });
     expect(preInv.injectSteps).toHaveLength(1);
@@ -59,6 +63,7 @@ describe("hook handler and audit logger integration", () => {
     // 6. PostInvocation
     const postInv = handlePostInvocation({
       conversationId: "conv-evt-1",
+      workspacePaths: [root],
       invocationNum: 1,
       initialNumSteps: 3,
     });
@@ -67,6 +72,7 @@ describe("hook handler and audit logger integration", () => {
     // 7. Stop
     const stopRes = handleStop({
       conversationId: "conv-evt-1",
+      workspacePaths: [root],
       executionNum: 1,
       terminationReason: "NO_TOOL_CALL",
     });

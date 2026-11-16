@@ -85,6 +85,28 @@ function isDevicePath(p: string): boolean {
   return /^[/\\]{2}[.?](?:[/\\]|$)/.test(p);
 }
 
+/** Detects Windows NTFS Alternate Data Stream syntax (`file::$DATA`, `file:stream`). */
+export function hasNtfsStreamSyntax(p: string): boolean {
+  if (typeof p !== "string" || p.length === 0) return false;
+  const afterDrive = p.replace(/^[a-zA-Z]:/, "");
+  return afterDrive.includes(":");
+}
+
+/**
+ * Strips Windows-equivalent trailing dots and ASCII spaces from non-dot path components
+ * (`hooks.json.` -> `hooks.json`, `.env ` -> `.env`) while preserving `.`, `..`, `..foo.ts`, `.env`.
+ */
+export function stripTrailingDotsAndSpacesFromPath(p: string): string {
+  const fwd = p.replace(/\\/g, "/");
+  return fwd
+    .split("/")
+    .map((seg) => {
+      if (seg === "" || seg === "." || seg === "..") return seg;
+      return seg.replace(/[. ]+$/, "");
+    })
+    .join("/");
+}
+
 function isUncLikePath(p: string): boolean {
   const fwd = p.replace(/\\/g, "/");
   return fwd.startsWith("//");
@@ -209,6 +231,13 @@ export function resolveWorkspaceContainment(
     return {
       allowed: false,
       reason: "Device paths are outside approved workspace boundaries.",
+    };
+  }
+
+  if (hasNtfsStreamSyntax(filePath) || hasNtfsStreamSyntax(workspaceRoot)) {
+    return {
+      allowed: false,
+      reason: "NTFS Alternate Data Stream syntax (':') is prohibited outside verified path roots.",
     };
   }
 

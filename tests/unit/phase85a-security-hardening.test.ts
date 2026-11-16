@@ -175,7 +175,7 @@ describe("Phase 8.5A: Stateless Security & Boundary Hardening", () => {
       expect(emptyRes.category).toBe("destructive_filesystem");
     });
 
-    it("rejects directory symlink/junction escapes outside workspace and broken symlink escapes", () => {
+    it("rejects directory symlink and junction escapes outside workspace", () => {
       const junctionPath = path.join(workspaceRoot, "src", "linked-outside");
       fs.symlinkSync(outsideDir, junctionPath, process.platform === "win32" ? "junction" : "dir");
 
@@ -192,8 +192,13 @@ describe("Phase 8.5A: Stateless Security & Boundary Hardening", () => {
       // Traversal through escaping directory symlink
       const escapedNested = path.join("src", "linked-outside", "nested", "payload.ts");
       expect(resolveWorkspaceContainment(escapedNested, workspaceRoot).allowed).toBe(false);
+    });
 
+    it("rejects escaping, broken, and control-plane-aliased file symlinks (POSIX / privileged Windows)", () => {
       if (!canCreateFileSymlinks()) {
+        if (process.platform !== "win32") {
+          throw new Error("Expected file symlinks to be creatable on non-Windows host.");
+        }
         console.log("[SKIPPED: Windows EPERM on file symlinks without Developer Mode]");
         return;
       }

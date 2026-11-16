@@ -70,7 +70,8 @@ describe("hook dispatcher subprocess integration", () => {
 
   it("intercepts secret exposure and returns deny", async () => {
     const payload = JSON.stringify({
-      toolCall: { name: "read_file", args: { Path: "C:/Projects/Frontier-Engineer/.env" } },
+      workspacePaths: [root],
+      toolCall: { name: "read_file", args: { Path: path.join(root, ".env") } },
       stepIdx: 3,
       conversationId: "test-runtime-3",
     });
@@ -107,9 +108,10 @@ describe("hook dispatcher subprocess integration", () => {
     const safeView = await runDispatcher(
       ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
       JSON.stringify({
+        workspacePaths: [root],
         toolCall: {
           name: "view_file",
-          args: { AbsolutePath: "C:/Projects/Frontier-Engineer/package.json" },
+          args: { AbsolutePath: path.join(root, "package.json") },
         },
         stepIdx: 5,
         conversationId: "test-runtime-5",
@@ -122,9 +124,10 @@ describe("hook dispatcher subprocess integration", () => {
     const sensitiveView = await runDispatcher(
       ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
       JSON.stringify({
+        workspacePaths: [root],
         toolCall: {
           name: "view_file",
-          args: { AbsolutePath: "C:/Projects/Frontier-Engineer/.env" },
+          args: { AbsolutePath: path.join(root, ".env") },
         },
         stepIdx: 6,
         conversationId: "test-runtime-6",
@@ -137,6 +140,7 @@ describe("hook dispatcher subprocess integration", () => {
     const sensitiveWrite = await runDispatcher(
       ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
       JSON.stringify({
+        workspacePaths: [root],
         toolCall: {
           name: "write_to_file",
           args: { TargetFile: "id_rsa", Content: "private" },
@@ -152,6 +156,7 @@ describe("hook dispatcher subprocess integration", () => {
     const sensitiveReplace = await runDispatcher(
       ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
       JSON.stringify({
+        workspacePaths: [root],
         toolCall: {
           name: "replace_file_content",
           args: { TargetFile: "credentials.json", Target: "a", Replacement: "b" },
@@ -167,6 +172,7 @@ describe("hook dispatcher subprocess integration", () => {
     const sensitiveMultiReplace = await runDispatcher(
       ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
       JSON.stringify({
+        workspacePaths: [root],
         toolCall: {
           name: "multi_replace_file_content",
           args: { TargetFile: "server.key" },

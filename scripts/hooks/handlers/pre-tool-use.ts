@@ -106,17 +106,52 @@ function recordAuditAndBuildOutput(
   };
 }
 
+function resolveExplicitWorkspaceRoot(payload: PreToolUsePayload): {
+  valid: boolean;
+  workspaceRoot: string;
+} {
+  if (payload.workspacePaths !== undefined) {
+    if (!Array.isArray(payload.workspacePaths)) {
+      return { valid: false, workspaceRoot: "" };
+    }
+    const validEntries: string[] = [];
+    for (const entry of payload.workspacePaths) {
+      if (typeof entry !== "string" || entry.trim().length === 0) {
+        return { valid: false, workspaceRoot: "" };
+      }
+      validEntries.push(entry.trim());
+    }
+    const uniqueEntries = Array.from(new Set(validEntries));
+    if (uniqueEntries.length === 1) {
+      return { valid: true, workspaceRoot: uniqueEntries[0] };
+    }
+    if (uniqueEntries.length > 1) {
+      return { valid: false, workspaceRoot: "" };
+    }
+    // workspacePaths was explicitly [] — fall back only to explicit non-empty payload.cwd, never process.cwd()
+    if (typeof payload.cwd === "string" && payload.cwd.trim().length > 0) {
+      return { valid: true, workspaceRoot: payload.cwd.trim() };
+    }
+    return { valid: false, workspaceRoot: "" };
+  }
+
+  if (typeof payload.cwd === "string" && payload.cwd.trim().length > 0) {
+    return { valid: true, workspaceRoot: payload.cwd.trim() };
+  }
+
+  // Never fall back to process.cwd() when both workspacePaths and cwd are missing.
+  return { valid: false, workspaceRoot: "" };
+}
+
 export function handlePreToolUse(payload: PreToolUsePayload): PreToolUseOutput {
   const toolName = payload.toolCall?.name ?? "";
   const toolArgs = payload.toolCall?.args ?? {};
-  const workspaceRoot = payload.workspacePaths?.[0] ?? payload.cwd;
-  const effectiveWorkspaceRoot = Array.isArray(payload.workspacePaths)
-    ? (payload.workspacePaths[0] ?? payload.cwd ?? "")
-    : (payload.cwd ?? process.cwd());
+  const wsContext = resolveExplicitWorkspaceRoot(payload);
+  const workspaceRoot = wsContext.valid ? wsContext.workspaceRoot : undefined;
   const flags = resolveEnvFlags();
 
   let classification = classifyToolCall(toolName, toolArgs, {
-    workspaceRoot: effectiveWorkspaceRoot,
+    workspaceRoot: wsContext.workspaceRoot,
   });
 
   // Validate handoff markers wherever they appear, without ever upgrading unknown tools to allow
@@ -314,7 +349,8 @@ export async function prepareAndGateSubagentToolCall(
 ): Promise<PreToolUseOutput> {
   const toolName = payload.toolCall?.name ?? "";
   const toolArgs = payload.toolCall?.args ?? {};
-  const workspaceRoot = payload.workspacePaths?.[0] ?? payload.cwd;
+  const wsContext = resolveExplicitWorkspaceRoot(payload);
+  const workspaceRoot = wsContext.valid ? wsContext.workspaceRoot : undefined;
 
   if (!SPAWN_DELEGATION_TOOLS.has(toolName)) {
     return handlePreToolUse(payload);

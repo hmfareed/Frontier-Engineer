@@ -12,7 +12,11 @@
 
 import path from "node:path";
 import { normalizeToolCall } from "./event-context.ts";
-import { resolveWorkspaceContainment } from "./workspace-validator.ts";
+import {
+  hasNtfsStreamSyntax,
+  resolveWorkspaceContainment,
+  stripTrailingDotsAndSpacesFromPath,
+} from "./workspace-validator.ts";
 
 export type ToolDecision = "allow" | "deny" | "force_ask" | "ask";
 
@@ -177,7 +181,13 @@ const DESTRUCTIVE_TOOL_NAME_PATTERN =
 const EXTERNAL_SIDE_EFFECT_PATTERN =
   /(?:^|[_-])(?:publish|deploy|broadcast|notify|upload|push|send|post|payment|charge|transfer)(?:[_-]|$)/i;
 
-/** Control-plane directories and manifest files protected from direct agent writes/edits. */
+/**
+ * Control-plane directories and manifests protected unconditionally from direct agent writes/edits (`deny`).
+ * Includes host/agent control directories (`.gemini/`, `.claude/`, `.agent/`, `.frontier/`), git/CI/hook
+ * infrastructure (`.git/`, `.github/workflows/`, `.husky/`, `scripts/hooks/`, `specs/hooks/`), and
+ * the repository validation gate (`scripts/validate.ts`), because self-modifying these weakens trust boundaries.
+ * Reads remain permitted (`allow`).
+ */
 export const PROTECTED_CONTROL_PLANE_DIRECTORIES = [
   ".git",
   ".frontier",
@@ -185,6 +195,9 @@ export const PROTECTED_CONTROL_PLANE_DIRECTORIES = [
   ".husky",
   "scripts/hooks",
   "specs/hooks",
+  ".gemini",
+  ".claude",
+  ".agent",
 ] as const;
 
 export const PROTECTED_CONTROL_PLANE_MANIFESTS = [
@@ -193,12 +206,138 @@ export const PROTECTED_CONTROL_PLANE_MANIFESTS = [
   "plugin.json",
 ] as const;
 
-function splitShellSegments(commandLine: string): string[][] {
-  const segments: string[][] = [];
+export const PROTECTED_CONTROL_PLANE_FILES = ["scripts/validate.ts"] as const;
+
+/**
+ * Dependency, script, and compiler manifests requiring fresh developer confirmation (`force_ask`) on write/edit.
+ * Unconditional denial would block legitimate dependency/build maintenance, while silent edits could inject
+ * lifecycle scripts or weaken compiler/lockfile integrity without approval. Reads and `rm` rules stay unchanged.
+ */
+export const CONFIRMATION_REQUIRED_PROJECT_FILES = [
+  "package.json",
+  "package-lock.json",
+  "tsconfig.json",
+] as const;
+
+const MAX_SHELL_WRAPPER_DEPTH = 8;
+
+const SHELL_INTERPRETER_BINS = new Set([
+  "bash",
+  "sh",
+  "zsh",
+  "dash",
+  "ash",
+  "ksh",
+  "fish",
+  "powershell",
+  "pwsh",
+  "cmd",
+  "iex",
+  "invoke-expression",
+]);
+
+const ENV_VALUE_FLAGS = new Set(["-u", "--unset", "-C", "--chdir", "-a", "--argv0"]);
+const ENV_INLINE_VALUE_FLAG_PREFIXES = ["--unset=", "--chdir=", "--argv0="];
+const SUDO_VALUE_FLAGS = new Set([
+  "-u",
+  "-g",
+  "-h",
+  "-p",
+  "-r",
+  "-t",
+  "-C",
+  "-D",
+  "-R",
+  "-T",
+  "-U",
+]);
+
+/** Executables eligible for destructive-filesystem command pattern checks. */
+const DESTRUCTIVE_FS_BINS = new Set([
+  "format",
+  "mkfs",
+  "diskpart",
+  "rm",
+  "rmdir",
+  "rd",
+  "remove-item",
+  "del",
+  "erase",
+]);
+
+/** Executables eligible for secret-printing / exfiltration command pattern checks. */
+const SECRET_EXFIL_BINS = new Set([
+  "cat",
+  "type",
+  "get-content",
+  "gc",
+  "head",
+  "tail",
+  "more",
+  "less",
+  "curl",
+  "wget",
+  "invoke-restmethod",
+  "invoke-webrequest",
+]);
+
+/** Executables (and synthetic SQL-leading tokens) eligible for destructive database mutation checks. */
+const DB_CLIENT_BINS = new Set([
+  "psql",
+  "mysql",
+  "sqlite3",
+  "sqlcmd",
+  "mongosh",
+  "duckdb",
+  "cockroach",
+  "clickhouse-client",
+  "drop",
+  "truncate",
+  "delete",
+  "alter",
+]);
+
+/** Executables eligible for high-risk `force_ask` command pattern checks. */
+const HIGH_RISK_BINS = new Set([
+  "git",
+  "chmod",
+  "icacls",
+  "sudo",
+  "doas",
+  "takeown",
+  "set-mppreference",
+]);
+
+interface ShellSegment {
+  tokens: string[];
+  pipedFromPrevious: boolean;
+}
+
+interface ParsedShellCommand {
+  segments: ShellSegment[];
+  hasUnclosedQuote: boolean;
+}
+
+interface ResolvedCommandSegment {
+  tokens: string[];
+  pipedFromPrevious: boolean;
+  extraPayloads: string[];
+  ambiguousReason?: string;
+}
+
+/**
+ * Quote-aware shell command segmenter supporting chained (`&&`, `||`, `;`, `|`, `&`, newlines).
+ * Tracks unclosed quotes so callers can fail conservatively on malformed shell syntax.
+ * Note: This is a conservative pre-execution heuristic tokenizer, NOT a full POSIX Bash or PowerShell AST parser
+ * (unsupported constructs include arbitrary shell functions/aliases, heredocs, and dynamic variable expansion).
+ */
+function splitShellSegmentsWithSeparators(commandLine: string): ParsedShellCommand {
+  const segments: ShellSegment[] = [];
   let currentTokens: string[] = [];
   let current = "";
   let hasToken = false;
   let quote: "'" | '"' | null = null;
+  let previousSeparator: string | null = null;
 
   const pushToken = () => {
     if (hasToken || current.length > 0) {
@@ -208,12 +347,16 @@ function splitShellSegments(commandLine: string): string[][] {
     }
   };
 
-  const pushSegment = () => {
+  const pushSegment = (nextSeparator: string | null) => {
     pushToken();
     if (currentTokens.length > 0) {
-      segments.push(currentTokens);
+      segments.push({
+        tokens: currentTokens,
+        pipedFromPrevious: previousSeparator === "|",
+      });
       currentTokens = [];
     }
+    previousSeparator = nextSeparator;
   };
 
   for (let i = 0; i < commandLine.length; i++) {
@@ -240,17 +383,17 @@ function splitShellSegments(commandLine: string): string[][] {
     }
 
     if (ch === "&" && next === "&") {
-      pushSegment();
+      pushSegment("&&");
       i++;
       continue;
     }
     if (ch === "|" && next === "|") {
-      pushSegment();
+      pushSegment("||");
       i++;
       continue;
     }
-    if (ch === ";" || ch === "|" || ch === "\n" || ch === "\r") {
-      pushSegment();
+    if (ch === "&" || ch === ";" || ch === "|" || ch === "\n" || ch === "\r") {
+      pushSegment(ch);
       continue;
     }
 
@@ -263,26 +406,190 @@ function splitShellSegments(commandLine: string): string[][] {
     hasToken = true;
   }
 
-  pushSegment();
-  return segments;
+  pushSegment(null);
+  return { segments, hasUnclosedQuote: quote !== null };
 }
 
-function unwrapCommandSegment(rawTokens: string[]): string[] {
-  let idx = 0;
-  while (idx < rawTokens.length) {
-    const tok = rawTokens[idx];
-    if (tok === "&" || tok === "command" || tok === "nohup") {
+function unescapePosixBackslashes(commandLine: string): string {
+  let out = "";
+  let quote: "'" | '"' | null = null;
+  for (let i = 0; i < commandLine.length; i++) {
+    const ch = commandLine[i];
+    const next = commandLine[i + 1];
+    if (quote === "'") {
+      if (ch === "'") quote = null;
+      out += ch;
+      continue;
+    }
+    if (quote === '"') {
+      if (ch === '"') {
+        quote = null;
+        out += ch;
+        continue;
+      }
+      if (ch === "\\" && (next === '"' || next === "\\" || next === "$" || next === "`")) {
+        out += next;
+        i++;
+        continue;
+      }
+      out += ch;
+      continue;
+    }
+    if (ch === "'" || ch === '"') {
+      quote = ch;
+      out += ch;
+      continue;
+    }
+    if (ch === "\\" && next !== undefined) {
+      out += next;
+      i++;
+      continue;
+    }
+    out += ch;
+  }
+  return out;
+}
+
+function resolveEnvInvocation(tokens: string[]): {
+  effectiveTokens: string[];
+  extraPayloads: string[];
+  ambiguousReason?: string;
+} {
+  let idx = 1;
+  let splitPayload: string | null = null;
+  let trailingArgs: string[] = [];
+
+  while (idx < tokens.length) {
+    const cur = tokens[idx];
+    if (cur === "--") {
+      idx++;
+      return { effectiveTokens: tokens.slice(idx), extraPayloads: [] };
+    }
+    if (cur === "-S" || cur === "--split-string" || /^-[a-zA-Z]*S$/.test(cur)) {
+      if (idx + 1 >= tokens.length) {
+        return {
+          effectiveTokens: [],
+          extraPayloads: [],
+          ambiguousReason:
+            "Confirmation required: Incomplete 'env -S' invocation requires developer confirmation.",
+        };
+      }
+      splitPayload = tokens[idx + 1];
+      trailingArgs = tokens.slice(idx + 2);
+      break;
+    }
+    if (cur.startsWith("--split-string=")) {
+      splitPayload = cur.slice("--split-string=".length);
+      trailingArgs = tokens.slice(idx + 1);
+      break;
+    }
+    if (cur.startsWith("-S") && cur.length > 2) {
+      splitPayload = cur.slice(2);
+      trailingArgs = tokens.slice(idx + 1);
+      break;
+    }
+    if (ENV_VALUE_FLAGS.has(cur)) {
+      idx += 2;
+      continue;
+    }
+    if (
+      ENV_INLINE_VALUE_FLAG_PREFIXES.some((prefix) => cur.startsWith(prefix)) ||
+      /^-[uCa].+/.test(cur)
+    ) {
       idx++;
       continue;
     }
-    if (tok === "env") {
+    if (cur.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(cur)) {
       idx++;
-      while (
-        idx < rawTokens.length &&
-        (rawTokens[idx].startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(rawTokens[idx]))
-      ) {
-        idx++;
+      continue;
+    }
+    return { effectiveTokens: tokens.slice(idx), extraPayloads: [] };
+  }
+
+  if (splitPayload === null) {
+    return { effectiveTokens: [], extraPayloads: [] };
+  }
+
+  if (splitPayload.trim().length === 0) {
+    return {
+      effectiveTokens: trailingArgs,
+      extraPayloads: [],
+      ambiguousReason:
+        "Confirmation required: Empty 'env -S' payload requires developer confirmation.",
+    };
+  }
+
+  const parsed = splitShellSegmentsWithSeparators(splitPayload);
+  const firstTokens = parsed.segments[0]?.tokens ?? [];
+  if (parsed.hasUnclosedQuote) {
+    return {
+      effectiveTokens: [...firstTokens, ...trailingArgs],
+      extraPayloads: [splitPayload],
+      ambiguousReason:
+        "Confirmation required: Unclosed shell quote in 'env -S' payload requires developer confirmation.",
+    };
+  }
+
+  if (parsed.segments.length === 0) {
+    return { effectiveTokens: trailingArgs, extraPayloads: [] };
+  }
+
+  if (parsed.segments.length > 1) {
+    return {
+      effectiveTokens: [...firstTokens, ...trailingArgs],
+      extraPayloads: [splitPayload],
+    };
+  }
+
+  return {
+    effectiveTokens: [...firstTokens, ...trailingArgs],
+    extraPayloads: [],
+  };
+}
+
+/**
+ * Unwraps shell grouping tokens, environment variable assignments, and benign command wrappers
+ * (`command`, `nohup`, `env` including `-S` / `--split-string`) into the underlying command argv.
+ */
+function resolveCommandSegment(
+  rawTokens: string[],
+  pipedFromPrevious: boolean,
+): ResolvedCommandSegment {
+  let tokens = [...rawTokens];
+  let idx = 0;
+  let end = tokens.length;
+  const extraPayloads: string[] = [];
+  let ambiguousReason: string | undefined;
+  let unwrapIterations = 0;
+
+  while (idx < end) {
+    if (++unwrapIterations > 16) {
+      ambiguousReason ??=
+        "Confirmation required: Command wrapper nesting exceeds inspection limit and requires developer confirmation.";
+      break;
+    }
+
+    const tok = tokens[idx];
+    if (tok === "&" || tok === "{" || tok === "(" || tok === "command" || tok === "nohup") {
+      idx++;
+      continue;
+    }
+    if (tok.startsWith("(") || tok.startsWith("{")) {
+      tokens[idx] = tok.slice(1);
+      if (tokens[idx] === "") idx++;
+      continue;
+    }
+    if (normalizeExecutableName(tok) === "env") {
+      const envRes = resolveEnvInvocation(tokens.slice(idx, end));
+      if (envRes.extraPayloads.length > 0) {
+        extraPayloads.push(...envRes.extraPayloads);
       }
+      if (envRes.ambiguousReason && !ambiguousReason) {
+        ambiguousReason = envRes.ambiguousReason;
+      }
+      tokens = envRes.effectiveTokens;
+      idx = 0;
+      end = tokens.length;
       continue;
     }
     if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(tok)) {
@@ -291,7 +598,29 @@ function unwrapCommandSegment(rawTokens: string[]): string[] {
     }
     break;
   }
-  return rawTokens.slice(idx);
+
+  while (end > idx) {
+    const tail = tokens[end - 1];
+    if (tail === "}" || tail === ")" || tail === ";") {
+      end--;
+      continue;
+    }
+    if (tail.endsWith("}") || tail.endsWith(")")) {
+      tokens[end - 1] = tail.slice(0, -1);
+      if (tokens[end - 1] === "") {
+        end--;
+        continue;
+      }
+    }
+    break;
+  }
+
+  return {
+    tokens: tokens.slice(idx, end).filter((t) => t.length > 0),
+    pipedFromPrevious,
+    extraPayloads,
+    ambiguousReason,
+  };
 }
 
 function normalizeExecutableName(token: string): string {
@@ -396,11 +725,8 @@ function classifyGitSegment(tokens: string[]): ClassificationResult | null {
       positionalArgs.push(arg);
     }
 
-    // Check refspec force-push syntax (`+branch` or `+HEAD:main` or `+src:dst`)
-    const hasPlusRefspec = positionalArgs.some((pos, index) => {
-      if (!pos.startsWith("+") || pos.length <= 1) return false;
-      return index >= 1 || pos.includes(":");
-    });
+    // Check refspec force-push syntax (`+main`, `+HEAD:main`, `+src:dst`, `origin +main`)
+    const hasPlusRefspec = positionalArgs.some((pos) => pos.startsWith("+") && pos.length > 1);
     if (hasPlusRefspec) {
       return {
         decision: "force_ask",
@@ -571,6 +897,102 @@ function scanPositionalArgs(
   return { positional, hasGlobalFlag };
 }
 
+const YARN_PRE_SUB_VALUE_FLAGS = new Set([
+  "--cwd",
+  "--modules-folder",
+  "--cache-folder",
+  "--preferred-cache-folder",
+  "--global-folder",
+  "--registry",
+  "--proxy",
+  "--https-proxy",
+  "--network-timeout",
+  "--network-concurrency",
+  "--mutex",
+  "--use-yarnrc",
+]);
+
+const PIP_PRE_SUB_VALUE_FLAGS = new Set([
+  "--cache-dir",
+  "--python",
+  "--root-user-action",
+  "--proxy",
+  "--cert",
+  "--client-cert",
+  "--trusted-host",
+  "--timeout",
+  "--retries",
+  "--exists-action",
+  "--log",
+  "-C",
+  "-i",
+  "--index-url",
+  "--extra-index-url",
+]);
+
+const UV_PRE_SUB_VALUE_FLAGS = new Set([
+  "--project",
+  "--directory",
+  "--python",
+  "--cache-dir",
+  "--config-file",
+  "--index-url",
+  "--extra-index-url",
+  "--default-index",
+  "-C",
+]);
+
+const POETRY_PRE_SUB_VALUE_FLAGS = new Set(["--directory", "-C", "--project"]);
+const CARGO_PRE_SUB_VALUE_FLAGS = new Set([
+  "--manifest-path",
+  "--target-dir",
+  "--color",
+  "--config",
+  "-C",
+  "-Z",
+]);
+const GO_PRE_SUB_VALUE_FLAGS = new Set(["-C"]);
+const COMPOSER_PRE_SUB_VALUE_FLAGS = new Set(["-d", "--working-dir"]);
+const GEM_PRE_SUB_VALUE_FLAGS = new Set(["-I", "--config-file"]);
+
+function findSubcommandAndRest(
+  tokens: string[],
+  valueFlags: Set<string>,
+): { subcommand: string; rest: string[] } | null {
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (tok === "--") {
+      if (i + 1 < tokens.length) {
+        return { subcommand: tokens[i + 1].toLowerCase(), rest: tokens.slice(i + 2) };
+      }
+      return null;
+    }
+    if (valueFlags.has(tok)) {
+      i++;
+      continue;
+    }
+    if (tok.startsWith("-")) continue;
+    return { subcommand: tok.toLowerCase(), rest: tokens.slice(i + 1) };
+  }
+  return null;
+}
+
+function hasRequirementInstallFlag(args: string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i];
+    if (arg === "--") break;
+    if (
+      arg === "-r" ||
+      arg === "--requirement" ||
+      arg.startsWith("--requirement=") ||
+      (/^-r.+/.test(arg) && !arg.startsWith("--"))
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function classifyPackageInstallSegment(tokens: string[]): ClassificationResult | null {
   if (tokens.length === 0) return null;
   let bin = normalizeExecutableName(tokens[0]);
@@ -581,13 +1003,30 @@ function classifyPackageInstallSegment(tokens: string[]): ClassificationResult |
     rest = rest.slice(1);
   }
 
-  // Handle `python -m pip install <pkg>` / `python3 -m pip install <pkg>` / `py -m pip install <pkg>`
-  if ((bin === "python" || bin === "python3" || bin === "py") && rest[0] === "-m" && rest[1]) {
-    const mod = rest[1].toLowerCase();
-    if (mod === "pip" || mod === "pip3" || mod === "uv" || mod === "poetry") {
-      bin = mod;
-      rest = rest.slice(2);
-    } else {
+  const PYTHON_VALUE_FLAGS = new Set(["-W", "-X", "--check-hash-based-pycs"]);
+
+  // Handle `python [-u|-B|...] -m pip|uv|poetry ...`
+  if (bin === "python" || bin === "python3" || bin === "py") {
+    let resolvedModule = false;
+    for (let i = 0; i < rest.length; i++) {
+      const tok = rest[i];
+      if (tok === "-m" && rest[i + 1]) {
+        const mod = rest[i + 1].toLowerCase();
+        if (mod === "pip" || mod === "pip3" || mod === "uv" || mod === "poetry") {
+          bin = mod;
+          rest = rest.slice(i + 2);
+          resolvedModule = true;
+        }
+        break;
+      }
+      if (PYTHON_VALUE_FLAGS.has(tok)) {
+        i++;
+        continue;
+      }
+      if (tok.startsWith("-")) continue;
+      break;
+    }
+    if (!resolvedModule) {
       return null;
     }
   }
@@ -630,25 +1069,13 @@ function classifyPackageInstallSegment(tokens: string[]): ClassificationResult |
   }
 
   if (bin === "pnpm" || bin === "bun") {
-    let subIdx = -1;
-    for (let i = 0; i < rest.length; i++) {
-      const tok = rest[i];
-      if (PKG_INSTALL_VALUE_FLAGS.has(tok)) {
-        i++;
-        continue;
-      }
-      if (tok.startsWith("-")) continue;
-      subIdx = i;
-      break;
-    }
-    if (subIdx === -1) return null;
-    const sub = rest[subIdx].toLowerCase();
-    const afterSub = rest.slice(subIdx + 1);
-    if (sub === "add" || (bin === "bun" && sub === "a")) {
+    const found = findSubcommandAndRest(rest, PKG_INSTALL_VALUE_FLAGS);
+    if (!found) return null;
+    if (found.subcommand === "add" || (bin === "bun" && found.subcommand === "a")) {
       return pkgConfirm(bin);
     }
-    if (sub === "install" || sub === "i") {
-      const { positional, hasGlobalFlag } = scanPositionalArgs(afterSub, PKG_INSTALL_VALUE_FLAGS);
+    if (found.subcommand === "install" || found.subcommand === "i") {
+      const { positional, hasGlobalFlag } = scanPositionalArgs(found.rest, PKG_INSTALL_VALUE_FLAGS);
       if (hasGlobalFlag || positional.length > 0) {
         return pkgConfirm(bin);
       }
@@ -657,12 +1084,12 @@ function classifyPackageInstallSegment(tokens: string[]): ClassificationResult |
   }
 
   if (bin === "yarn") {
-    const firstPos = rest.find((t) => !t.startsWith("-"))?.toLowerCase();
-    if (!firstPos) return null;
-    if (firstPos === "add") return pkgConfirm("yarn");
-    if (firstPos === "global") {
-      const afterGlobal = rest.slice(rest.findIndex((t) => t.toLowerCase() === "global") + 1);
-      if (afterGlobal.some((t) => t.toLowerCase() === "add")) {
+    const found = findSubcommandAndRest(rest, YARN_PRE_SUB_VALUE_FLAGS);
+    if (!found) return null;
+    if (found.subcommand === "add") return pkgConfirm("yarn");
+    if (found.subcommand === "global") {
+      const afterGlobal = findSubcommandAndRest(found.rest, YARN_PRE_SUB_VALUE_FLAGS);
+      if (afterGlobal?.subcommand === "add") {
         return pkgConfirm("yarn");
       }
     }
@@ -670,10 +1097,12 @@ function classifyPackageInstallSegment(tokens: string[]): ClassificationResult |
   }
 
   if (bin === "pip" || bin === "pip3") {
-    const subIdx = rest.findIndex((t) => !t.startsWith("-"));
-    if (subIdx === -1) return null;
-    if (rest[subIdx].toLowerCase() !== "install") return null;
-    const { positional } = scanPositionalArgs(rest.slice(subIdx + 1), PKG_INSTALL_VALUE_FLAGS);
+    const found = findSubcommandAndRest(rest, PIP_PRE_SUB_VALUE_FLAGS);
+    if (!found || found.subcommand !== "install") return null;
+    if (hasRequirementInstallFlag(found.rest)) {
+      return pkgConfirm(bin);
+    }
+    const { positional } = scanPositionalArgs(found.rest, PKG_INSTALL_VALUE_FLAGS);
     if (positional.length > 0) {
       return pkgConfirm(bin);
     }
@@ -681,58 +1110,60 @@ function classifyPackageInstallSegment(tokens: string[]): ClassificationResult |
   }
 
   if (bin === "uv") {
-    const posTokens = rest.filter((t) => !t.startsWith("-"));
-    if (posTokens[0]?.toLowerCase() === "add") {
+    const found = findSubcommandAndRest(rest, UV_PRE_SUB_VALUE_FLAGS);
+    if (!found) return null;
+    if (found.subcommand === "add") {
       return pkgConfirm("uv");
     }
-    if (posTokens[0]?.toLowerCase() === "pip" && posTokens[1]?.toLowerCase() === "install") {
-      const installIdx = rest.findIndex((t) => t.toLowerCase() === "install");
-      const { positional } = scanPositionalArgs(
-        rest.slice(installIdx + 1),
-        PKG_INSTALL_VALUE_FLAGS,
-      );
-      if (positional.length > 0) return pkgConfirm("uv pip");
+    if (found.subcommand === "pip") {
+      const pipSub = findSubcommandAndRest(found.rest, UV_PRE_SUB_VALUE_FLAGS);
+      if (pipSub?.subcommand === "install") {
+        if (hasRequirementInstallFlag(pipSub.rest)) {
+          return pkgConfirm("uv pip");
+        }
+        const { positional } = scanPositionalArgs(pipSub.rest, PKG_INSTALL_VALUE_FLAGS);
+        if (positional.length > 0) return pkgConfirm("uv pip");
+      }
     }
     return null;
   }
 
   if (bin === "poetry") {
-    const subIdx = rest.findIndex((t) => !t.startsWith("-"));
-    if (subIdx !== -1 && rest[subIdx].toLowerCase() === "add") {
+    const found = findSubcommandAndRest(rest, POETRY_PRE_SUB_VALUE_FLAGS);
+    if (found?.subcommand === "add") {
       return pkgConfirm("poetry");
     }
     return null;
   }
 
   if (bin === "cargo") {
-    const subIdx = rest.findIndex((t) => !t.startsWith("-"));
-    const sub = subIdx !== -1 ? rest[subIdx].toLowerCase() : "";
-    if (sub === "add" || sub === "install") {
+    const cargoRest = rest.filter((tok, idx) => !(idx === 0 && tok.startsWith("+")));
+    const found = findSubcommandAndRest(cargoRest, CARGO_PRE_SUB_VALUE_FLAGS);
+    if (found && (found.subcommand === "add" || found.subcommand === "install")) {
       return pkgConfirm("cargo");
     }
     return null;
   }
 
   if (bin === "go") {
-    const subIdx = rest.findIndex((t) => !t.startsWith("-"));
-    const sub = subIdx !== -1 ? rest[subIdx].toLowerCase() : "";
-    if (sub === "get" || sub === "install") {
+    const found = findSubcommandAndRest(rest, GO_PRE_SUB_VALUE_FLAGS);
+    if (found && (found.subcommand === "get" || found.subcommand === "install")) {
       return pkgConfirm("go");
     }
     return null;
   }
 
   if (bin === "composer") {
-    const subIdx = rest.findIndex((t) => !t.startsWith("-"));
-    if (subIdx !== -1 && rest[subIdx].toLowerCase() === "require") {
+    const found = findSubcommandAndRest(rest, COMPOSER_PRE_SUB_VALUE_FLAGS);
+    if (found?.subcommand === "require") {
       return pkgConfirm("composer");
     }
     return null;
   }
 
   if (bin === "gem") {
-    const subIdx = rest.findIndex((t) => !t.startsWith("-"));
-    if (subIdx !== -1 && rest[subIdx].toLowerCase() === "install") {
+    const found = findSubcommandAndRest(rest, GEM_PRE_SUB_VALUE_FLAGS);
+    if (found?.subcommand === "install") {
       return pkgConfirm("gem");
     }
     return null;
@@ -749,94 +1180,489 @@ function classifyPackageInstallSegment(tokens: string[]): ClassificationResult |
   return null;
 }
 
-function extractShellWrapperPayload(tokens: string[]): string | null {
-  if (tokens.length < 3) return null;
+interface ShellWrapperExtraction {
+  payload?: string;
+  escalateReason?: string;
+}
+
+const PS_VALUE_FLAGS = new Set([
+  "-executionpolicy",
+  "-ep",
+  "-inputformat",
+  "-if",
+  "-outputformat",
+  "-of",
+  "-settingsfile",
+  "-configurationname",
+  "-workingdirectory",
+  "-wd",
+  "-windowstyle",
+  "-w",
+  "-file",
+  "-f",
+]);
+
+function extractShellWrapperPayload(tokens: string[]): ShellWrapperExtraction | null {
+  if (tokens.length < 2) return null;
   const bin = normalizeExecutableName(tokens[0]);
+
+  if (bin === "eval" && tokens.length >= 2) {
+    return { payload: tokens.slice(1).join(" ") };
+  }
+
+  if (bin === "powershell" || bin === "pwsh") {
+    const encIdx = tokens.findIndex((t) =>
+      /^-(?:ec|enc|enco|encod|encoded|encodedcommand)$/i.test(t),
+    );
+    if (encIdx !== -1) {
+      const rawB64 = tokens[encIdx + 1];
+      if (rawB64 && /^[A-Za-z0-9+/=]+$/.test(rawB64)) {
+        try {
+          const decoded = Buffer.from(rawB64, "base64")
+            .toString("utf16le")
+            .replace(/\0/g, "")
+            .trim();
+          if (decoded.length > 0) {
+            return { payload: decoded };
+          }
+        } catch {
+          // Fall through to conservative escalation
+        }
+      }
+      return {
+        escalateReason:
+          "Confirmation required: Obfuscated or encoded PowerShell command requires developer confirmation.",
+      };
+    }
+
+    const idx = tokens.findIndex((t) => /^-(?:c|cmd|command)$/i.test(t));
+    if (idx !== -1 && tokens[idx + 1]) {
+      return { payload: tokens.slice(idx + 1).join(" ") };
+    }
+
+    // PowerShell also executes implicit positional script strings when -File is absent
+    let hasFileFlag = false;
+    for (let i = 1; i < tokens.length; i++) {
+      const lowered = tokens[i].toLowerCase();
+      if (lowered === "-file" || lowered === "-f") {
+        hasFileFlag = true;
+        break;
+      }
+      if (PS_VALUE_FLAGS.has(lowered)) {
+        i++;
+        continue;
+      }
+      if (lowered.startsWith("-")) continue;
+      if (!hasFileFlag) {
+        return { payload: tokens.slice(i).join(" ") };
+      }
+    }
+    return null;
+  }
+
+  if (tokens.length < 3) return null;
+
   if (bin === "bash" || bin === "sh" || bin === "zsh") {
-    const idx = tokens.findIndex((t) => t === "-c" || t === "-lc");
-    if (idx !== -1 && tokens[idx + 1]) return tokens[idx + 1];
-  } else if (bin === "powershell" || bin === "pwsh") {
-    const idx = tokens.findIndex((t) => /^-(?:c|command)$/i.test(t));
-    if (idx !== -1 && tokens[idx + 1]) return tokens.slice(idx + 1).join(" ");
+    for (let i = 1; i < tokens.length; i++) {
+      const tok = tokens[i];
+      if (tok === "-o" && i + 1 < tokens.length) {
+        i++;
+        continue;
+      }
+      if (/^-[a-zA-Z]*c[a-zA-Z]*$/.test(tok)) {
+        if (tokens[i + 1]) {
+          return { payload: tokens[i + 1] };
+        }
+      }
+    }
   } else if (bin === "cmd") {
-    const idx = tokens.findIndex((t) => /^\/c$/i.test(t));
-    if (idx !== -1 && tokens[idx + 1]) return tokens.slice(idx + 1).join(" ");
+    const idx = tokens.findIndex((t) => /^\/[ck]$/i.test(t));
+    if (idx !== -1 && tokens[idx + 1]) {
+      return { payload: tokens.slice(idx + 1).join(" ") };
+    }
   }
   return null;
 }
 
-function classifyCommandLineInternal(commandLine: string, depth: number): ClassificationResult {
-  if (!commandLine || typeof commandLine !== "string") {
-    return { decision: "allow", semanticClass: "workspace_read", category: "safe" };
+function extractCommandSubstitutions(commandLine: string): {
+  substitutions: string[];
+  unparsedReason?: string;
+} {
+  const substitutions: string[] = [];
+  let quote: "'" | '"' | null = null;
+
+  for (let i = 0; i < commandLine.length; i++) {
+    const ch = commandLine[i];
+    const next = commandLine[i + 1];
+
+    if (quote === "'") {
+      if (ch === "'") quote = null;
+      continue;
+    }
+
+    if (ch === "\\") {
+      i++;
+      continue;
+    }
+
+    if (quote === '"') {
+      if (ch === '"') {
+        quote = null;
+        continue;
+      }
+    } else if (ch === "'" || ch === '"') {
+      quote = ch;
+      continue;
+    }
+
+    if ((ch === "$" || ch === "<" || ch === ">") && next === "(") {
+      let depth = 1;
+      let innerQuote: "'" | '"' | null = null;
+      let j = i + 2;
+      while (j < commandLine.length && depth > 0) {
+        const ic = commandLine[j];
+        if (innerQuote === "'") {
+          if (ic === "'") innerQuote = null;
+        } else if (ic === "\\") {
+          j += 2;
+          continue;
+        } else if (innerQuote === '"') {
+          if (ic === '"') innerQuote = null;
+        } else if (ic === "'" || ic === '"') {
+          innerQuote = ic;
+        } else if (ic === "(") {
+          depth++;
+        } else if (ic === ")") {
+          depth--;
+        }
+        j++;
+      }
+
+      if (depth !== 0) {
+        return {
+          substitutions,
+          unparsedReason:
+            "Confirmation required: Unbalanced command substitution syntax requires developer confirmation.",
+        };
+      }
+      const inner = commandLine.slice(i + 2, j - 1).trim();
+      if (inner.length > 0) {
+        substitutions.push(inner);
+      }
+      i = j - 1;
+      continue;
+    }
+
+    if (ch === "`") {
+      let j = i + 1;
+      let closed = false;
+      while (j < commandLine.length) {
+        if (commandLine[j] === "\\") {
+          j += 2;
+          continue;
+        }
+        if (commandLine[j] === "`") {
+          closed = true;
+          break;
+        }
+        j++;
+      }
+      if (!closed) {
+        return {
+          substitutions,
+          unparsedReason:
+            "Confirmation required: Unclosed backtick command substitution requires developer confirmation.",
+        };
+      }
+      const inner = commandLine.slice(i + 1, j).trim();
+      if (inner.length > 0) {
+        substitutions.push(inner);
+      }
+      i = j;
+    }
+  }
+
+  return { substitutions };
+}
+
+function unwrapPrivilegeCommandTokens(seg: string[]): string[] | null {
+  const bin = normalizeExecutableName(seg[0]);
+  if (bin !== "sudo" && bin !== "doas") {
+    return null;
+  }
+
+  let idx = 1;
+  while (idx < seg.length) {
+    const cur = seg[idx];
+    if (cur === "--") {
+      idx++;
+      break;
+    }
+    if (SUDO_VALUE_FLAGS.has(cur)) {
+      idx += 2;
+      continue;
+    }
+    if (cur.startsWith("-") || /^[A-Za-z_][A-Za-z0-9_]*=/.test(cur)) {
+      idx++;
+      continue;
+    }
+    break;
+  }
+
+  return seg.slice(idx);
+}
+
+/**
+ * Evaluates normalized argv tokens against prohibited (`deny`) and high-risk (`force_ask`) command rules.
+ * Matching against normalized executable names prevents quote-concatenation bypasses (`'r'm`, `"c"at`)
+ * without triggering false positives on inert string arguments (e.g., `echo 'rm -rf /'`).
+ */
+function evaluateSegmentPatterns(seg: string[], guardDepth = 0): ClassificationResult | null {
+  if (seg.length === 0) return null;
+  const bin = normalizeExecutableName(seg[0]);
+  const normalizedSegStr = [bin, ...seg.slice(1)].join(" ");
+
+  if (DESTRUCTIVE_FS_BINS.has(bin) || bin.startsWith("mkfs.")) {
+    for (const { pattern, reason } of PROHIBITED_DESTRUCTIVE_COMMANDS) {
+      if (pattern.test(normalizedSegStr)) {
+        return {
+          decision: "deny",
+          semanticClass: "destructive",
+          reason: `Blocked: ${reason}`,
+          category: "destructive_filesystem",
+        };
+      }
+    }
+  }
+
+  if (SECRET_EXFIL_BINS.has(bin)) {
+    for (const { pattern, reason } of PROHIBITED_SECRET_PRINT_COMMANDS) {
+      if (pattern.test(normalizedSegStr)) {
+        return {
+          decision: "deny",
+          semanticClass: "destructive",
+          reason: `Blocked: ${reason}`,
+          category: "secret_exposure",
+        };
+      }
+    }
+  }
+
+  if (DB_CLIENT_BINS.has(bin)) {
+    for (const { pattern, reason } of PROHIBITED_DATABASE_MUTATIONS) {
+      if (pattern.test(normalizedSegStr)) {
+        return {
+          decision: "deny",
+          semanticClass: "destructive",
+          reason: `Blocked: ${reason}`,
+          category: "database_mutation",
+        };
+      }
+    }
+  }
+
+  if (guardDepth < 4) {
+    const innerPriv = unwrapPrivilegeCommandTokens(seg);
+    if (innerPriv && innerPriv.length > 0) {
+      const resolvedInner = resolveCommandSegment(innerPriv, false);
+      const innerHit = evaluateSegmentPatterns(resolvedInner.tokens, guardDepth + 1);
+      if (innerHit?.decision === "deny") {
+        return innerHit;
+      }
+    }
+  }
+
+  if (HIGH_RISK_BINS.has(bin)) {
+    for (const { pattern, reason } of HIGH_RISK_COMMANDS) {
+      if (pattern.test(normalizedSegStr)) {
+        return {
+          decision: "force_ask",
+          semanticClass: "destructive",
+          reason: `Confirmation required: ${reason}`,
+          category: /git/i.test(reason) ? "high_risk_git" : "dangerous_permissions",
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+function classifyCommandLineRaw(commandLine: string, depth: number): ClassificationResult {
+  if (!commandLine || typeof commandLine !== "string" || commandLine.trim().length === 0) {
+    return {
+      decision: "deny",
+      semanticClass: "unknown",
+      reason: "Blocked: Missing or empty command line cannot be verified.",
+      category: "ambiguous",
+    };
   }
 
   const trimmed = commandLine.trim();
-
-  // 1. Check prohibited destructive filesystem operations
-  for (const { pattern, reason } of PROHIBITED_DESTRUCTIVE_COMMANDS) {
-    if (pattern.test(trimmed)) {
-      return {
-        decision: "deny",
-        semanticClass: "destructive",
-        reason: `Blocked: ${reason}`,
-        category: "destructive_filesystem",
-      };
-    }
-  }
-
-  // 2. Check secret exposure and exfiltration
-  for (const { pattern, reason } of PROHIBITED_SECRET_PRINT_COMMANDS) {
-    if (pattern.test(trimmed)) {
-      return {
-        decision: "deny",
-        semanticClass: "destructive",
-        reason: `Blocked: ${reason}`,
-        category: "secret_exposure",
-      };
-    }
-  }
-
-  // 3. Check destructive database mutations
-  for (const { pattern, reason } of PROHIBITED_DATABASE_MUTATIONS) {
-    if (pattern.test(trimmed)) {
-      return {
-        decision: "deny",
-        semanticClass: "destructive",
-        reason: `Blocked: ${reason}`,
-        category: "database_mutation",
-      };
-    }
-  }
-
-  // 4. Recursively inspect quoted subshell payloads (e.g. bash -c "...", cmd /c "...") before escalating
   let escalatedResult: ClassificationResult | null = null;
-  const segments = splitShellSegments(trimmed);
-  for (const rawSeg of segments) {
-    const seg = unwrapCommandSegment(rawSeg);
+
+  const recordEscalation = (candidate: ClassificationResult) => {
+    if (!escalatedResult && (candidate.decision === "force_ask" || candidate.decision === "ask")) {
+      escalatedResult = candidate;
+    }
+  };
+
+  // 1. Inspect command substitutions (`$(...)`, `<(...)`, `>(...)`, backticks)
+  const subScan = extractCommandSubstitutions(trimmed);
+  for (const subCmd of subScan.substitutions) {
+    if (depth >= MAX_SHELL_WRAPPER_DEPTH) {
+      recordEscalation({
+        decision: "force_ask",
+        semanticClass: "unknown",
+        reason:
+          "Confirmation required: Deeply nested shell command substitution exceeds static inspection depth.",
+        category: "ambiguous",
+      });
+      break;
+    }
+    const subRes = classifyCommandLineInternal(subCmd, depth + 1);
+    if (subRes.decision === "deny") {
+      return subRes;
+    }
+    recordEscalation(subRes);
+  }
+  if (subScan.unparsedReason) {
+    recordEscalation({
+      decision: "force_ask",
+      semanticClass: "unknown",
+      reason: subScan.unparsedReason,
+      category: "ambiguous",
+    });
+  }
+
+  // 2. Parse into quote-normalized shell segments and resolve wrappers (`env`, `nohup`, `command`)
+  const parsedShell = splitShellSegmentsWithSeparators(trimmed);
+  if (parsedShell.hasUnclosedQuote) {
+    recordEscalation({
+      decision: "force_ask",
+      semanticClass: "unknown",
+      reason:
+        "Confirmation required: Unclosed shell quote in command line requires developer confirmation.",
+      category: "ambiguous",
+    });
+  }
+
+  const resolvedSegments = parsedShell.segments
+    .map((s) => resolveCommandSegment(s.tokens, s.pipedFromPrevious))
+    .filter((r) => r.tokens.length > 0 || r.ambiguousReason || r.extraPayloads.length > 0);
+
+  const inspectNestedPayload = (
+    payload: string,
+    exceedsMsg: string,
+  ): ClassificationResult | null => {
+    if (depth >= MAX_SHELL_WRAPPER_DEPTH) {
+      recordEscalation({
+        decision: "force_ask",
+        semanticClass: "unknown",
+        reason: exceedsMsg,
+        category: "ambiguous",
+      });
+      return null;
+    }
+    const nested = classifyCommandLineInternal(payload, depth + 1);
+    if (nested.decision === "deny") {
+      return nested;
+    }
+    recordEscalation(nested);
+    return null;
+  };
+
+  // 3. Evaluate normalized segments for prohibited patterns, wrappers, pipe-to-shell, git, and package managers
+  for (let i = 0; i < resolvedSegments.length; i++) {
+    const resolved = resolvedSegments[i];
+    const seg = resolved.tokens;
+
+    for (const extraPayload of resolved.extraPayloads) {
+      const denied = inspectNestedPayload(
+        extraPayload,
+        "Confirmation required: Shell wrapper nesting exceeds inspection depth and requires developer confirmation.",
+      );
+      if (denied) return denied;
+    }
+
+    if (resolved.ambiguousReason) {
+      recordEscalation({
+        decision: "force_ask",
+        semanticClass: "unknown",
+        reason: resolved.ambiguousReason,
+        category: "ambiguous",
+      });
+    }
+
     if (seg.length === 0) continue;
 
-    if (depth < 2) {
-      const innerCmd = extractShellWrapperPayload(seg);
-      if (innerCmd) {
-        const nested = classifyCommandLineInternal(innerCmd, depth + 1);
-        if (nested.decision === "deny") {
-          return nested;
-        }
-        if ((nested.decision === "force_ask" || nested.decision === "ask") && !escalatedResult) {
-          escalatedResult = nested;
-        }
+    const patternHit = evaluateSegmentPatterns(seg);
+    if (patternHit) {
+      if (patternHit.decision === "deny") {
+        return patternHit;
+      }
+      recordEscalation(patternHit);
+    }
+
+    const bin = normalizeExecutableName(seg[0]);
+
+    if (resolved.pipedFromPrevious && SHELL_INTERPRETER_BINS.has(bin)) {
+      recordEscalation({
+        decision: "force_ask",
+        semanticClass: "external_side_effect",
+        reason: `Confirmation required: Piping stdin into shell interpreter '${bin}' requires developer confirmation.`,
+        category: "ambiguous",
+      });
+    }
+
+    const nextSeg = resolvedSegments[i + 1];
+    if (
+      nextSeg?.pipedFromPrevious &&
+      nextSeg.tokens.length > 0 &&
+      SHELL_INTERPRETER_BINS.has(normalizeExecutableName(nextSeg.tokens[0])) &&
+      (bin === "echo" || bin === "printf") &&
+      seg.length > 1
+    ) {
+      const denied = inspectNestedPayload(
+        seg.slice(1).join(" "),
+        "Confirmation required: Pipe-to-shell inspection exceeds maximum nesting depth.",
+      );
+      if (denied) return denied;
+
+      if (bin === "printf" && seg[1].includes("%") && seg.length > 2) {
+        const deniedArgs = inspectNestedPayload(
+          seg.slice(2).join(" "),
+          "Confirmation required: Pipe-to-shell inspection exceeds maximum nesting depth.",
+        );
+        if (deniedArgs) return deniedArgs;
       }
     }
 
-    if (!escalatedResult) {
-      const gitHit = classifyGitSegment(seg);
-      if (gitHit) {
-        escalatedResult = gitHit;
-      } else {
-        const pkgHit = classifyPackageInstallSegment(seg);
-        if (pkgHit) {
-          escalatedResult = pkgHit;
-        }
+    const wrapper = extractShellWrapperPayload(seg);
+    if (wrapper) {
+      if (wrapper.escalateReason) {
+        recordEscalation({
+          decision: "force_ask",
+          semanticClass: "unknown",
+          reason: wrapper.escalateReason,
+          category: "ambiguous",
+        });
+      } else if (wrapper.payload) {
+        const denied = inspectNestedPayload(
+          wrapper.payload,
+          "Confirmation required: Shell wrapper nesting exceeds inspection depth and requires developer confirmation.",
+        );
+        if (denied) return denied;
+      }
+    }
+
+    const gitHit = classifyGitSegment(seg);
+    if (gitHit) {
+      recordEscalation(gitHit);
+    } else {
+      const pkgHit = classifyPackageInstallSegment(seg);
+      if (pkgHit) {
+        recordEscalation(pkgHit);
       }
     }
   }
@@ -845,19 +1671,33 @@ function classifyCommandLineInternal(commandLine: string, depth: number): Classi
     return escalatedResult;
   }
 
-  // 5. Check pattern-based high-risk operations requiring fresh confirmation ('force_ask')
-  for (const { pattern, reason } of HIGH_RISK_COMMANDS) {
-    if (pattern.test(trimmed)) {
-      return {
-        decision: "force_ask",
-        semanticClass: "destructive",
-        reason: `Confirmation required: ${reason}`,
-        category: /git/i.test(reason) ? "high_risk_git" : "dangerous_permissions",
-      };
+  return { decision: "allow", semanticClass: "workspace_read", category: "safe" };
+}
+
+function classifyCommandLineInternal(commandLine: string, depth: number): ClassificationResult {
+  const rawResult = classifyCommandLineRaw(commandLine, depth);
+  if (rawResult.decision === "deny" || depth >= MAX_SHELL_WRAPPER_DEPTH) {
+    return rawResult;
+  }
+
+  const trimmed = typeof commandLine === "string" ? commandLine.trim() : "";
+  if (trimmed.length === 0) {
+    return rawResult;
+  }
+
+  // Check POSIX backslash-unescaped view strictly for additive escalation (`g\it`, `r\m`)
+  const posixUnescaped = unescapePosixBackslashes(trimmed);
+  if (posixUnescaped !== trimmed && posixUnescaped.trim().length > 0) {
+    const unescapedResult = classifyCommandLineRaw(posixUnescaped.trim(), depth);
+    if (unescapedResult.decision === "deny") {
+      return unescapedResult;
+    }
+    if (rawResult.decision === "allow" && unescapedResult.decision !== "allow") {
+      return unescapedResult;
     }
   }
 
-  return { decision: "allow", semanticClass: "workspace_read", category: "safe" };
+  return rawResult;
 }
 
 /** Classifies a shell command string. */
@@ -867,7 +1707,7 @@ export function classifyCommandLine(commandLine: string): ClassificationResult {
 
 function matchControlPlaneTarget(
   candidateRel: string,
-  hasCanonicalWorkspaceRelative: boolean,
+  _hasCanonicalWorkspaceRelative: boolean,
 ): string | null {
   const lower = candidateRel.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
   if (!lower) return null;
@@ -884,15 +1724,29 @@ function matchControlPlaneTarget(
   }
 
   for (const manifest of PROTECTED_CONTROL_PLANE_MANIFESTS) {
-    if (hasCanonicalWorkspaceRelative) {
-      if (lower === manifest || lower.endsWith(`/${manifest}`)) {
-        return manifest;
-      }
-    } else if (lower === manifest || lower.endsWith(`/${manifest}`)) {
+    if (lower === manifest || lower.endsWith(`/${manifest}`)) {
       return manifest;
     }
   }
 
+  for (const file of PROTECTED_CONTROL_PLANE_FILES) {
+    if (lower === file || lower.endsWith(`/${file}`)) {
+      return file;
+    }
+  }
+
+  return null;
+}
+
+function matchConfirmationRequiredProjectFile(candidateRel: string): string | null {
+  const lower = candidateRel.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
+  if (!lower) return null;
+
+  for (const file of CONFIRMATION_REQUIRED_PROJECT_FILES) {
+    if (lower === file || lower.endsWith(`/${file}`)) {
+      return file;
+    }
+  }
   return null;
 }
 
@@ -930,7 +1784,8 @@ export function classifyFilePath(
     if (
       targetPath.includes("\0") ||
       fwd.startsWith("//") ||
-      /^[a-zA-Z]:(?![/\\])/.test(targetPath)
+      /^[a-zA-Z]:(?![/\\])/.test(targetPath) ||
+      hasNtfsStreamSyntax(targetPath)
     ) {
       return {
         decision: "deny",
@@ -952,9 +1807,19 @@ export function classifyFilePath(
     }
   }
 
-  // Normalize path separators for pattern matching
+  // Normalize path separators and Windows trailing dot/space aliases for pattern matching
   const normalized = targetPath.replace(/\\/g, "/");
-  const candidatesToCheck = canonicalRel !== undefined ? [normalized, canonicalRel] : [normalized];
+  const normalizedAlias = stripTrailingDotsAndSpacesFromPath(normalized);
+  const canonicalAlias =
+    canonicalRel !== undefined ? stripTrailingDotsAndSpacesFromPath(canonicalRel) : undefined;
+
+  const candidatesToCheck = Array.from(
+    new Set(
+      [normalized, normalizedAlias, canonicalRel, canonicalAlias].filter(
+        (v): v is string => typeof v === "string" && v.length > 0,
+      ),
+    ),
+  );
 
   // Prohibit reading, writing, or editing private credential files
   for (const candidate of candidatesToCheck) {
@@ -973,15 +1838,30 @@ export function classifyFilePath(
 
   // Prohibit direct write/edit mutations to security-critical control-plane files and state directories
   if (operation === "write" || operation === "edit") {
-    const matchInput = canonicalRel !== undefined ? canonicalRel : normalized;
-    const protectedTarget = matchControlPlaneTarget(matchInput, canonicalRel !== undefined);
-    if (protectedTarget) {
-      return {
-        decision: "deny",
-        semanticClass: "destructive",
-        reason: `Blocked: Direct ${operation} targeting protected control-plane resource '${protectedTarget}' is prohibited.`,
-        category: "destructive_filesystem",
-      };
+    const matchInputs =
+      canonicalRel !== undefined ? [canonicalRel, canonicalAlias!] : [normalized, normalizedAlias];
+    for (const input of matchInputs) {
+      const protectedTarget = matchControlPlaneTarget(input, canonicalRel !== undefined);
+      if (protectedTarget) {
+        return {
+          decision: "deny",
+          semanticClass: "destructive",
+          reason: `Blocked: Direct ${operation} targeting protected control-plane resource '${protectedTarget}' is prohibited.`,
+          category: "destructive_filesystem",
+        };
+      }
+    }
+
+    for (const input of matchInputs) {
+      const gatedProjectFile = matchConfirmationRequiredProjectFile(input);
+      if (gatedProjectFile) {
+        return {
+          decision: "force_ask",
+          semanticClass: "workspace_write",
+          reason: `Confirmation required: Direct ${operation} targeting project configuration/lockfile '${gatedProjectFile}' requires developer confirmation.`,
+          category: "dangerous_permissions",
+        };
+      }
     }
   }
 
@@ -1017,19 +1897,92 @@ export function classifyToolCall(
   const workspaceRoot = typeof options === "string" ? options : options?.workspaceRoot;
   const norm = normalizeToolCall(toolName, args);
 
+  // Helper to evaluate every candidate command / path cleanly with deny dominance
+  const evaluateCommands = (cmds: string[]): ClassificationResult | undefined => {
+    let escalated: ClassificationResult | undefined;
+    for (const cmd of cmds) {
+      const res = classifyCommandLine(cmd);
+      if (res.decision === "deny") return res;
+      if ((res.decision === "force_ask" || res.decision === "ask") && !escalated) {
+        escalated = res;
+      }
+    }
+    return escalated ?? (cmds.length > 0 ? classifyCommandLine(cmds[0]) : undefined);
+  };
+
+  const evaluatePaths = (
+    paths: string[],
+    op: "read" | "write" | "edit",
+  ): ClassificationResult | undefined => {
+    let escalated: ClassificationResult | undefined;
+    for (const p of paths) {
+      const res = classifyFilePath(p, op, workspaceRoot);
+      if (res.decision === "deny") return res;
+      if ((res.decision === "force_ask" || res.decision === "ask") && !escalated) {
+        escalated = res;
+      }
+    }
+    if (escalated) return escalated;
+    return paths.length > 0
+      ? {
+          decision: "allow",
+          semanticClass: op === "read" ? "workspace_read" : "workspace_write",
+          category: "safe",
+        }
+      : undefined;
+  };
+
   // 1. Command execution
   if (toolName === "run_command") {
-    return classifyCommandLine(norm.commandLine ?? "");
+    const cmdEval = evaluateCommands(norm.commandLines);
+    if (cmdEval?.decision === "deny") return cmdEval;
+    if (
+      norm.malformedCommandReason ||
+      norm.hasConflictingCommands ||
+      norm.commandLines.length === 0
+    ) {
+      return {
+        decision: "deny",
+        semanticClass: "unknown",
+        reason: `Blocked: ${norm.malformedCommandReason ?? (norm.hasConflictingCommands ? "Conflicting command arguments detected in run_command." : "Missing command line in run_command.")}`,
+        category: "ambiguous",
+      };
+    }
+    if (cmdEval && cmdEval.decision !== "allow") return cmdEval;
+    // Also inspect any file paths attached unexpectedly alongside a safe command
+    const pathEval = evaluatePaths(norm.filePaths, "write");
+    if (pathEval && pathEval.decision !== "allow") return pathEval;
+    return cmdEval!;
   }
 
   // 2. Native file inspection / reading (workspace_read)
   if (toolName === "view_file" || toolName === "read_file") {
-    return classifyFilePath(norm.filePath ?? "", "read", workspaceRoot);
+    const pathEval = evaluatePaths(norm.filePaths, "read");
+    if (pathEval?.decision === "deny") return pathEval;
+    if (norm.malformedFileReason || norm.hasConflictingFilePaths || norm.filePaths.length === 0) {
+      return {
+        decision: "deny",
+        semanticClass: "destructive",
+        reason: `Blocked: ${norm.malformedFileReason ?? (norm.hasConflictingFilePaths ? `Conflicting file path arguments in '${toolName}'.` : `Missing file path in '${toolName}'.`)}`,
+        category: "destructive_filesystem",
+      };
+    }
+    return pathEval!;
   }
 
   // 3. Native file creation / writing (workspace_write)
   if (toolName === "write_to_file" || toolName === "write_file") {
-    return classifyFilePath(norm.filePath ?? "", "write", workspaceRoot);
+    const pathEval = evaluatePaths(norm.filePaths, "write");
+    if (pathEval?.decision === "deny") return pathEval;
+    if (norm.malformedFileReason || norm.hasConflictingFilePaths || norm.filePaths.length === 0) {
+      return {
+        decision: "deny",
+        semanticClass: "destructive",
+        reason: `Blocked: ${norm.malformedFileReason ?? (norm.hasConflictingFilePaths ? `Conflicting file path arguments in '${toolName}'.` : `Missing file path in '${toolName}'.`)}`,
+        category: "destructive_filesystem",
+      };
+    }
+    return pathEval!;
   }
 
   // 4. Native file modification / replacement (workspace_write)
@@ -1038,7 +1991,17 @@ export function classifyToolCall(
     toolName === "multi_replace_file_content" ||
     toolName === "edit_file"
   ) {
-    return classifyFilePath(norm.filePath ?? "", "edit", workspaceRoot);
+    const pathEval = evaluatePaths(norm.filePaths, "edit");
+    if (pathEval?.decision === "deny") return pathEval;
+    if (norm.malformedFileReason || norm.hasConflictingFilePaths || norm.filePaths.length === 0) {
+      return {
+        decision: "deny",
+        semanticClass: "destructive",
+        reason: `Blocked: ${norm.malformedFileReason ?? (norm.hasConflictingFilePaths ? `Conflicting file path arguments in '${toolName}'.` : `Missing file path in '${toolName}'.`)}`,
+        category: "destructive_filesystem",
+      };
+    }
+    return pathEval!;
   }
 
   // 5. Encapsulated MCP calls via call_mcp_tool
@@ -1194,19 +2157,49 @@ export function classifyToolCall(
     };
   }
 
-  // 7. Explicitly trusted read-only tools
+  // 7. Reject malformed tool argument containers even on trusted read-only tools
+  if (norm.malformedCommandReason || norm.malformedFileReason) {
+    return {
+      decision: "deny",
+      semanticClass: "unknown",
+      reason: `Blocked: ${norm.malformedCommandReason ?? norm.malformedFileReason}`,
+      category: "ambiguous",
+    };
+  }
+
+  // Explicitly trusted read-only tools
   if (TRUSTED_READ_ONLY_TOOLS.has(toolName)) {
     return { decision: "allow", semanticClass: "trusted_read_only", category: "safe" };
   }
 
   // 8. Inspect arguments first for hard denials (do not downgrade to force_ask)
-  const cmdResult = norm.commandLine ? classifyCommandLine(norm.commandLine) : undefined;
-  if (cmdResult?.decision === "deny") return cmdResult;
+  let cmdResult: ClassificationResult | undefined;
+  for (const cmd of norm.commandLines) {
+    const res = classifyCommandLine(cmd);
+    if (res.decision === "deny") return res;
+    if (!cmdResult || res.decision !== "allow") cmdResult = res;
+  }
 
-  const pathResult = norm.filePath
-    ? classifyFilePath(norm.filePath, "write", workspaceRoot)
-    : undefined;
-  if (pathResult?.decision === "deny") return pathResult;
+  let pathResult: ClassificationResult | undefined;
+  for (const p of norm.filePaths) {
+    const res = classifyFilePath(p, "write", workspaceRoot);
+    if (res.decision === "deny") return res;
+    if (!pathResult || res.decision !== "allow") pathResult = res;
+  }
+
+  if (
+    norm.malformedCommandReason ||
+    norm.malformedFileReason ||
+    norm.hasConflictingCommands ||
+    norm.hasConflictingFilePaths
+  ) {
+    return {
+      decision: "deny",
+      semanticClass: "unknown",
+      reason: `Blocked: ${norm.malformedCommandReason ?? norm.malformedFileReason ?? "Conflicting tool arguments detected."}`,
+      category: "ambiguous",
+    };
+  }
 
   // 9. Misleading tool names: check for destructive tokens regardless of prefix
   if (DESTRUCTIVE_TOOL_NAME_PATTERN.test(toolName)) {

@@ -19,13 +19,28 @@ export interface AuditRecord {
   metadata?: Record<string, unknown>;
 }
 
-/** Resolves the audit log directory. */
-export function resolveAuditDir(workspaceRoot?: string): string {
+/** Resolves an explicit audit log directory, returning null if workspace context is missing or invalid. */
+export function resolveSafeAuditDir(workspaceRoot?: string): string | null {
   if (process.env.PLUGIN_DATA && fs.existsSync(process.env.PLUGIN_DATA)) {
     return path.join(process.env.PLUGIN_DATA, "audit");
   }
-  const baseDir = workspaceRoot || process.cwd();
-  return path.join(baseDir, ".frontier", "audit");
+  if (typeof workspaceRoot !== "string" || workspaceRoot.trim().length === 0) {
+    return null;
+  }
+  try {
+    const resolved = path.resolve(workspaceRoot);
+    if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
+      return null;
+    }
+    return path.join(resolved, ".frontier", "audit");
+  } catch {
+    return null;
+  }
+}
+
+/** Resolves the audit log directory (never falling back to an arbitrary process.cwd()). */
+export function resolveAuditDir(workspaceRoot?: string): string {
+  return resolveSafeAuditDir(workspaceRoot) ?? "";
 }
 
 /** Rotates audit log file if it exceeds MAX_LOG_SIZE_BYTES. */
@@ -116,10 +131,17 @@ function serializeAuditLine(record: AuditRecord): string {
   }
 }
 
-/** Writes a sanitized audit record to local JSONL log. */
+/** Writes a sanitized audit record to local JSONL log when explicit audit target exists. */
 export function writeAuditLog(record: AuditRecord, workspaceRoot?: string): void {
   try {
-    const auditDir = resolveAuditDir(workspaceRoot);
+    const auditDir = resolveSafeAuditDir(workspaceRoot);
+    if (!auditDir) {
+      logDiagnostic("Skipping audit log write: missing or invalid workspace context", {
+        event: record.event,
+        hookId: record.hookId,
+      });
+      return;
+    }
     if (!fs.existsSync(auditDir)) {
       fs.mkdirSync(auditDir, { recursive: true });
     }
