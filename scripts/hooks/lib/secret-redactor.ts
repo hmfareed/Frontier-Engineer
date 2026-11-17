@@ -50,11 +50,12 @@ const HOOK_REDACTION_RULES: Array<{
     pattern: findPattern("DB_PASSWORD"),
     replacement: (_m: string, p1: string, p2: string) => `${p1}[REDACTED]${p2}`,
   },
-  // Quoted key-value pairs for passwords, tokens, and secrets in JSON/flags
+  // Sensitive key-value assignments for passwords, tokens, and credentials (quoted or unquoted)
   {
     pattern:
-      /(["']?(?:password|token|secret|apiKey|api_key|auth_token|authToken|access_token|private_key)["']?\s*[:=]\s*["'])([^"'\r\n\s]+)(["'])/gi,
-    replacement: "$1[REDACTED]$3",
+      /(["']?\b(?:password|passwd|token|secret|apiKey|api_key|auth_token|authToken|access_token|private_key|db_pass|db_password)\b["']?\s*[:=]\s*)(?:(["'])([^"'\r\n]+?)\2|([^"'\r\n\s;]+))/gi,
+    replacement: (_m: string, p1: string, p2?: string) =>
+      p2 ? `${p1}${p2}[REDACTED]${p2}` : `${p1}[REDACTED]`,
   },
 ];
 

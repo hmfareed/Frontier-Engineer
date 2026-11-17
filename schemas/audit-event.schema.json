@@ -1,0 +1,270 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://frontier-engineer.local/schemas/audit-event.json",
+  "title": "Frontier Engineer audit telemetry event schema (v1)",
+  "type": "object",
+  "required": ["schemaVersion", "eventId", "timestamp", "hookId", "source", "status"],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "type": "integer",
+      "const": 1
+    },
+    "eventId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d{1,9})?(?:Z|[+-]\\d{2}:\\d{2})$"
+    },
+    "eventType": {
+      "type": "string",
+      "enum": [
+        "SessionStart",
+        "PreToolUse",
+        "PostToolUse",
+        "PreInvocation",
+        "PostInvocation",
+        "Stop",
+        "SafeFallback",
+        "Diagnostic"
+      ]
+    },
+    "event": {
+      "type": "string",
+      "enum": [
+        "SessionStart",
+        "PreToolUse",
+        "PostToolUse",
+        "PreInvocation",
+        "PostInvocation",
+        "Stop",
+        "SafeFallback",
+        "Diagnostic"
+      ]
+    },
+    "hookId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "source": {
+      "type": "string",
+      "enum": ["production", "evaluation", "test"]
+    },
+    "correlationId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Primary correlation identifier for telemetry event correlation across sessions and invocations."
+    },
+    "conversationId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Legacy correlation alias. When both correlationId and conversationId are provided, their equality is enforced by the dedicated runtime validator (validateAuditEvent) rather than generic JSON Schema validation to preserve standard Draft-07 engine compatibility without requiring non-standard $data extensions."
+    },
+    "executionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "parentExecutionId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "agentId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "skillId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "stepIdx": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "invocationNum": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "toolName": {
+      "type": "string"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["success", "denied", "error", "escalated", "info"]
+    },
+    "durationMs": {
+      "type": "number",
+      "minimum": 0
+    },
+    "normalizedSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "toolKind": {
+          "type": "string",
+          "enum": ["command", "file", "mcp", "delegation", "unknown"]
+        },
+        "commandBin": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "targetCount": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "mcpServerName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "mcpToolName": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "workspaceStatus": {
+          "type": "string",
+          "enum": ["verified", "missing", "invalid"]
+        },
+        "summary": {
+          "type": "string",
+          "maxLength": 240
+        }
+      }
+    },
+    "policyDecision": {
+      "type": "object",
+      "required": ["decision"],
+      "additionalProperties": false,
+      "properties": {
+        "decision": {
+          "type": "string",
+          "enum": ["allow", "deny", "force_ask", "ask"]
+        },
+        "semanticClass": {
+          "type": "string",
+          "enum": [
+            "trusted_read_only",
+            "workspace_read",
+            "workspace_write",
+            "external_side_effect",
+            "destructive",
+            "unknown"
+          ]
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "safe",
+            "destructive_filesystem",
+            "secret_exposure",
+            "dangerous_permissions",
+            "database_mutation",
+            "high_risk_git",
+            "external_side_effect",
+            "ambiguous"
+          ]
+        },
+        "reason": {
+          "type": "string",
+          "maxLength": 500
+        },
+        "overwriteApplied": {
+          "type": "boolean"
+        },
+        "fallbackUsed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "evalContext": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "scenarioId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "evalRunId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "stepId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "error": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": ["object", "string"]
+    }
+  },
+  "allOf": [
+    {
+      "anyOf": [{ "required": ["eventType"] }, { "required": ["event"] }]
+    },
+    {
+      "anyOf": [{ "required": ["correlationId"] }, { "required": ["conversationId"] }]
+    },
+    {
+      "if": { "required": ["eventType", "event"] },
+      "then": {
+        "anyOf": [
+          {
+            "properties": {
+              "eventType": { "const": "SessionStart" },
+              "event": { "const": "SessionStart" }
+            }
+          },
+          {
+            "properties": {
+              "eventType": { "const": "PreToolUse" },
+              "event": { "const": "PreToolUse" }
+            }
+          },
+          {
+            "properties": {
+              "eventType": { "const": "PostToolUse" },
+              "event": { "const": "PostToolUse" }
+            }
+          },
+          {
+            "properties": {
+              "eventType": { "const": "PreInvocation" },
+              "event": { "const": "PreInvocation" }
+            }
+          },
+          {
+            "properties": {
+              "eventType": { "const": "PostInvocation" },
+              "event": { "const": "PostInvocation" }
+            }
+          },
+          { "properties": { "eventType": { "const": "Stop" }, "event": { "const": "Stop" } } },
+          {
+            "properties": {
+              "eventType": { "const": "SafeFallback" },
+              "event": { "const": "SafeFallback" }
+            }
+          },
+          {
+            "properties": {
+              "eventType": { "const": "Diagnostic" },
+              "event": { "const": "Diagnostic" }
+            }
+          }
+        ]
+      }
+    },
+    {
+      "if": { "required": ["evalContext"] },
+      "then": {
+        "properties": {
+          "source": { "enum": ["evaluation", "test"] }
+        }
+      }
+    }
+  ]
+}

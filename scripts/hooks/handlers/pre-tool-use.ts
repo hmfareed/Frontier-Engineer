@@ -1,7 +1,13 @@
+import { buildNormalizedToolSummary } from "../lib/audit-schema.ts";
 import { classifyToolCall } from "../lib/command-classifier.ts";
 import type { ClassificationResult } from "../lib/command-classifier.ts";
 import type { PreToolUsePayload } from "../lib/event-context.ts";
-import { extractCorrelationId } from "../lib/event-context.ts";
+import {
+  extractCorrelationId,
+  extractExecutionContext,
+  normalizeToolCall,
+  resolveExplicitWorkspaceRoot,
+} from "../lib/event-context.ts";
 import { containsUnredactedSecrets } from "../../scanner/sensitive-filter.ts";
 import {
   HANDOFF_BLOCK_END,
@@ -66,15 +72,37 @@ function recordAuditAndBuildOutput(
   toolName: string,
   classification: ClassificationResult,
   workspaceRoot: string | undefined,
+  startedAt: number,
   overwrite?: Record<string, unknown>,
+  knownTargetAgent?: string,
 ): PreToolUseOutput {
+  const toolArgs = payload.toolCall?.args ?? {};
+  const norm = normalizeToolCall(toolName, toolArgs);
+  const execCtx = extractExecutionContext(payload);
+  const correlationId = extractCorrelationId(payload);
+  const safeConversationId =
+    typeof payload.conversationId === "string" && payload.conversationId.trim().length > 0
+      ? payload.conversationId.trim()
+      : undefined;
+  const safeStepIdx =
+    typeof payload.stepIdx === "number" && Number.isInteger(payload.stepIdx) && payload.stepIdx >= 0
+      ? payload.stepIdx
+      : undefined;
+  const workspaceStatus = workspaceRoot ? "verified" : "missing";
+  const normalizedSummary = buildNormalizedToolSummary(norm, workspaceStatus);
+  const durationMs = Math.max(0, Number((performance.now() - startedAt).toFixed(3)));
+
   writeAuditLog(
     {
+      eventType: "PreToolUse",
       event: "PreToolUse",
       hookId: "frontier-pre-tool-safety",
-      conversationId: extractCorrelationId(payload),
+      correlationId,
+      ...(safeConversationId ? { conversationId: safeConversationId } : {}),
+      ...execCtx,
+      ...(knownTargetAgent && !execCtx.agentId ? { agentId: knownTargetAgent } : {}),
       timestamp: new Date().toISOString(),
-      stepIdx: payload.stepIdx,
+      ...(safeStepIdx !== undefined ? { stepIdx: safeStepIdx } : {}),
       toolName,
       status:
         classification.decision === "deny"
@@ -82,6 +110,16 @@ function recordAuditAndBuildOutput(
           : classification.decision === "force_ask" || classification.decision === "ask"
             ? "escalated"
             : "info",
+      durationMs,
+      normalizedSummary,
+      policyDecision: {
+        decision: classification.decision,
+        semanticClass: classification.semanticClass,
+        category: classification.category,
+        ...(classification.reason ? { reason: classification.reason } : {}),
+        overwriteApplied: Boolean(overwrite),
+        fallbackUsed: false,
+      },
       metadata: {
         decision: classification.decision,
         semanticClass: classification.semanticClass,
@@ -106,49 +144,14 @@ function recordAuditAndBuildOutput(
   };
 }
 
-function resolveExplicitWorkspaceRoot(payload: PreToolUsePayload): {
-  valid: boolean;
-  workspaceRoot: string;
-} {
-  if (payload.workspacePaths !== undefined) {
-    if (!Array.isArray(payload.workspacePaths)) {
-      return { valid: false, workspaceRoot: "" };
-    }
-    const validEntries: string[] = [];
-    for (const entry of payload.workspacePaths) {
-      if (typeof entry !== "string" || entry.trim().length === 0) {
-        return { valid: false, workspaceRoot: "" };
-      }
-      validEntries.push(entry.trim());
-    }
-    const uniqueEntries = Array.from(new Set(validEntries));
-    if (uniqueEntries.length === 1) {
-      return { valid: true, workspaceRoot: uniqueEntries[0] };
-    }
-    if (uniqueEntries.length > 1) {
-      return { valid: false, workspaceRoot: "" };
-    }
-    // workspacePaths was explicitly [] — fall back only to explicit non-empty payload.cwd, never process.cwd()
-    if (typeof payload.cwd === "string" && payload.cwd.trim().length > 0) {
-      return { valid: true, workspaceRoot: payload.cwd.trim() };
-    }
-    return { valid: false, workspaceRoot: "" };
-  }
-
-  if (typeof payload.cwd === "string" && payload.cwd.trim().length > 0) {
-    return { valid: true, workspaceRoot: payload.cwd.trim() };
-  }
-
-  // Never fall back to process.cwd() when both workspacePaths and cwd are missing.
-  return { valid: false, workspaceRoot: "" };
-}
-
 export function handlePreToolUse(payload: PreToolUsePayload): PreToolUseOutput {
+  const startedAt = performance.now();
   const toolName = payload.toolCall?.name ?? "";
   const toolArgs = payload.toolCall?.args ?? {};
   const wsContext = resolveExplicitWorkspaceRoot(payload);
   const workspaceRoot = wsContext.valid ? wsContext.workspaceRoot : undefined;
   const flags = resolveEnvFlags();
+  let knownTargetAgent: string | undefined;
 
   let classification = classifyToolCall(toolName, toolArgs, {
     workspaceRoot: wsContext.workspaceRoot,
@@ -185,7 +188,7 @@ export function handlePreToolUse(payload: PreToolUsePayload): PreToolUseOutput {
         }
       }
       // Deliberately preserve original classification (e.g., force_ask on unknown tools) when valid
-      return recordAuditAndBuildOutput(payload, toolName, classification, workspaceRoot);
+      return recordAuditAndBuildOutput(payload, toolName, classification, workspaceRoot, startedAt);
     }
   }
 
@@ -197,6 +200,9 @@ export function handlePreToolUse(payload: PreToolUsePayload): PreToolUseOutput {
       toolArgs.Agent ??
       toolArgs.targetAgent;
     const normalizedTarget = normalizeTargetAgentName(rawTarget);
+    if (normalizedTarget) {
+      knownTargetAgent = normalizedTarget;
+    }
     const promptCandidate = toolArgs.Prompt ?? toolArgs.prompt ?? toolArgs.task ?? toolArgs.Task;
 
     if (!normalizedTarget) {
@@ -270,6 +276,9 @@ export function handlePreToolUse(payload: PreToolUsePayload): PreToolUseOutput {
   } else if (classification.decision !== "deny" && MESSAGE_DELEGATION_TOOLS.has(toolName)) {
     const rawRecipient = toolArgs.Recipient ?? toolArgs.recipient;
     const normalizedRecipient = normalizeTargetAgentName(rawRecipient);
+    if (normalizedRecipient) {
+      knownTargetAgent = normalizedRecipient;
+    }
     const messageCandidate = toolArgs.Message ?? toolArgs.message;
 
     if (typeof messageCandidate !== "string" || messageCandidate.trim().length === 0) {
@@ -327,7 +336,15 @@ export function handlePreToolUse(payload: PreToolUsePayload): PreToolUseOutput {
     }
   }
 
-  return recordAuditAndBuildOutput(payload, toolName, classification, workspaceRoot);
+  return recordAuditAndBuildOutput(
+    payload,
+    toolName,
+    classification,
+    workspaceRoot,
+    startedAt,
+    undefined,
+    knownTargetAgent,
+  );
 }
 
 export interface PrepareAndGateOptions {
@@ -347,6 +364,7 @@ export async function prepareAndGateSubagentToolCall(
   payload: PreToolUsePayload,
   options: PrepareAndGateOptions = {},
 ): Promise<PreToolUseOutput> {
+  const startedAt = performance.now();
   const toolName = payload.toolCall?.name ?? "";
   const toolArgs = payload.toolCall?.args ?? {};
   const wsContext = resolveExplicitWorkspaceRoot(payload);
@@ -389,6 +407,9 @@ export async function prepareAndGateSubagentToolCall(
         reason: `Blocked Frontier delegation to '${normalizedTarget}': workspaceRoot missing for automatic retrieval preparation.`,
       },
       undefined,
+      startedAt,
+      undefined,
+      normalizedTarget,
     );
   }
 
@@ -427,6 +448,9 @@ export async function prepareAndGateSubagentToolCall(
           reason: `Blocked Frontier delegation to '${normalizedTarget}': retrieval handoff preparation failed (${prepared.status}: ${detail}).`,
         },
         workspaceRoot,
+        startedAt,
+        undefined,
+        normalizedTarget,
       );
     }
 
@@ -449,6 +473,9 @@ export async function prepareAndGateSubagentToolCall(
           reason: `Blocked Frontier delegation to '${normalizedTarget}': generated handoff failed consumer validation (${consumerCheck.errors[0] ?? "invalid bundle"}).`,
         },
         workspaceRoot,
+        startedAt,
+        undefined,
+        normalizedTarget,
       );
     }
 
@@ -462,7 +489,9 @@ export async function prepareAndGateSubagentToolCall(
         reason: `Attached validated FRONTIER_HANDOFF_JSON bundle (${prepared.status}) via PreToolUse overwrite.`,
       },
       workspaceRoot,
+      startedAt,
       { Prompt: prepared.promptSection! },
+      normalizedTarget,
     );
   } catch (err: any) {
     return recordAuditAndBuildOutput(
@@ -475,6 +504,9 @@ export async function prepareAndGateSubagentToolCall(
         reason: `Blocked Frontier delegation due to handoff preparation error: ${err?.message ?? String(err)}`,
       },
       workspaceRoot,
+      startedAt,
+      undefined,
+      normalizedTarget,
     );
   }
 }
