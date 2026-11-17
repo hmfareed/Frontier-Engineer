@@ -110,6 +110,7 @@ export const REQUIRED_FILES: string[] = [
   "schemas/handoff.schema.json",
   "schemas/evaluation-scenarios.schema.json",
   "schemas/skill-evaluation-scenarios.schema.json",
+  "schemas/audit-event.schema.json",
 ];
 
 export const REQUIRED_DIRECTORIES: string[] = [

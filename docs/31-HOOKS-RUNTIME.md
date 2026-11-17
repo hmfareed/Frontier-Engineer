@@ -21,6 +21,7 @@ scripts/hooks/
 │   ├── post-invocation.ts     # Invocation telemetry handler
 │   └── stop.ts                # Session termination and flush handler
 └── lib/
+    ├── audit-schema.ts        # Versioned v1 audit-event validator and safe summary builder
     ├── command-classifier.ts  # Lexical command and tool argument classifier
     ├── workspace-validator.ts # Workspace directory and boundary inspector
     ├── secret-redactor.ts     # Regex credential redaction engine
@@ -55,3 +56,17 @@ The runtime is designed for cross-platform portability with first-class Windows 
 - In-process lexical classification executes in < 5ms.
 - Full process lifecycle (Node startup, stdin parse, evaluation, stdout emit) completes in 30–80ms.
 - Handlers run well within Antigravity's bounded timeouts (5–15s).
+
+## Audit telemetry contract and versioning
+
+Execution telemetry written by `runtime/logger.ts` to `.frontier/audit/execution.jsonl` (or `${PLUGIN_DATA}/audit/execution.jsonl`) conforms to `schemas/audit-event.schema.json` (`schemaVersion: 1`), enforced before disk persistence via `lib/audit-schema.ts`:
+
+- **Required v1 core fields**: `schemaVersion`, `eventId`, `timestamp` (ISO-8601), `eventType` (`SessionStart`, `PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`, `SafeFallback`, `Diagnostic`), `hookId`, `source` (`production`, `evaluation`, `test`), `correlationId`, and `status`.
+- **Optional structured fields & alias consistency**: `executionId`, `parentExecutionId`, `agentId`, `skillId`, `stepIdx` (non-negative integer), `invocationNum` (non-negative integer), `toolName`, `durationMs`, `normalizedSummary` (bounded redacted summary only — never raw secrets or raw command payloads), `policyDecision`, `evalContext`, `error`, and `metadata`. Legacy aliases `event` and `conversationId` are supported for backward compatibility; when both modern and legacy aliases are supplied, they must agree (`event === eventType` and `conversationId === correlationId`), otherwise events are rejected. Note that while `event`/`eventType` enum agreement is represented in the JSON Schema `anyOf`, cross-property equality between `conversationId` and `correlationId` is enforced by the dedicated runtime validator (`lib/audit-schema.ts`) rather than generic JSON Schema validation to avoid non-standard `$data` extensions that break standard Draft-07 JSON Schema validators.
+- **Telemetry provenance & precedence policy**:
+  1. `FRONTIER_AUDIT_SOURCE`: If explicitly set to a valid source (`production`, `evaluation`, `test`), it takes precedence. Invalid values emit diagnostics and are rejected. If set to `production` while `evalContext` is present, the event is rejected (evalContext must never coexist with production source).
+  2. Evaluation context: If `evalContext` or `FRONTIER_EVAL_RUN_ID` / `FRONTIER_EVAL_SCENARIO_ID` is present without explicit source, source resolves to `evaluation`.
+  3. Automated testing: If running under verified test execution (`VITEST === "true"` or `NODE_TEST_CONTEXT` defined), source resolves to `test`. Standalone processes with `NODE_ENV === "test"` alone are never misclassified as test telemetry.
+  4. Default: Resolves to `production`.
+- **Versioning & compatibility policy**: Breaking changes (removing required fields or narrowing existing enum meanings) require incrementing `schemaVersion` (`2+`). Optional additive properties must preserve `additionalProperties: false` explicitly in `schemas/audit-event.schema.json` and `AUDIT_ALLOWED_TOP_LEVEL_KEYS` in `lib/audit-schema.ts`; unit tests assert exact parity between the runtime validator and the JSON Schema.
+- **Safety invariants**: Optional correlation/identity fields (`executionId`, `parentExecutionId`, `agentId`, `skillId`, `evalContext`) are emitted only when genuinely known and never fabricated. Leading command environment assignments (`VAR=val`) are skipped during executable identification and never exposed in `commandBin` or summaries. All string fields are bounded after credential redaction so secret expansion never breaks length limits. When no explicit workspace or `PLUGIN_DATA` directory exists, telemetry skips disk writes rather than falling back to `process.cwd()`. Telemetry failures fail open without weakening `PreToolUse` `deny`/`force_ask` decisions.

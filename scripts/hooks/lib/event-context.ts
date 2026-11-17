@@ -11,6 +11,15 @@ export interface AntigravityBasePayload {
   lastUserInput?: string;
   hookEventName?: string;
   cwd?: string;
+  executionId?: string;
+  parentExecutionId?: string;
+  agentId?: string;
+  skillId?: string;
+  evalContext?: {
+    scenarioId?: string;
+    evalRunId?: string;
+    stepId?: string;
+  };
 }
 
 export interface PreToolUsePayload extends AntigravityBasePayload {
@@ -290,8 +299,122 @@ export function normalizeToolCall(
 
 /** Extracts a normalized correlation ID from payload or environment. */
 export function extractCorrelationId(payload: AntigravityBasePayload | undefined): string {
-  if (payload?.conversationId && typeof payload.conversationId === "string") {
-    return payload.conversationId;
+  if (typeof payload?.conversationId === "string" && payload.conversationId.trim().length > 0) {
+    return payload.conversationId.trim();
   }
-  return process.env.FRONTIER_SESSION_ID || "unknown-session";
+  const envSession = process.env.FRONTIER_SESSION_ID?.trim();
+  if (envSession && envSession.length > 0) {
+    return envSession;
+  }
+  return "unknown-session";
+}
+
+export interface ExplicitWorkspaceContext {
+  valid: boolean;
+  workspaceRoot: string;
+}
+
+/**
+ * Resolves explicit workspace context from `workspacePaths` or `cwd` without ever falling back to `process.cwd()`.
+ */
+export function resolveExplicitWorkspaceRoot(
+  payload: Pick<AntigravityBasePayload, "workspacePaths" | "cwd"> | undefined,
+): ExplicitWorkspaceContext {
+  if (!payload) {
+    return { valid: false, workspaceRoot: "" };
+  }
+  if (payload.workspacePaths !== undefined) {
+    if (!Array.isArray(payload.workspacePaths)) {
+      return { valid: false, workspaceRoot: "" };
+    }
+    const validEntries: string[] = [];
+    for (const entry of payload.workspacePaths) {
+      if (typeof entry !== "string" || entry.trim().length === 0) {
+        return { valid: false, workspaceRoot: "" };
+      }
+      validEntries.push(entry.trim());
+    }
+    const uniqueEntries = Array.from(new Set(validEntries));
+    if (uniqueEntries.length === 1) {
+      return { valid: true, workspaceRoot: uniqueEntries[0] };
+    }
+    if (uniqueEntries.length > 1) {
+      return { valid: false, workspaceRoot: "" };
+    }
+    // workspacePaths was explicitly [] — fall back only to explicit non-empty payload.cwd, never process.cwd()
+    if (typeof payload.cwd === "string" && payload.cwd.trim().length > 0) {
+      return { valid: true, workspaceRoot: payload.cwd.trim() };
+    }
+    return { valid: false, workspaceRoot: "" };
+  }
+
+  if (typeof payload.cwd === "string" && payload.cwd.trim().length > 0) {
+    return { valid: true, workspaceRoot: payload.cwd.trim() };
+  }
+
+  return { valid: false, workspaceRoot: "" };
+}
+
+export interface ExtractedExecutionContext {
+  executionId?: string;
+  parentExecutionId?: string;
+  agentId?: string;
+  skillId?: string;
+  evalContext?: {
+    scenarioId?: string;
+    evalRunId?: string;
+    stepId?: string;
+  };
+}
+
+export function cleanOptionalNonEmptyString(val: unknown): string | undefined {
+  return typeof val === "string" && val.trim().length > 0 ? val.trim() : undefined;
+}
+
+export function cleanOptionalNonNegativeInteger(val: unknown): number | undefined {
+  return typeof val === "number" && Number.isInteger(val) && val >= 0 ? val : undefined;
+}
+
+const cleanNonEmptyString = cleanOptionalNonEmptyString;
+
+/**
+ * Extracts optional execution, delegation, agent/skill, and eval identifiers ONLY when
+ * genuinely supplied in the payload or explicit eval environment variables — never fabricates IDs.
+ */
+export function extractExecutionContext(
+  payload: AntigravityBasePayload | undefined,
+): ExtractedExecutionContext {
+  const result: ExtractedExecutionContext = {};
+
+  const executionId = cleanNonEmptyString(payload?.executionId);
+  if (executionId) result.executionId = executionId;
+
+  const parentExecutionId = cleanNonEmptyString(payload?.parentExecutionId);
+  if (parentExecutionId) result.parentExecutionId = parentExecutionId;
+
+  const agentId = cleanNonEmptyString(payload?.agentId);
+  if (agentId) result.agentId = agentId;
+
+  const skillId = cleanNonEmptyString(payload?.skillId);
+  if (skillId) result.skillId = skillId;
+
+  const scenarioId =
+    cleanNonEmptyString(payload?.evalContext?.scenarioId) ??
+    cleanNonEmptyString(process.env.FRONTIER_EVAL_SCENARIO_ID);
+  const evalRunId =
+    cleanNonEmptyString(payload?.evalContext?.evalRunId) ??
+    cleanNonEmptyString(process.env.FRONTIER_EVAL_RUN_ID);
+  const stepId =
+    cleanNonEmptyString(payload?.evalContext?.stepId) ??
+    cleanNonEmptyString(process.env.FRONTIER_EVAL_STEP_ID);
+
+  if (scenarioId || evalRunId || stepId) {
+    result.evalContext = {
+      ...(scenarioId ? { scenarioId } : {}),
+      ...(evalRunId ? { evalRunId } : {}),
+      ...(stepId ? { stepId } : {}),
+    };
+  }
+
+  return result;
 }

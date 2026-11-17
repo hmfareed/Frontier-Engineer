@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { repoRoot } from "../../scripts/lib/paths.ts";
 
 const root = repoRoot();
@@ -12,29 +14,53 @@ interface SubprocessResult {
   code: number | null;
 }
 
-function runDispatcher(args: string[], inputPayload: string): Promise<SubprocessResult> {
-  return new Promise((resolve) => {
-    const child = spawn("node", [dispatcherPath, ...args], {
-      cwd: root,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout.on("data", (d) => (stdout += d.toString()));
-    child.stderr.on("data", (d) => (stderr += d.toString()));
-
-    child.on("close", (code) => {
-      resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code });
-    });
-
-    child.stdin.write(inputPayload);
-    child.stdin.end();
-  });
-}
-
 describe("hook dispatcher subprocess integration", () => {
+  let tempRoot: string;
+  let tempWorkspace: string;
+  let tempPluginData: string;
+
+  beforeEach(() => {
+    tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "fe-hook-runtime-"));
+    tempWorkspace = path.join(tempRoot, "workspace");
+    tempPluginData = path.join(tempRoot, "plugin-data");
+    fs.mkdirSync(tempWorkspace, { recursive: true });
+    fs.mkdirSync(tempPluginData, { recursive: true });
+    fs.writeFileSync(
+      path.join(tempWorkspace, "package.json"),
+      JSON.stringify({ name: "hook-runtime-fixture", version: "1.0.0" }),
+      "utf8",
+    );
+  });
+
+  afterEach(() => {
+    fs.rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  function runDispatcher(args: string[], inputPayload: string): Promise<SubprocessResult> {
+    return new Promise((resolve) => {
+      const child = spawn("node", [dispatcherPath, ...args], {
+        cwd: root,
+        stdio: ["pipe", "pipe", "pipe"],
+        env: {
+          ...process.env,
+          PLUGIN_DATA: tempPluginData,
+        },
+      });
+
+      let stdout = "";
+      let stderr = "";
+
+      child.stdout.on("data", (d) => (stdout += d.toString()));
+      child.stderr.on("data", (d) => (stderr += d.toString()));
+
+      child.on("close", (code) => {
+        resolve({ stdout: stdout.trim(), stderr: stderr.trim(), code });
+      });
+
+      child.stdin.write(inputPayload);
+      child.stdin.end();
+    });
+  }
   it("processes a safe tool call and returns allow", async () => {
     const payload = JSON.stringify({
       toolCall: { name: "run_command", args: { CommandLine: "npm test" } },
@@ -70,8 +96,8 @@ describe("hook dispatcher subprocess integration", () => {
 
   it("intercepts secret exposure and returns deny", async () => {
     const payload = JSON.stringify({
-      workspacePaths: [root],
-      toolCall: { name: "read_file", args: { Path: path.join(root, ".env") } },
+      workspacePaths: [tempWorkspace],
+      toolCall: { name: "read_file", args: { Path: path.join(tempWorkspace, ".env") } },
       stepIdx: 3,
       conversationId: "test-runtime-3",
     });
@@ -108,10 +134,10 @@ describe("hook dispatcher subprocess integration", () => {
     const safeView = await runDispatcher(
       ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
       JSON.stringify({
-        workspacePaths: [root],
+        workspacePaths: [tempWorkspace],
         toolCall: {
           name: "view_file",
-          args: { AbsolutePath: path.join(root, "package.json") },
+          args: { AbsolutePath: path.join(tempWorkspace, "package.json") },
         },
         stepIdx: 5,
         conversationId: "test-runtime-5",
@@ -124,10 +150,10 @@ describe("hook dispatcher subprocess integration", () => {
     const sensitiveView = await runDispatcher(
       ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
       JSON.stringify({
-        workspacePaths: [root],
+        workspacePaths: [tempWorkspace],
         toolCall: {
           name: "view_file",
-          args: { AbsolutePath: path.join(root, ".env") },
+          args: { AbsolutePath: path.join(tempWorkspace, ".env") },
         },
         stepIdx: 6,
         conversationId: "test-runtime-6",
@@ -140,7 +166,7 @@ describe("hook dispatcher subprocess integration", () => {
     const sensitiveWrite = await runDispatcher(
       ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
       JSON.stringify({
-        workspacePaths: [root],
+        workspacePaths: [tempWorkspace],
         toolCall: {
           name: "write_to_file",
           args: { TargetFile: "id_rsa", Content: "private" },
@@ -156,7 +182,7 @@ describe("hook dispatcher subprocess integration", () => {
     const sensitiveReplace = await runDispatcher(
       ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
       JSON.stringify({
-        workspacePaths: [root],
+        workspacePaths: [tempWorkspace],
         toolCall: {
           name: "replace_file_content",
           args: { TargetFile: "credentials.json", Target: "a", Replacement: "b" },
@@ -172,7 +198,7 @@ describe("hook dispatcher subprocess integration", () => {
     const sensitiveMultiReplace = await runDispatcher(
       ["--hook", "frontier-pre-tool-safety", "--event", "PreToolUse"],
       JSON.stringify({
-        workspacePaths: [root],
+        workspacePaths: [tempWorkspace],
         toolCall: {
           name: "multi_replace_file_content",
           args: { TargetFile: "server.key" },
@@ -279,7 +305,7 @@ describe("hook dispatcher subprocess integration", () => {
   it("executes SessionStart and emits clean injectSteps", async () => {
     const payload = JSON.stringify({
       conversationId: "test-sess-start",
-      workspacePaths: [root],
+      workspacePaths: [tempWorkspace],
     });
 
     const res = await runDispatcher(
