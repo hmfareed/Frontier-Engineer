@@ -135,6 +135,7 @@ export const REQUIRED_DIRECTORIES: string[] = [
   "scripts/hooks/runtime",
   "scripts/hooks/handlers",
   "scripts/hooks/lib",
+  "scripts/telemetry",
   "tests",
   "docs",
   "schemas",
