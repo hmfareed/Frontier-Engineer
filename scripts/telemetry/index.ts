@@ -26,3 +26,9 @@ export {
   formatTelemetryMarkdown,
   type TelemetryFormatInput,
 } from "./telemetry-formatter.ts";
+export {
+  executeTelemetryCommand,
+  validateTelemetryCliOptions,
+  type TelemetryCliOptions,
+  type TelemetryCommandResult,
+} from "../cli/telemetry-command.ts";
