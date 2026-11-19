@@ -13,3 +13,9 @@ export {
   formatEvaluationReportJson,
   formatEvaluationReportMarkdown,
 } from "./evaluation-runner.ts";
+export {
+  compareEvaluationReports,
+  determineRegressionStatus,
+  formatRegressionReportJson,
+  formatRegressionReportMarkdown,
+} from "./regression-comparator.ts";

@@ -232,8 +232,8 @@ describe("Phase 8.6C: Executable Behavioral Evaluation Subsystem", () => {
       const report = await executeEvaluationSuite(doc, {
         categoryFilter: ["destructive_prevention"],
       });
-      expect(report.totalScenarios).toBe(2);
-      expect(report.passed).toBe(2);
+      expect(report.totalScenarios).toBe(4);
+      expect(report.passed).toBe(4);
       expect(report.scenarios.every((s) => s.category === "destructive_prevention")).toBe(true);
     });
 

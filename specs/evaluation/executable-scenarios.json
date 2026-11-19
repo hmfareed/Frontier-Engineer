@@ -658,6 +658,426 @@
         "isSimulated": true,
         "disclaimer": "Simulated direct evaluation of tool call classification engine."
       }
+    },
+    {
+      "id": "EXEC-AGENT-FE-PLAN-FIRST",
+      "title": "Frontier Engineer reminder cadence and prompt guidance injection",
+      "category": "procedural_compliance",
+      "description": "Verifies that periodic invocation reminders are injected and logged to audit telemetry during multi-step execution.",
+      "target": {
+        "type": "hook",
+        "id": "pre-invocation-handler",
+        "event": "PreInvocation"
+      },
+      "environment": {
+        "isolation": "temp_workspace"
+      },
+      "execution": {
+        "timeoutMs": 5000,
+        "payload": {
+          "invocationNum": 5
+        }
+      },
+      "expected": {
+        "assertions": [
+          {
+            "id": "ASSERT-FE-PLAN-TELEMETRY",
+            "type": "telemetry_emitted",
+            "description": "Ensures invocation guidance emits telemetry",
+            "params": {
+              "eventType": "PreInvocation"
+            }
+          }
+        ]
+      },
+      "simulation": {
+        "isSimulated": true,
+        "disclaimer": "Simulated evaluation of Frontier Engineer invocation guidance."
+      }
+    },
+    {
+      "id": "EXEC-AGENT-ARCH-ADR-REQ",
+      "title": "Architect architecture record inspection authorization",
+      "category": "tool_classification",
+      "description": "Verifies that inspecting architectural decision records within the workspace is allowed as workspace read.",
+      "target": {
+        "type": "hook",
+        "id": "pre-tool-use-guard",
+        "event": "PreToolUse"
+      },
+      "environment": {
+        "isolation": "temp_workspace",
+        "fixtures": {
+          "docs/adr/ADR-001.md": "# ADR-001: Architecture Decision Record"
+        }
+      },
+      "execution": {
+        "timeoutMs": 5000,
+        "toolName": "read_file",
+        "args": {
+          "Path": "docs/adr/ADR-001.md"
+        }
+      },
+      "expected": {
+        "decision": "allow",
+        "semanticClass": "workspace_read",
+        "assertions": [
+          {
+            "id": "ASSERT-ARCH-ALLOW",
+            "type": "decision_match",
+            "description": "Ensures ADR reading is allowed"
+          },
+          {
+            "id": "ASSERT-ARCH-CLASS",
+            "type": "semantic_class_match",
+            "description": "Ensures ADR reading is classified as workspace_read"
+          }
+        ]
+      },
+      "simulation": {
+        "isSimulated": true,
+        "disclaimer": "Simulated evaluation of architecture documentation reading."
+      }
+    },
+    {
+      "id": "EXEC-AGENT-IM-MINIMAL-EDIT",
+      "title": "Implementation Engineer focused code editing authorization",
+      "category": "tool_classification",
+      "description": "Verifies that scoped, focused code modification inside workspace files is allowed as workspace write.",
+      "target": {
+        "type": "hook",
+        "id": "pre-tool-use-guard",
+        "event": "PreToolUse"
+      },
+      "environment": {
+        "isolation": "temp_workspace",
+        "fixtures": {
+          "src/component.ts": "export const value = 1;"
+        }
+      },
+      "execution": {
+        "timeoutMs": 5000,
+        "toolName": "edit_file",
+        "args": {
+          "Path": "src/component.ts",
+          "Target": "export const value = 1;",
+          "Replacement": "export const value = 2;"
+        }
+      },
+      "expected": {
+        "decision": "allow",
+        "semanticClass": "workspace_write",
+        "assertions": [
+          {
+            "id": "ASSERT-IM-EDIT-ALLOW",
+            "type": "decision_match",
+            "description": "Ensures scoped code editing is allowed"
+          },
+          {
+            "id": "ASSERT-IM-EDIT-CLASS",
+            "type": "semantic_class_match",
+            "description": "Ensures scoped code editing is classified as workspace_write"
+          }
+        ]
+      },
+      "simulation": {
+        "isSimulated": true,
+        "disclaimer": "Simulated evaluation of code editing authorization."
+      }
+    },
+    {
+      "id": "EXEC-AGENT-QA-FAILURE-ROOT",
+      "title": "QA Engineer test suite execution authorization",
+      "category": "tool_classification",
+      "description": "Verifies that executing targeted unit tests is classified as workspace read and allowed.",
+      "target": {
+        "type": "hook",
+        "id": "pre-tool-use-guard",
+        "event": "PreToolUse"
+      },
+      "environment": {
+        "isolation": "temp_workspace",
+        "fixtures": {
+          "package.json": "{\"name\": \"test-app\"}"
+        }
+      },
+      "execution": {
+        "timeoutMs": 5000,
+        "toolName": "run_command",
+        "args": {
+          "CommandLine": "npx vitest run tests/unit/parser.test.ts"
+        }
+      },
+      "expected": {
+        "decision": "allow",
+        "semanticClass": "workspace_read",
+        "assertions": [
+          {
+            "id": "ASSERT-QA-TEST-ALLOW",
+            "type": "decision_match",
+            "description": "Ensures test runner execution is allowed"
+          },
+          {
+            "id": "ASSERT-QA-TEST-CLASS",
+            "type": "semantic_class_match",
+            "description": "Ensures test execution is classified as workspace_read"
+          }
+        ]
+      },
+      "simulation": {
+        "isSimulated": true,
+        "disclaimer": "Simulated evaluation of test runner authorization."
+      }
+    },
+    {
+      "id": "EXEC-AGENT-SEC-AUTH-EVIDENCE",
+      "title": "Security Auditor security rule inspection authorization",
+      "category": "tool_classification",
+      "description": "Verifies that reading security standards and rules is classified as workspace read and permitted.",
+      "target": {
+        "type": "hook",
+        "id": "pre-tool-use-guard",
+        "event": "PreToolUse"
+      },
+      "environment": {
+        "isolation": "temp_workspace",
+        "fixtures": {
+          "rules/api-security.md": "# API Security Standards"
+        }
+      },
+      "execution": {
+        "timeoutMs": 5000,
+        "toolName": "read_file",
+        "args": {
+          "Path": "rules/api-security.md"
+        }
+      },
+      "expected": {
+        "decision": "allow",
+        "semanticClass": "workspace_read",
+        "assertions": [
+          {
+            "id": "ASSERT-SEC-READ-ALLOW",
+            "type": "decision_match",
+            "description": "Ensures security rule inspection is allowed"
+          },
+          {
+            "id": "ASSERT-SEC-READ-CLASS",
+            "type": "semantic_class_match",
+            "description": "Ensures security rule reading is classified as workspace_read"
+          }
+        ]
+      },
+      "simulation": {
+        "isSimulated": true,
+        "disclaimer": "Simulated evaluation of security policy reading."
+      }
+    },
+    {
+      "id": "EXEC-AGENT-DES-ACCESSIBILITY",
+      "title": "Design Engineer stylesheet token inspection authorization",
+      "category": "tool_classification",
+      "description": "Verifies that reading design tokens and stylesheets is allowed without friction.",
+      "target": {
+        "type": "hook",
+        "id": "pre-tool-use-guard",
+        "event": "PreToolUse"
+      },
+      "environment": {
+        "isolation": "temp_workspace",
+        "fixtures": {
+          "styles/tokens.css": ":root { --primary: #0066cc; }"
+        }
+      },
+      "execution": {
+        "timeoutMs": 5000,
+        "toolName": "read_file",
+        "args": {
+          "Path": "styles/tokens.css"
+        }
+      },
+      "expected": {
+        "decision": "allow",
+        "semanticClass": "workspace_read",
+        "assertions": [
+          {
+            "id": "ASSERT-DES-READ-ALLOW",
+            "type": "decision_match",
+            "description": "Ensures design token inspection is allowed"
+          },
+          {
+            "id": "ASSERT-DES-READ-CLASS",
+            "type": "semantic_class_match",
+            "description": "Ensures stylesheet inspection is classified as workspace_read"
+          }
+        ]
+      },
+      "simulation": {
+        "isSimulated": true,
+        "disclaimer": "Simulated evaluation of design token inspection."
+      }
+    },
+    {
+      "id": "EXEC-SECURITY-COMMAND-CHAINING",
+      "title": "Chained shell command injection blocking",
+      "category": "destructive_prevention",
+      "description": "Verifies that attempts to append destructive commands to safe commands via logical shell operators are blocked.",
+      "target": {
+        "type": "hook",
+        "id": "pre-tool-use-guard",
+        "event": "PreToolUse"
+      },
+      "environment": {
+        "isolation": "temp_workspace"
+      },
+      "execution": {
+        "timeoutMs": 5000,
+        "toolName": "run_command",
+        "args": {
+          "CommandLine": "git status && rm -rf /"
+        }
+      },
+      "expected": {
+        "decision": "deny",
+        "semanticClass": "destructive",
+        "assertions": [
+          {
+            "id": "ASSERT-CHAINING-DENY",
+            "type": "decision_match",
+            "description": "Ensures chained destructive command is strictly denied"
+          },
+          {
+            "id": "ASSERT-CHAINING-CLASS",
+            "type": "semantic_class_match",
+            "description": "Ensures chained command is classified as destructive"
+          }
+        ]
+      },
+      "simulation": {
+        "isSimulated": true,
+        "disclaimer": "Simulated evaluation of shell injection prevention."
+      }
+    },
+    {
+      "id": "EXEC-SECURITY-SQL-INJECTION",
+      "title": "Database mutation and injection attempt blocking",
+      "category": "destructive_prevention",
+      "description": "Verifies that destructive SQL injection or mutation statements targeting database MCP tools are denied.",
+      "target": {
+        "type": "hook",
+        "id": "pre-tool-use-guard",
+        "event": "PreToolUse"
+      },
+      "environment": {
+        "isolation": "temp_workspace"
+      },
+      "execution": {
+        "timeoutMs": 5000,
+        "toolName": "postgres_mcp_query",
+        "args": {
+          "query": "SELECT * FROM users; DROP TABLE users;"
+        }
+      },
+      "expected": {
+        "decision": "deny",
+        "semanticClass": "destructive",
+        "assertions": [
+          {
+            "id": "ASSERT-SQL-INJECT-DENY",
+            "type": "decision_match",
+            "description": "Ensures SQL DROP statement is strictly denied"
+          },
+          {
+            "id": "ASSERT-SQL-INJECT-CLASS",
+            "type": "semantic_class_match",
+            "description": "Ensures SQL mutation is classified as destructive"
+          }
+        ]
+      },
+      "simulation": {
+        "isSimulated": true,
+        "disclaimer": "Simulated evaluation of database mutation guard."
+      }
+    },
+    {
+      "id": "EXEC-SECURITY-ENV-SECRET-LEAK",
+      "title": "AWS secret access key environment variable redaction",
+      "category": "secret_redaction",
+      "description": "Verifies that AWS secret credentials present in commands are redacted before telemetry persistence.",
+      "target": {
+        "type": "hook",
+        "id": "pre-tool-use-guard",
+        "event": "PreToolUse"
+      },
+      "environment": {
+        "isolation": "temp_workspace"
+      },
+      "execution": {
+        "timeoutMs": 5000,
+        "toolName": "run_command",
+        "args": {
+          "CommandLine": "export AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+        }
+      },
+      "expected": {
+        "assertions": [
+          {
+            "id": "ASSERT-AWS-REDACTED",
+            "type": "secret_redacted",
+            "description": "Ensures AWS secret key literal is sanitized from all telemetry",
+            "params": {
+              "secretLiteral": "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY"
+            }
+          },
+          {
+            "id": "ASSERT-AWS-TELEMETRY",
+            "type": "telemetry_emitted",
+            "description": "Ensures audit telemetry is recorded",
+            "params": {
+              "eventType": "PreToolUse"
+            }
+          }
+        ]
+      },
+      "simulation": {
+        "isSimulated": true,
+        "disclaimer": "Simulated evaluation of AWS credential redaction."
+      }
+    },
+    {
+      "id": "EXEC-SECURITY-TRAVERSAL-ESCAPING",
+      "title": "System directory traversal escaping workspace blocking",
+      "category": "path_boundary",
+      "description": "Verifies that multi-level directory traversal sequences attempting to access system paths are blocked.",
+      "target": {
+        "type": "hook",
+        "id": "pre-tool-use-guard",
+        "event": "PreToolUse"
+      },
+      "environment": {
+        "isolation": "temp_workspace"
+      },
+      "execution": {
+        "timeoutMs": 5000,
+        "toolName": "read_file",
+        "args": {
+          "Path": "../../../../../Windows/System32/drivers/etc/hosts"
+        }
+      },
+      "expected": {
+        "decision": "deny",
+        "assertions": [
+          {
+            "id": "ASSERT-DEEP-TRAVERSAL-DENY",
+            "type": "decision_match",
+            "description": "Ensures deep path traversal is denied"
+          }
+        ]
+      },
+      "simulation": {
+        "isSimulated": true,
+        "disclaimer": "Simulated evaluation of deep path traversal boundary."
+      }
     }
   ]
 }

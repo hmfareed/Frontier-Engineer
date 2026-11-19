@@ -178,3 +178,53 @@ export interface EvaluationRunReport {
   runtimeMode: "simulation";
   hostDisclaimer: string;
 }
+
+export type RegressionStatus = "passed" | "regressed" | "improved" | "incompatible";
+
+export interface ScenarioRegressionDiff {
+  scenarioId: string;
+  scenarioTitle: string;
+  category: ScenarioCategory;
+  baselineStatus: "passed" | "failed" | "error" | "skipped" | "missing";
+  currentStatus: "passed" | "failed" | "error" | "skipped";
+  durationDeltaMs: number;
+  durationPercentChange: number;
+  failedAssertions: string[];
+  reasons: string[];
+}
+
+export interface LatencyRegression {
+  scenarioId: string;
+  scenarioTitle: string;
+  baselineDurationMs: number;
+  currentDurationMs: number;
+  deltaMs: number;
+  percentChange: number;
+}
+
+export interface RegressionComparisonReport {
+  comparedAt: string;
+  baselineRunId: string;
+  currentRunId: string;
+  overallStatus: RegressionStatus;
+  hasRegressions: boolean;
+  regressionsCount: number;
+  improvementsCount: number;
+  unchangedPassedCount: number;
+  unchangedFailedCount: number;
+  newScenariosCount: number;
+  missingScenariosCount: number;
+  regressions: ScenarioRegressionDiff[];
+  improvements: ScenarioRegressionDiff[];
+  latencyRegressions: LatencyRegression[];
+  newScenarios: string[];
+  missingScenarios: string[];
+  runtimeMode: "simulation";
+  hostDisclaimer: string;
+}
+
+export interface RegressionComparatorOptions {
+  maxLatencyIncreasePercent?: number;
+  maxLatencyIncreaseAbsoluteMs?: number;
+  failOnMissingScenarios?: boolean;
+}

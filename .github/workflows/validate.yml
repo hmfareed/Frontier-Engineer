@@ -34,6 +34,9 @@ jobs:
       - name: Unit and integration tests
         run: npm run test
 
+      - name: Behavioral evaluation regression check
+        run: npm run eval:check
+
       - name: Formatting
         run: npm run format:check
 
