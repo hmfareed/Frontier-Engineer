@@ -77,3 +77,38 @@ Regardless of any other dimension, a run fails if it contains a fabricated verif
 ## How a future run must be recorded
 
 Record scenario ID, model and Antigravity version, date, per-dimension scores, failures, and notes. Only then may an aggregate score be published. Until such a record exists, the 85/100 figure in the original specification is a **target**, not a result.
+
+## Executable behavioral evaluation architecture (Phase 8.6C)
+
+Phase 8.6C introduces an automated, deterministic behavioral evaluation engine (`scripts/evaluation/`) executing versioned scenarios with isolated workspaces and audit telemetry integration.
+
+### Machine-readable contracts and schemas
+
+- **Executable scenario schema**: [schemas/executable-evaluation-scenarios.schema.json](../schemas/executable-evaluation-scenarios.schema.json) enforces versioning, strict target categorization, execution timeouts (50ms–60000ms), typed behavioral assertions, and mandatory simulation disclosures.
+- **Scenario definitions**: [specs/evaluation/executable-scenarios.json](../specs/evaluation/executable-scenarios.json) defines a comprehensive suite of executable behavioral scenarios with prefix `EXEC-`.
+
+### Safe workspace isolation
+
+The isolation manager (`scripts/evaluation/workspace-isolation.ts`) provisions isolated temporary directories in the operating system's temp location (`os.tmpdir()/frontier-eval/...`). It guarantees:
+
+1. Strict isolation from the active project repository: isolated workspaces never reside within the repository root.
+2. Safe fixture instantiation: test files are written within the ephemeral sandbox.
+3. Path containment: path traversal sequences escaping the sandbox boundary throw an immediate violation.
+4. Idempotent cleanup: temporary resources are destroyed after test completion.
+
+### Simulation vs host boundary
+
+Evaluation results are strictly demarcated as simulated plugin behavior:
+
+- Every scenario specification requires `simulation.isSimulated: true`.
+- Every report includes `runtimeMode: "simulation"` and the explicit disclaimer:
+  > _Simulated behavioral evaluation; does not represent live Antigravity host runtime metrics._
+- Simulated runner outcomes must never be conflated with live Antigravity host runtime execution.
+
+### Telemetry integration
+
+All evaluation executions write isolated audit telemetry:
+
+- Telemetry events are stamped with `source: "evaluation"`.
+- Each event includes an `evalContext` containing `evalRunId` and `scenarioId`.
+- The runner analyzes evaluation telemetry using the Phase 8.6B reader, query engine, and integrity diagnostics to verify that zero evaluation events leak into production audit logs.

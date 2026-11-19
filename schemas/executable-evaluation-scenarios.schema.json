@@ -1,0 +1,226 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://frontier-engineer.local/schemas/executable-evaluation-scenarios.json",
+  "title": "Frontier Engineer executable behavioral evaluation scenarios schema",
+  "type": "object",
+  "required": ["version", "evaluatorVersion", "status", "scenarios"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "evaluatorVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["defined", "executing", "measured"]
+    },
+    "description": {
+      "type": "string"
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 10,
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "title",
+          "category",
+          "description",
+          "target",
+          "environment",
+          "execution",
+          "expected",
+          "simulation"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^EXEC-[A-Z0-9-]+$"
+          },
+          "title": {
+            "type": "string",
+            "minLength": 1
+          },
+          "category": {
+            "type": "string",
+            "enum": [
+              "destructive_prevention",
+              "path_boundary",
+              "secret_redaction",
+              "failure_resilience",
+              "timeout_boundary",
+              "procedural_compliance",
+              "telemetry_integrity",
+              "tool_classification"
+            ]
+          },
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "target": {
+            "type": "object",
+            "required": ["type", "id"],
+            "additionalProperties": false,
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["hook", "agent", "skill", "classifier", "policy"]
+              },
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "event": {
+                "type": "string",
+                "enum": [
+                  "SessionStart",
+                  "PreToolUse",
+                  "PostToolUse",
+                  "PreInvocation",
+                  "PostInvocation",
+                  "Stop"
+                ]
+              }
+            }
+          },
+          "environment": {
+            "type": "object",
+            "required": ["isolation"],
+            "additionalProperties": false,
+            "properties": {
+              "isolation": {
+                "type": "string",
+                "enum": ["temp_workspace", "virtual_memory"]
+              },
+              "fixtures": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "execution": {
+            "type": "object",
+            "required": ["timeoutMs"],
+            "additionalProperties": false,
+            "properties": {
+              "timeoutMs": {
+                "type": "integer",
+                "minimum": 50,
+                "maximum": 60000
+              },
+              "toolName": {
+                "type": "string"
+              },
+              "args": {
+                "type": "object"
+              },
+              "rawInput": {
+                "type": "string"
+              },
+              "payload": {
+                "type": "object"
+              },
+              "simulateCrash": {
+                "type": "boolean"
+              },
+              "simulateTimeout": {
+                "type": "boolean"
+              }
+            }
+          },
+          "expected": {
+            "type": "object",
+            "required": ["assertions"],
+            "additionalProperties": false,
+            "properties": {
+              "decision": {
+                "type": "string",
+                "enum": ["allow", "deny", "force_ask", "ask", "escalate", "error"]
+              },
+              "semanticClass": {
+                "type": "string",
+                "enum": [
+                  "trusted_read_only",
+                  "workspace_read",
+                  "workspace_write",
+                  "external_side_effect",
+                  "destructive",
+                  "unknown"
+                ]
+              },
+              "failureBehavior": {
+                "type": "string",
+                "enum": ["fail_closed", "fail_open"]
+              },
+              "assertions": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": ["id", "type", "description"],
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "pattern": "^ASSERT-[A-Z0-9-]+$"
+                    },
+                    "type": {
+                      "type": "string",
+                      "enum": [
+                        "decision_match",
+                        "semantic_class_match",
+                        "telemetry_emitted",
+                        "secret_redacted",
+                        "workspace_contained",
+                        "output_matched",
+                        "duration_bound",
+                        "failure_behavior_match"
+                      ]
+                    },
+                    "description": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "params": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "simulation": {
+            "type": "object",
+            "required": ["isSimulated", "disclaimer"],
+            "additionalProperties": false,
+            "properties": {
+              "isSimulated": {
+                "type": "boolean",
+                "enum": [true]
+              },
+              "disclaimer": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
