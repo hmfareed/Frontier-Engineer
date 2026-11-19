@@ -41,6 +41,12 @@ import {
   type AgentId,
 } from "../retrieval/index.ts";
 import { IndexPipeline, type IndexExecutionReport } from "../indexer/index.ts";
+import {
+  executeTelemetryCommand,
+  type TelemetryGeneration,
+  type TelemetrySortField,
+  type TelemetrySortOrder,
+} from "../telemetry/index.ts";
 
 export interface CliExecutionResult {
   exitCode: number;
@@ -49,7 +55,7 @@ export interface CliExecutionResult {
 }
 
 export async function runCli(argv: string[]): Promise<number> {
-  let format: "text" | "json" = "text";
+  let format: "text" | "json" | "markdown" = "text";
   let workspaceRoot = process.cwd();
   let workspaceProvided = false;
   let limit: number | undefined;
@@ -83,6 +89,33 @@ export async function runCli(argv: string[]): Promise<number> {
   const targetComponents: string[] = [];
   const targetAdrs: string[] = [];
 
+  // Telemetry & Audit options
+  let auditDirOpt: string | undefined;
+  let includeRotatedOpt = false;
+  let maxLinesOpt: number | undefined;
+  let aggregateModeOpt = false;
+  let diagnosticsModeOpt = false;
+  const eventTypeOpt: string[] = [];
+  let eventIdOpt: string | undefined;
+  const policyDecisionOpt: string[] = [];
+  const toolNameOpt: string[] = [];
+  const statusOpt: string[] = [];
+  const sourceOpt: string[] = [];
+  let correlationIdOpt: string | undefined;
+  let conversationIdOpt: string | undefined;
+  let executionIdOpt: string | undefined;
+  let agentIdOpt: string | undefined;
+  let skillIdOpt: string | undefined;
+  let startTimeOpt: string | undefined;
+  let endTimeOpt: string | undefined;
+  let exactTimeOpt: string | undefined;
+  let textSearchOpt: string | undefined;
+  let generationOpt: TelemetryGeneration | undefined;
+  let sortByOpt: TelemetrySortField | undefined;
+  let sortOrderOpt: TelemetrySortOrder | undefined;
+  let pageOpt: number | undefined;
+  let pageSizeOpt: number | undefined;
+
   // Manual argument parsing without external dependencies
   const positional: string[] = [];
 
@@ -113,18 +146,18 @@ export async function runCli(argv: string[]): Promise<number> {
       const raw = nextVal(arg);
       if (raw === null) return 2;
       const val = raw.toLowerCase();
-      if (val === "json" || val === "text") {
-        format = val;
+      if (val === "json" || val === "text" || val === "markdown") {
+        format = val as "text" | "json" | "markdown";
       } else {
-        outputError("Invalid format option: must be 'text' or 'json'.", 2, format);
+        outputError("Invalid format option: must be 'text', 'json', or 'markdown'.", 2, format);
         return 2;
       }
     } else if (arg.startsWith("--format=")) {
       const val = arg.slice("--format=".length).toLowerCase();
-      if (val === "json" || val === "text") {
-        format = val;
+      if (val === "json" || val === "text" || val === "markdown") {
+        format = val as "text" | "json" | "markdown";
       } else {
-        outputError("Invalid format option: must be 'text' or 'json'.", 2, format);
+        outputError("Invalid format option: must be 'text', 'json', or 'markdown'.", 2, format);
         return 2;
       }
     } else if (arg === "--workspace") {
@@ -335,6 +368,182 @@ export async function runCli(argv: string[]): Promise<number> {
       applyLifecycle = true;
     } else if (arg === "--incremental") {
       incrementalOpt = true;
+    } else if (arg === "--audit-dir") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      auditDirOpt = raw;
+    } else if (arg.startsWith("--audit-dir=")) {
+      auditDirOpt = arg.slice("--audit-dir=".length);
+    } else if (arg === "--include-rotated") {
+      includeRotatedOpt = true;
+    } else if (arg === "--max-lines") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      maxLinesOpt = parseStrictPositiveInt(raw);
+      if (maxLinesOpt === undefined) {
+        outputError("Invalid max-lines option: must be a positive integer.", 2, format);
+        return 2;
+      }
+    } else if (arg.startsWith("--max-lines=")) {
+      maxLinesOpt = parseStrictPositiveInt(arg.slice("--max-lines=".length));
+      if (maxLinesOpt === undefined) {
+        outputError("Invalid max-lines option: must be a positive integer.", 2, format);
+        return 2;
+      }
+    } else if (arg === "--aggregate" || arg === "--summary") {
+      aggregateModeOpt = true;
+    } else if (arg === "--diagnostics" || arg === "--integrity") {
+      diagnosticsModeOpt = true;
+    } else if (arg === "--event-type") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      eventTypeOpt.push(...splitList(raw));
+    } else if (arg.startsWith("--event-type=")) {
+      eventTypeOpt.push(...splitList(arg.slice("--event-type=".length)));
+    } else if (arg === "--event-id") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      eventIdOpt = raw.trim();
+    } else if (arg.startsWith("--event-id=")) {
+      eventIdOpt = arg.slice("--event-id=".length).trim();
+    } else if (arg === "--decision" || arg === "--policy-decision") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      policyDecisionOpt.push(...splitList(raw));
+    } else if (arg.startsWith("--decision=")) {
+      policyDecisionOpt.push(...splitList(arg.slice("--decision=".length)));
+    } else if (arg.startsWith("--policy-decision=")) {
+      policyDecisionOpt.push(...splitList(arg.slice("--policy-decision=".length)));
+    } else if (arg === "--tool" || arg === "--tool-name") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      toolNameOpt.push(...splitList(raw));
+    } else if (arg.startsWith("--tool=")) {
+      toolNameOpt.push(...splitList(arg.slice("--tool=".length)));
+    } else if (arg.startsWith("--tool-name=")) {
+      toolNameOpt.push(...splitList(arg.slice("--tool-name=".length)));
+    } else if (arg === "--status") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      statusOpt.push(...splitList(raw));
+    } else if (arg.startsWith("--status=")) {
+      statusOpt.push(...splitList(arg.slice("--status=".length)));
+    } else if (arg === "--source") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      sourceOpt.push(...splitList(raw));
+    } else if (arg.startsWith("--source=")) {
+      sourceOpt.push(...splitList(arg.slice("--source=".length)));
+    } else if (arg === "--correlation-id") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      correlationIdOpt = raw.trim();
+    } else if (arg.startsWith("--correlation-id=")) {
+      correlationIdOpt = arg.slice("--correlation-id=".length).trim();
+    } else if (arg === "--conversation-id") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      conversationIdOpt = raw.trim();
+    } else if (arg.startsWith("--conversation-id=")) {
+      conversationIdOpt = arg.slice("--conversation-id=".length).trim();
+    } else if (arg === "--execution-id") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      executionIdOpt = raw.trim();
+    } else if (arg.startsWith("--execution-id=")) {
+      executionIdOpt = arg.slice("--execution-id=".length).trim();
+    } else if (arg === "--agent-id") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      agentIdOpt = raw.trim();
+    } else if (arg.startsWith("--agent-id=")) {
+      agentIdOpt = arg.slice("--agent-id=".length).trim();
+    } else if (arg === "--skill-id") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      skillIdOpt = raw.trim();
+    } else if (arg.startsWith("--skill-id=")) {
+      skillIdOpt = arg.slice("--skill-id=".length).trim();
+    } else if (arg === "--start-time") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      startTimeOpt = raw.trim();
+    } else if (arg.startsWith("--start-time=")) {
+      startTimeOpt = arg.slice("--start-time=".length).trim();
+    } else if (arg === "--end-time") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      endTimeOpt = raw.trim();
+    } else if (arg.startsWith("--end-time=")) {
+      endTimeOpt = arg.slice("--end-time=".length).trim();
+    } else if (arg === "--exact-time") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      exactTimeOpt = raw.trim();
+    } else if (arg.startsWith("--exact-time=")) {
+      exactTimeOpt = arg.slice("--exact-time=".length).trim();
+    } else if (arg === "--text" || arg === "--text-search") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      textSearchOpt = raw;
+    } else if (arg.startsWith("--text=")) {
+      textSearchOpt = arg.slice("--text=".length);
+    } else if (arg.startsWith("--text-search=")) {
+      textSearchOpt = arg.slice("--text-search=".length);
+    } else if (arg === "--generation") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      generationOpt = raw.trim() as any;
+    } else if (arg.startsWith("--generation=")) {
+      generationOpt = arg.slice("--generation=".length).trim() as any;
+    } else if (arg === "--sort-by") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      sortByOpt = raw.trim() as any;
+    } else if (arg.startsWith("--sort-by=")) {
+      sortByOpt = arg.slice("--sort-by=".length).trim() as any;
+    } else if (arg === "--sort-order") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      sortOrderOpt = raw.trim().toLowerCase() as any;
+    } else if (arg.startsWith("--sort-order=")) {
+      sortOrderOpt = arg.slice("--sort-order=".length).trim().toLowerCase() as any;
+    } else if (arg === "--page") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      pageOpt = parseStrictPositiveInt(raw);
+      if (pageOpt === undefined) {
+        outputError("Invalid --page option: must be a positive integer.", 2, format);
+        return 2;
+      }
+    } else if (arg.startsWith("--page=")) {
+      pageOpt = parseStrictPositiveInt(arg.slice("--page=".length));
+      if (pageOpt === undefined) {
+        outputError("Invalid --page option: must be a positive integer.", 2, format);
+        return 2;
+      }
+    } else if (arg === "--page-size") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      pageSizeOpt = parseStrictPositiveInt(raw);
+      if (pageSizeOpt === undefined) {
+        outputError(
+          "Invalid --page-size option: must be a positive integer between 1 and 1000.",
+          2,
+          format,
+        );
+        return 2;
+      }
+    } else if (arg.startsWith("--page-size=")) {
+      pageSizeOpt = parseStrictPositiveInt(arg.slice("--page-size=".length));
+      if (pageSizeOpt === undefined) {
+        outputError(
+          "Invalid --page-size option: must be a positive integer between 1 and 1000.",
+          2,
+          format,
+        );
+        return 2;
+      }
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       return 0;
@@ -408,6 +617,8 @@ export async function runCli(argv: string[]): Promise<number> {
     "retrieve",
     "prepare-handoff",
     "validate-handoff",
+    "telemetry",
+    "audit",
   ]);
 
   if (!KNOWN_COMMANDS.has(subcommand)) {
@@ -417,6 +628,152 @@ export async function runCli(argv: string[]): Promise<number> {
       format,
     );
     return 2;
+  }
+
+  const isTelemetryCommand = subcommand === "telemetry" || subcommand === "audit";
+
+  if (!isTelemetryCommand && format === "markdown") {
+    outputError("Invalid format option: must be 'text' or 'json'.", 2, "text");
+    return 2;
+  }
+
+  const hasTelemetryFlags =
+    auditDirOpt !== undefined ||
+    includeRotatedOpt ||
+    maxLinesOpt !== undefined ||
+    aggregateModeOpt ||
+    diagnosticsModeOpt ||
+    eventTypeOpt.length > 0 ||
+    eventIdOpt !== undefined ||
+    policyDecisionOpt.length > 0 ||
+    toolNameOpt.length > 0 ||
+    statusOpt.length > 0 ||
+    sourceOpt.length > 0 ||
+    correlationIdOpt !== undefined ||
+    conversationIdOpt !== undefined ||
+    executionIdOpt !== undefined ||
+    agentIdOpt !== undefined ||
+    skillIdOpt !== undefined ||
+    startTimeOpt !== undefined ||
+    endTimeOpt !== undefined ||
+    exactTimeOpt !== undefined ||
+    textSearchOpt !== undefined ||
+    generationOpt !== undefined ||
+    sortByOpt !== undefined ||
+    sortOrderOpt !== undefined ||
+    pageOpt !== undefined ||
+    pageSizeOpt !== undefined;
+
+  if (!isTelemetryCommand && hasTelemetryFlags) {
+    outputError(
+      `Telemetry options are only supported for 'telemetry' and 'audit' subcommands (got '${subcommand}').`,
+      2,
+      format,
+    );
+    return 2;
+  }
+
+  if (isTelemetryCommand) {
+    if (
+      depth !== undefined ||
+      scanId !== undefined ||
+      baseScanIdOpt !== undefined ||
+      targetScanIdOpt !== undefined ||
+      agentProvided ||
+      fromAgentOpt !== undefined ||
+      taskSummary !== undefined ||
+      taskIdOpt !== undefined ||
+      inputPathOpt !== undefined ||
+      targetFiles.length > 0 ||
+      targetSymbols.length > 0 ||
+      targetComponents.length > 0 ||
+      targetAdrs.length > 0 ||
+      includeSnippets !== undefined ||
+      includeHistorical ||
+      verifyContent ||
+      persistEvents ||
+      seenAllowPartial ||
+      seenNoAllowPartial ||
+      allowStaleOpt ||
+      allowUnindexed ||
+      applyLifecycle ||
+      incrementalOpt
+    ) {
+      outputError(
+        `Intelligence options are not supported for telemetry/audit commands.`,
+        2,
+        format,
+      );
+      return 2;
+    }
+
+    // Handle telemetry sub-actions: list, summary/aggregate, verify/diagnostics/integrity, show <id>
+    const action = positional[1]?.toLowerCase();
+    if (action) {
+      if (action === "list" || action === "query") {
+        // default query mode
+      } else if (action === "summary" || action === "aggregate") {
+        aggregateModeOpt = true;
+      } else if (action === "verify" || action === "diagnostics" || action === "integrity") {
+        diagnosticsModeOpt = true;
+      } else if (action === "show") {
+        const id = positional[2]?.trim();
+        if (!id) {
+          outputError(
+            "Missing required event ID for 'show' action: telemetry show <event_id>",
+            2,
+            format,
+          );
+          return 2;
+        }
+        eventIdOpt = id;
+      } else {
+        outputError(
+          `Unknown telemetry action: "${action}". Supported actions: list, summary, verify, show <id>.`,
+          2,
+          format,
+        );
+        return 2;
+      }
+    }
+
+    const result = await executeTelemetryCommand({
+      workspaceRoot,
+      auditDir: auditDirOpt,
+      format,
+      includeRotated: includeRotatedOpt,
+      maxLines: maxLinesOpt,
+      aggregateMode: aggregateModeOpt,
+      diagnosticsMode: diagnosticsModeOpt,
+      eventType: eventTypeOpt.length > 0 ? eventTypeOpt : undefined,
+      eventId: eventIdOpt,
+      policyDecision: policyDecisionOpt.length > 0 ? policyDecisionOpt : undefined,
+      toolName: toolNameOpt.length > 0 ? toolNameOpt : undefined,
+      status: statusOpt.length > 0 ? statusOpt : undefined,
+      source: sourceOpt.length > 0 ? sourceOpt : undefined,
+      correlationId: correlationIdOpt,
+      conversationId: conversationIdOpt,
+      executionId: executionIdOpt,
+      agentId: agentIdOpt,
+      skillId: skillIdOpt,
+      startTime: startTimeOpt,
+      endTime: endTimeOpt,
+      exactTime: exactTimeOpt,
+      textSearch: textSearchOpt,
+      generation: generationOpt,
+      sortBy: sortByOpt,
+      sortOrder: sortOrderOpt,
+      page: pageOpt,
+      pageSize: pageSizeOpt ?? limit,
+    });
+
+    if (result.exitCode === 0) {
+      process.stdout.write(result.output.endsWith("\n") ? result.output : result.output + "\n");
+      return 0;
+    } else {
+      outputError(result.error ?? "Telemetry command failed.", result.exitCode, format);
+      return result.exitCode;
+    }
   }
 
   if (
@@ -1293,7 +1650,11 @@ export async function runCli(argv: string[]): Promise<number> {
   }
 }
 
-function outputError(message: string, exitCode: number, format: "text" | "json"): void {
+function outputError(
+  message: string,
+  exitCode: number,
+  format: "text" | "json" | "markdown",
+): void {
   if (format === "json") {
     process.stdout.write(
       JSON.stringify(
@@ -1565,8 +1926,12 @@ Commands:
   prepare-handoff                 Retrieve grounded context and emit a schema-validated delegation handoff
   validate-handoff <path>         Validate a handoff JSON file or FRONTIER_HANDOFF_JSON delegation prompt
 
+  # Telemetry & Audit Commands (2)
+  telemetry [list|summary|verify|show <id>] Query runtime audit telemetry logs, summary stats, and integrity
+  audit [list|summary|verify|show <id>]     Alias for 'telemetry'
+
 Options:
-  --format <text|json>       Output format (default: text)
+  --format <text|json|markdown> Output format (default: text; markdown supported for telemetry/audit)
   --workspace <path>         Target workspace root directory (default: current directory)
   --depth <n>                Maximum traversal depth for dependency queries (default: 3, max: 10)
   --limit <n>                Maximum number of results to display (default: 50)
@@ -1594,6 +1959,33 @@ Options:
   --no-allow-partial         Reject PARTIAL snapshots during 'retrieve' / 'prepare-handoff'
   --allow-stale              Allow STALE snapshots during 'validate-handoff' consumer check
   --allow-unindexed          Emit degraded static-inspection handoff when repository index is unavailable
+
+  # Telemetry Query & Filtering Options
+  --audit-dir <path>         Override target audit directory (default: .frontier/audit)
+  --include-rotated          Include rotated historical log files (execution.jsonl.1..3)
+  --max-lines <n>            Maximum total lines to scan across audit log files
+  --aggregate, --summary     Generate categorical distributions and summary metrics
+  --diagnostics, --integrity Run structural and continuity integrity diagnostics
+  --event-type <type>        Filter by event type (repeatable, comma-separated)
+  --event-id <id>            Filter by exact event ID
+  --decision <decision>      Filter by policy decision (ALLOW, WARN, BLOCK, ERROR)
+  --tool <name>              Filter by tool name (repeatable, comma-separated)
+  --status <status>          Filter by status (SUCCESS, FAILURE, ERROR)
+  --source <source>          Filter by event source (repeatable, comma-separated)
+  --correlation-id <id>      Filter by correlation ID
+  --conversation-id <id>     Filter by conversation ID
+  --execution-id <id>        Filter by execution ID
+  --agent-id <id>            Filter by agent ID
+  --skill-id <id>            Filter by skill ID
+  --start-time <iso|ms>      Filter events starting at or after timestamp
+  --end-time <iso|ms>        Filter events ending at or before timestamp
+  --exact-time <iso|ms>      Filter events matching exact timestamp
+  --text "<query>"           Search approved text fields (tool, reason, summary, error)
+  --generation <gen>         Filter by schema generation (modern-v1 or legacy)
+  --sort-by <field>          Sort field: timestamp, eventType, durationMs, stepIdx
+  --sort-order <asc|desc>    Sort direction (default: asc)
+  --page <n>                 Page number for paginated results (1-based, default: 1)
+  --page-size <n>            Results per page (1-1000, default: 50)
   --help, -h                 Display this help message
 
 Exit codes:

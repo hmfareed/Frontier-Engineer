@@ -107,4 +107,39 @@ The telemetry query, aggregation, diagnostics, and formatting layer (`scripts/te
 - **Deterministic output formatters (`telemetry-formatter.ts`)**:
   - `formatTelemetryJson(data, options)`: serializes telemetry data with canonical alphabetical key ordering, circular reference protection (`"[Circular]"`), and secret redaction.
   - `formatTelemetryMarkdown(data, options)`: formats query results, aggregations, and integrity reports into clean GitHub-flavored Markdown tables. Escapes cell delimiters (`|`, `\r`, `\n`), enforces cell width limits, includes pagination footers, and redacts sensitive strings.
-- **Scope notice**: These modules constitute library APIs. CLI commands (`frontier telemetry`, `frontier audit`) are part of Phase 8.6B-3 and are excluded from Phase 8.6B-2.
+- **Phase separation**: These modules constitute library APIs. CLI integration is implemented in Phase 8.6B-3 (`scripts/cli/telemetry-command.ts`, `scripts/cli/frontier-cli.ts`).
+
+## Telemetry & audit CLI interface (Phase 8.6B-3)
+
+The CLI layer exposes the telemetry subsystem through the unified `frontier-cli` entrypoint without requiring SQLite database initialization or write privileges:
+
+- **CLI commands & alias parity**:
+  - `frontier telemetry [action] [options]`: Primary telemetry query, aggregation, and integrity verification command.
+  - `frontier audit [action] [options]`: Full alias for `frontier telemetry`.
+  - Supported actions:
+    - `list` (default): Query and paginate normalized audit telemetry records in tabular format.
+    - `summary` / `aggregate`: Compute aggregate metrics, generation breakdown, and tool/policy distributions.
+    - `verify` / `diagnostics`: Run structural schema and session continuity integrity analysis.
+    - `show <event_id>`: Query and display a single record matching the given unique event ID.
+- **Output formats**:
+  - `--format text` / `--format markdown` (default): Renders formatted GitHub-flavored Markdown tables.
+  - `--format json`: Emits canonical, deterministic JSON with key sorting, circular reference protection, and secret redaction.
+- **Strict query & filter controls**:
+  - Filtering by `--event-type`, `--event-id`, `--decision`, `--tool`, `--status`, `--source`, `--correlation-id`, `--conversation-id`, `--execution-id`, `--agent-id`, `--skill-id`, `--generation` (`modern-v1` | `legacy`), and approved `--text` search.
+  - Bounded time ranges via `--start-time`, `--end-time`, and `--exact-time` with input validation against inverted or malformed timestamps.
+  - Deterministic sorting via `--sort-by <timestamp|eventType|durationMs|stepIdx>` and `--sort-order <asc|desc>`.
+  - Bounded pagination via `--page` (positive int) and `--page-size` (1..1000).
+- **Log discovery & rotation controls**:
+  - `--audit-dir <path>`: Allows querying arbitrary workspace or evaluation audit directories.
+  - `--include-rotated`: Scans rotated archive logs (`execution.jsonl.1`..`3`) in strict chronological order.
+  - `--max-lines <n>`: Enforces total physical line reading limits across all scanned files.
+- **Deterministic exit codes**:
+  - `0`: Success (query, summary, diagnostics, or show command succeeded).
+  - `1`: Operational failure (unhandled read or parsing exception).
+  - `2`: Invalid arguments, validation failure, unknown action, or flag conflict.
+  - `3`: Audit directory unavailable or no audit log files discovered.
+  - `4`: Target entity not found (requested `eventId` does not exist in logs).
+- **Isolation and security**:
+  - Strictly read-only: Zero writes or modifications to `.frontier/audit/execution.jsonl` or workspace files.
+  - Completely decoupled from SQLite database storage: Does not open or mutate `.frontier/intelligence/index.sqlite`.
+  - Flag isolation: Rejects telemetry options on intelligence subcommands and rejects intelligence options on telemetry commands.
