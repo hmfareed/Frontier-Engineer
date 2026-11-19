@@ -81,3 +81,30 @@ The telemetry reader subsystem (`scripts/telemetry/`) provides a bounded-memory,
 - **Malformed-record & corruption tolerance**: Blank lines are skipped; malformed JSON or truncated lines yield structured `ParseDiagnostic` objects (`INVALID_JSON`, `SCHEMA_VIOLATION`, `UNSUPPORTED_VERSION`) without terminating the file scan or crashing caller processes.
 - **Read-only & isolation guarantees**: Operates strictly read-only. Source files are never modified, re-sorted, or rewritten in place. Tests execute exclusively against disposable temporary directories.
 - **Known limitations & filesystem concurrency**: Specialist `agentId`, child `executionId`, and `skillId` are supported by the schema but are not currently populated by the live Antigravity host runtime. Regarding filesystem concurrency: opening verified canonical paths eliminates candidate symlink substitution in the audit directory; however, user-space Node.js runtime operations cannot achieve kernel-level atomic path locking (e.g. Linux `openat2(..., RESOLVE_BENEATH)`), so adversaries with concurrent arbitrary write access to the underlying parent filesystem could theoretically manipulate ancestor directories.
+
+## Telemetry query, aggregation & diagnostics architecture (Phase 8.6B-2)
+
+The telemetry query, aggregation, diagnostics, and formatting layer (`scripts/telemetry/`) provides a reusable, deterministic query and reporting API on top of the Phase 8.6B-1 reader and normalizer:
+
+- **Query engine & deterministic pagination (`telemetry-query.ts`)**:
+  - `queryTelemetryRecords(records, query)`: filters, sorts, and paginates normalized telemetry records immutably using AND filter semantics.
+  - Supported filters: event attributes (`eventType`, `eventId`, `status`, `source`, `policyDecision`, `toolName`), correlation contexts (`correlationId`, legacy `conversationId`, `executionId`, `agentId`, `skillId`), time ranges (`startTime`, `endTime`, `exactTime` with input validation against inverted or invalid dates), and generation (`modern-v1` vs `legacy`).
+  - Approved text search: case-insensitive search strictly across non-sensitive metadata (`eventType`, `toolName`, `correlationId`, `reason`, `category`, `summary`, `commandBin`, `error`); arbitrary metadata or raw object properties are not exposed to text search.
+  - Deterministic sorting & tie-breaking: sorts by `timestamp` (default), `eventType`, `durationMs`, or `stepIdx`. Identical primary keys are broken deterministically by `filePath` → `lineNumber` → `eventId`.
+  - Bounded pagination: validated 1-based `page` and bounded `pageSize` (default 50, maximum 1000) returning structured `TelemetryPaginationMeta` (`totalMatched`, `page`, `pageSize`, `totalPages`, `hasMore`).
+- **Telemetry aggregation & metrics (`telemetry-aggregator.ts`)**:
+  - `aggregateTelemetry(records, diagnostics)`: calculates deterministic metrics without mutating input records.
+  - Summarizes valid records, counts by event type, status, policy decision (including explicit `none`), source, tool invocations, and generations.
+  - Tracks missing optional metadata (`missingPolicyDecision`, `missingSummary`, `missingToolName`, `missingAgentId`, etc.) without fabricating non-existent attributes.
+  - All output object keys are sorted alphabetically for deterministic serialization.
+- **Structural integrity diagnostics (`telemetry-diagnostics.ts`)**:
+  - `analyzeTelemetryIntegrity(records, diagnostics)`: inspects normalized records and ingest diagnostics, categorizing findings into:
+    - _Structural errors_: unparseable records, schema violations, unsupported schema versions, invalid ISO timestamps.
+    - _Consistency warnings_: duplicate `eventId` instances, non-monotonic timestamps within a session, step-index discontinuities (`stepIdx` gaps), incomplete session correlations, and suspected unredacted credential patterns.
+    - _Informational observations_: presence of legacy records, unpopulated specialist host fields, empty audit logs.
+  - Non-tampering invariants: clock skew, subagent concurrency, and non-monotonic timestamps are reported as warnings, never as proof of tampering.
+  - Explicit integrity limitations: clearly documents that structural diagnostics do not provide cryptographic non-repudiation or tamper-proofing; cryptographic hash chains are not implemented in Phase 8.6B.
+- **Deterministic output formatters (`telemetry-formatter.ts`)**:
+  - `formatTelemetryJson(data, options)`: serializes telemetry data with canonical alphabetical key ordering, circular reference protection (`"[Circular]"`), and secret redaction.
+  - `formatTelemetryMarkdown(data, options)`: formats query results, aggregations, and integrity reports into clean GitHub-flavored Markdown tables. Escapes cell delimiters (`|`, `\r`, `\n`), enforces cell width limits, includes pagination footers, and redacts sensitive strings.
+- **Scope notice**: These modules constitute library APIs. CLI commands (`frontier telemetry`, `frontier audit`) are part of Phase 8.6B-3 and are excluded from Phase 8.6B-2.
