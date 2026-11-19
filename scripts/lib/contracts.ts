@@ -8,6 +8,7 @@ import { readText } from "./walk.ts";
 const HANDOFF_SCHEMA = "schemas/handoff.schema.json";
 const SCENARIOS_SCHEMA = "schemas/evaluation-scenarios.schema.json";
 const SKILL_SCENARIOS_SCHEMA = "schemas/skill-evaluation-scenarios.schema.json";
+const EXECUTABLE_SCENARIOS_SCHEMA = "schemas/executable-evaluation-scenarios.schema.json";
 
 export const RUBRIC_DIMENSIONS = [
   "Correctness",
@@ -251,6 +252,50 @@ export function checkContracts(root: string): Finding[] {
             "skill-rubric-dimension-missing",
             "specs/evaluation/skill-scenarios.json",
             `Skill rubric is missing "${dimension}".`,
+          ),
+        );
+      }
+    }
+  }
+
+  // Phase 8.6C Executable behavioral evaluation scenarios validation
+  const execScenarios = readJson(root, "specs/evaluation/executable-scenarios.json");
+  findings.push(...execScenarios.findings);
+  if (execScenarios.value && typeof execScenarios.value === "object") {
+    const document = execScenarios.value as Record<string, unknown>;
+    findings.push(
+      ...validateValueAgainstSchema(
+        root,
+        document,
+        "specs/evaluation/executable-scenarios.json",
+        EXECUTABLE_SCENARIOS_SCHEMA,
+        "invalid-executable-evaluation-scenarios",
+      ),
+    );
+
+    const scenarios = Array.isArray(document.scenarios)
+      ? (document.scenarios as Array<Record<string, unknown>>)
+      : [];
+    for (const s of scenarios) {
+      const id = String(s.id ?? "");
+      if (!id.startsWith("EXEC-")) {
+        findings.push(
+          finding(
+            "error",
+            "executable-scenario-id-prefix",
+            "specs/evaluation/executable-scenarios.json",
+            `Scenario "${id}" must use the "EXEC-" prefix.`,
+          ),
+        );
+      }
+      const sim = s.simulation as Record<string, unknown> | undefined;
+      if (!sim || sim.isSimulated !== true) {
+        findings.push(
+          finding(
+            "error",
+            "executable-scenario-unsimulated-claim",
+            "specs/evaluation/executable-scenarios.json",
+            `Scenario "${id}" must explicitly declare simulation.isSimulated: true.`,
           ),
         );
       }
