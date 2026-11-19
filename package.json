@@ -20,10 +20,12 @@
     "build:parser": "node scripts/build-parser-bundle.ts",
     "test": "vitest run",
     "test:watch": "vitest",
+    "eval:run": "node scripts/evaluation/run-eval.ts",
+    "eval:check": "node scripts/evaluation/check-regression.ts",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint:md": "markdownlint-cli2",
-    "verify": "npm run typecheck && npm run validate && npm run test && npm run format:check && npm run lint:md",
+    "verify": "npm run typecheck && npm run validate && npm run test && npm run eval:check && npm run format:check && npm run lint:md",
     "frontier": "node scripts/cli/frontier-cli.ts"
   },
   "devDependencies": {

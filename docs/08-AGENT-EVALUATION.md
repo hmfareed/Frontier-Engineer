@@ -112,3 +112,34 @@ All evaluation executions write isolated audit telemetry:
 - Telemetry events are stamped with `source: "evaluation"`.
 - Each event includes an `evalContext` containing `evalRunId` and `scenarioId`.
 - The runner analyzes evaluation telemetry using the Phase 8.6B reader, query engine, and integrity diagnostics to verify that zero evaluation events leak into production audit logs.
+
+## Evaluation suite, regression comparison & CI integration (Phase 8.6D)
+
+Phase 8.6D completes the evaluation loop by providing automated behavioral regression comparison and CI pipeline gates.
+
+### Comprehensive scenario suite
+
+The suite defined in [specs/evaluation/executable-scenarios.json](../specs/evaluation/executable-scenarios.json) covers 26 executable scenarios:
+
+- **Canonical agent policies**: Inspection-before-planning (Frontier Engineer), ADR recording discipline (Architect), focused minimal code editing (Implementation Engineer), test failure root cause analysis (QA Engineer), evidence-based security auditing (Security Auditor), and design token governance (Design Engineer).
+- **Adversarial security & boundaries**: Chained command execution (`&&`, `;`), SQL mutation blocking, multi-level directory traversal, and NTFS alternate data stream isolation.
+- **Secret & credential masking**: Redaction of GitHub tokens, AWS credentials, and Bearer tokens.
+- **Failure recovery**: Fail-closed security fallbacks vs fail-open lifecycle fallbacks.
+
+### Regression comparison engine
+
+The regression comparator (`scripts/evaluation/regression-comparator.ts`) evaluates active evaluation runs against canonical baselines ([specs/evaluation/baseline-report.json](../specs/evaluation/baseline-report.json)):
+
+- **Status transitions**: Detects regressions where previously passing scenarios fail or error.
+- **Latency regressions**: Flags significant performance slowdowns exceeding defined thresholds (>200% duration increase and >1000ms absolute delta).
+- **Assertion-level diagnostics**: Identifies exact assertion IDs that regressed.
+- **Honest reporting**: Outputs structured JSON (`formatRegressionReportJson`) and human-readable Markdown (`formatRegressionReportMarkdown`) with alert banners and clear status indicators (`PASSED`, `REGRESSED`, `IMPROVED`).
+
+### CI integration & automation
+
+Automated regression gates are integrated directly into the continuous integration workflow:
+
+- **NPM Scripts**:
+  - `npm run eval:run`: Executes the behavioral evaluation suite.
+  - `npm run eval:check`: Executes the evaluation suite, compares against the canonical baseline, and exits with code 1 if any regression is detected.
+- **GitHub Actions**: `.github/workflows/validate.yml` runs `npm run eval:check` on every push and pull request to primary branches (`master`, `main`), guaranteeing that no behavioral or security regressions can be merged undetected.
