@@ -25,6 +25,9 @@ import {
 import { AdrIngestEngine } from "../memory/adr-ingest.ts";
 import { MemoryProjector } from "../memory/memory-projector.ts";
 import { MemoryDriftDetector } from "../memory/memory-drift.ts";
+import { TaskEngine } from "../task/task-engine.ts";
+import { TaskStore } from "../task/task-store.ts";
+import { HandoffValidator } from "../task/handoff-validator.ts";
 import { ArchitectureQueryEngine } from "../query/query-engine.ts";
 import { QueryGrammar } from "../query/query-grammar.ts";
 import { QueryFormatter } from "../query/query-formatter.ts";
@@ -138,6 +141,18 @@ export async function runCli(argv: string[]): Promise<number> {
   let outputDirOpt: string | undefined;
   let dryRunOpt = false;
   let fixOpt = false;
+
+  // Task graph & execution plan options (Phase 8.3)
+  let descriptionOpt: string | undefined;
+  let planOpt: string | undefined;
+  let priorityOpt: number | undefined;
+  let resultSummaryOpt: string | undefined;
+  const dependsOnOpt: string[] = [];
+  const filesOpt: string[] = [];
+  let toAgentOpt: string | undefined;
+  let objectiveOpt: string | undefined;
+  const scopeOpt: string[] = [];
+  const criteriaOpt: string[] = [];
 
   // Manual argument parsing without external dependencies
   const positional: string[] = [];
@@ -413,8 +428,16 @@ export async function runCli(argv: string[]): Promise<number> {
         outputError("Invalid max-lines option: must be a positive integer.", 2, format);
         return 2;
       }
-    } else if (arg === "--aggregate" || arg === "--summary") {
+    } else if (arg === "--aggregate") {
       aggregateModeOpt = true;
+    } else if (arg === "--summary") {
+      if (i + 1 < argv.length && !argv[i + 1].startsWith("-")) {
+        resultSummaryOpt = argv[++i];
+      } else {
+        aggregateModeOpt = true;
+      }
+    } else if (arg.startsWith("--summary=")) {
+      resultSummaryOpt = arg.slice("--summary=".length);
     } else if (arg === "--diagnostics" || arg === "--integrity") {
       diagnosticsModeOpt = true;
     } else if (arg === "--event-type") {
@@ -661,6 +684,82 @@ export async function runCli(argv: string[]): Promise<number> {
       dryRunOpt = true;
     } else if (arg === "--fix" || arg === "--reconcile") {
       fixOpt = true;
+    } else if (arg === "--description" || arg === "--desc") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      descriptionOpt = raw;
+    } else if (arg.startsWith("--description=") || arg.startsWith("--desc=")) {
+      descriptionOpt = arg.includes("--description=")
+        ? arg.slice("--description=".length)
+        : arg.slice("--desc=".length);
+    } else if (arg === "--plan") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      planOpt = raw.trim();
+    } else if (arg.startsWith("--plan=")) {
+      planOpt = arg.slice("--plan=".length).trim();
+    } else if (arg === "--priority") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      priorityOpt = parseStrictPositiveInt(raw);
+      if (priorityOpt === undefined) {
+        outputError("Invalid --priority option: must be a positive integer.", 2, format);
+        return 2;
+      }
+    } else if (arg.startsWith("--priority=")) {
+      priorityOpt = parseStrictPositiveInt(arg.slice("--priority=".length));
+      if (priorityOpt === undefined) {
+        outputError("Invalid --priority option: must be a positive integer.", 2, format);
+        return 2;
+      }
+    } else if (arg === "--depends-on" || arg === "--prereq" || arg === "--prereqs") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      dependsOnOpt.push(...splitList(raw));
+    } else if (
+      arg.startsWith("--depends-on=") ||
+      arg.startsWith("--prereq=") ||
+      arg.startsWith("--prereqs=")
+    ) {
+      const val = arg.split("=")[1];
+      dependsOnOpt.push(...splitList(val));
+    } else if (arg === "--files") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      filesOpt.push(...splitList(raw));
+    } else if (arg.startsWith("--files=")) {
+      filesOpt.push(...splitList(arg.slice("--files=".length)));
+    } else if (arg === "--to") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      toAgentOpt = raw.trim();
+    } else if (arg.startsWith("--to=")) {
+      toAgentOpt = arg.slice("--to=".length).trim();
+    } else if (arg === "--objective") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      objectiveOpt = raw;
+    } else if (arg.startsWith("--objective=")) {
+      objectiveOpt = arg.slice("--objective=".length);
+    } else if (arg === "--scope") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      scopeOpt.push(...splitList(raw));
+    } else if (arg.startsWith("--scope=")) {
+      scopeOpt.push(...splitList(arg.slice("--scope=".length)));
+    } else if (arg === "--criteria" || arg === "--acceptance-criteria") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      criteriaOpt.push(...splitList(raw));
+    } else if (arg.startsWith("--criteria=") || arg.startsWith("--acceptance-criteria=")) {
+      const val = arg.split("=")[1];
+      criteriaOpt.push(...splitList(val));
+    } else if (arg === "--result-summary") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      resultSummaryOpt = raw;
+    } else if (arg.startsWith("--result-summary=")) {
+      resultSummaryOpt = arg.slice("--result-summary=".length);
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       return 0;
@@ -736,6 +835,10 @@ export async function runCli(argv: string[]): Promise<number> {
     "validate-handoff",
     "telemetry",
     "audit",
+    "plan",
+    "plans",
+    "task",
+    "tasks",
   ]);
 
   if (!KNOWN_COMMANDS.has(subcommand)) {
@@ -1083,9 +1186,12 @@ export async function runCli(argv: string[]): Promise<number> {
     }
   }
 
+  const isTaskCommand = subcommand === "task" || subcommand === "tasks";
+
   // Validate retrieval-only flags against unrelated subcommands
   if (
     !isRetrievalCommand &&
+    !isTaskCommand &&
     (agentProvided ||
       taskSummary !== undefined ||
       targetFiles.length > 0 ||
@@ -1109,6 +1215,7 @@ export async function runCli(argv: string[]): Promise<number> {
 
   if (
     subcommand !== "prepare-handoff" &&
+    !isTaskCommand &&
     (taskIdOpt !== undefined || fromAgentOpt !== undefined || allowUnindexed)
   ) {
     outputError(
@@ -1119,7 +1226,7 @@ export async function runCli(argv: string[]): Promise<number> {
     return 2;
   }
 
-  if (subcommand !== "validate-handoff" && inputPathOpt !== undefined) {
+  if (subcommand !== "validate-handoff" && !isTaskCommand && inputPathOpt !== undefined) {
     outputError(
       `Option --input is only supported for 'validate-handoff' (got '${subcommand}').`,
       2,
@@ -1438,7 +1545,11 @@ export async function runCli(argv: string[]): Promise<number> {
       subcommand !== "drift" &&
       subcommand !== "debt" &&
       subcommand !== "memories" &&
-      subcommand !== "memory"
+      subcommand !== "memory" &&
+      subcommand !== "plan" &&
+      subcommand !== "plans" &&
+      subcommand !== "task" &&
+      subcommand !== "tasks"
     ) {
       outputError(
         `Repository index is unavailable: no active scan exists for '${repo.identity}'. Run repository scan to generate an index.`,
@@ -2007,6 +2118,654 @@ export async function runCli(argv: string[]): Promise<number> {
         return 0;
       }
 
+      case "plan":
+      case "plans": {
+        const action = positional[1]?.toLowerCase();
+        if (!action) {
+          outputError(
+            "Missing action for 'plan'. Use 'create', 'list', 'show', 'progress', or 'delete'.",
+            2,
+            format,
+          );
+          return 2;
+        }
+
+        const db = connectionManager.getDatabase();
+        const taskEngine = new TaskEngine(db);
+        const store = taskEngine.getStore();
+
+        if (action === "create") {
+          if (!titleOpt) {
+            outputError("Missing required option for 'plan create': --title <title>", 2, format);
+            return 2;
+          }
+          try {
+            const plan = taskEngine.createPlan({
+              repositoryId: repo.id,
+              title: titleOpt,
+              planKey: keyOpt,
+              description: descriptionOpt,
+              status: (statusOpt[0] as any) ?? "DRAFT",
+            });
+
+            if (format === "json") {
+              process.stdout.write(JSON.stringify(plan, null, 2) + "\n");
+            } else {
+              const lines = [
+                `Frontier Engineer — Execution Plan Created`,
+                `  ID:          #${plan.id}`,
+                `  Key:         ${plan.planKey}`,
+                `  Title:       ${plan.title}`,
+                `  Status:      ${plan.status}`,
+                ...(plan.description ? [`  Description: ${plan.description}`] : []),
+              ];
+              process.stdout.write(lines.join("\n") + "\n");
+            }
+            return 0;
+          } catch (err: any) {
+            outputError(err?.message || String(err), 1, format);
+            return 1;
+          }
+        }
+
+        if (action === "list") {
+          const filter = statusOpt.length > 0 ? { status: statusOpt[0] as any } : undefined;
+          const plans = taskEngine.listPlans(repo.id, filter);
+
+          if (format === "json") {
+            process.stdout.write(JSON.stringify(plans, null, 2) + "\n");
+          } else {
+            const lines = [
+              `Frontier Engineer — Execution Plans (${plans.length})`,
+              `Repository: #${repo.id} (${repo.identity})`,
+            ];
+            for (const p of plans) {
+              lines.push(`  #${p.id} [${p.status}] ${p.planKey} — ${p.title}`);
+            }
+            process.stdout.write(lines.join("\n") + "\n");
+          }
+          return 0;
+        }
+
+        if (action === "show" || action === "get") {
+          const planTarget = positional[2] ?? planOpt ?? keyOpt;
+          if (!planTarget) {
+            outputError("Missing plan identifier: frontier plan show <id_or_key>", 2, format);
+            return 2;
+          }
+          const plan = taskEngine.getPlan(repo.id, planTarget);
+          if (!plan) {
+            outputError(
+              `Execution plan '${planTarget}' not found in repository ${repo.id}.`,
+              4,
+              format,
+            );
+            return 4;
+          }
+          const tasks = taskEngine.listTasks(plan.id);
+          const progress = taskEngine.getPlanProgress(repo.id, plan.id);
+          const payload = { plan, progress, tasks };
+
+          if (format === "json") {
+            process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
+          } else {
+            const lines = [
+              `Frontier Engineer — Execution Plan #${plan.id}: ${plan.title}`,
+              `  Key:         ${plan.planKey}`,
+              `  Status:      ${plan.status}`,
+              ...(plan.description ? [`  Description: ${plan.description}`] : []),
+              `  Created:     ${plan.createdAt}`,
+              `  Progress:    ${progress.completedTasks}/${progress.totalTasks} tasks completed (${progress.percentComplete}%)`,
+              `  State:       ${progress.isBlocked ? "BLOCKED" : "READY"} | Active Locks: ${progress.activeHeldLocksCount}`,
+              `  Tasks (${tasks.length}):`,
+            ];
+            for (const t of tasks) {
+              const agentStr = t.assignedAgent ? ` [@${t.assignedAgent}]` : "";
+              lines.push(`    #${t.id} [${t.status}] ${t.taskKey}: ${t.title}${agentStr}`);
+            }
+            process.stdout.write(lines.join("\n") + "\n");
+          }
+          return 0;
+        }
+
+        if (action === "progress" || action === "status") {
+          const planTarget = positional[2] ?? planOpt ?? keyOpt;
+          if (!planTarget) {
+            outputError("Missing plan identifier: frontier plan progress <id_or_key>", 2, format);
+            return 2;
+          }
+          try {
+            const progress = taskEngine.getPlanProgress(repo.id, planTarget);
+            if (format === "json") {
+              process.stdout.write(JSON.stringify(progress, null, 2) + "\n");
+            } else {
+              const lines = [
+                `Frontier Engineer — Plan Progress: #${progress.planId} (${progress.planKey})`,
+                `  Title:       ${progress.title}`,
+                `  Status:      ${progress.status}`,
+                `  Completion:  ${progress.percentComplete}% (${progress.completedTasks}/${progress.totalTasks} completed)`,
+                `  Breakdown:   ${progress.inProgressTasks} in progress, ${progress.pendingTasks} pending, ${progress.blockedTasks} blocked, ${progress.failedTasks} failed`,
+                `  Active Locks: ${progress.activeHeldLocksCount}`,
+                `  Is Blocked:  ${progress.isBlocked ? "YES" : "NO"}`,
+              ];
+              process.stdout.write(lines.join("\n") + "\n");
+            }
+            return 0;
+          } catch (err: any) {
+            const msg = err?.message || String(err);
+            const isNotFound = msg.includes("not found");
+            outputError(msg, isNotFound ? 4 : 1, format);
+            return isNotFound ? 4 : 1;
+          }
+        }
+
+        if (action === "delete") {
+          const planTarget = positional[2] ?? planOpt ?? keyOpt;
+          if (!planTarget) {
+            outputError("Missing plan identifier: frontier plan delete <id_or_key>", 2, format);
+            return 2;
+          }
+          const plan = taskEngine.getPlan(repo.id, planTarget);
+          if (!plan) {
+            outputError(
+              `Execution plan '${planTarget}' not found in repository ${repo.id}.`,
+              4,
+              format,
+            );
+            return 4;
+          }
+          const deleted = store.deletePlan(repo.id, plan.id);
+          if (format === "json") {
+            process.stdout.write(
+              JSON.stringify({ deleted, planId: plan.id, planKey: plan.planKey }, null, 2) + "\n",
+            );
+          } else {
+            process.stdout.write(`Execution plan #${plan.id} (${plan.planKey}) deleted.\n`);
+          }
+          return 0;
+        }
+
+        outputError(
+          `Unknown action '${action}' for plan command. Use 'create', 'list', 'show', 'progress', or 'delete'.`,
+          2,
+          format,
+        );
+        return 2;
+      }
+
+      case "task":
+      case "tasks": {
+        const action = positional[1]?.toLowerCase();
+        if (!action) {
+          outputError(
+            "Missing action for 'task'. Use 'create', 'list', 'show', 'next', 'start', 'complete', 'fail', 'handoff', or 'validate-response'.",
+            2,
+            format,
+          );
+          return 2;
+        }
+
+        const db = connectionManager.getDatabase();
+        const taskEngine = new TaskEngine(db);
+        const store = taskEngine.getStore();
+        const combinedFiles = [...filesOpt, ...targetFiles];
+
+        if (action === "create") {
+          const planTarget = positional[2] ?? planOpt;
+          if (!planTarget) {
+            outputError(
+              "Missing required plan for task creation: frontier task create <plan_id_or_key> --title <title>",
+              2,
+              format,
+            );
+            return 2;
+          }
+          const plan = taskEngine.getPlan(repo.id, planTarget);
+          if (!plan) {
+            outputError(
+              `Execution plan '${planTarget}' not found in repository ${repo.id}.`,
+              4,
+              format,
+            );
+            return 4;
+          }
+          if (!titleOpt) {
+            outputError("Missing required option for 'task create': --title <title>", 2, format);
+            return 2;
+          }
+
+          const prereqIds: number[] = [];
+          const prereqKeys: string[] = [];
+          for (const dep of dependsOnOpt) {
+            if (/^\d+$/.test(dep)) {
+              prereqIds.push(parseInt(dep, 10));
+            } else {
+              prereqKeys.push(dep);
+            }
+          }
+
+          try {
+            const task = taskEngine.createTask({
+              planId: plan.id,
+              repositoryId: repo.id,
+              title: titleOpt,
+              taskKey: keyOpt,
+              description: descriptionOpt,
+              assignedAgent: agentProvided ? agentId : toAgentOpt,
+              priority: priorityOpt,
+              prerequisiteTaskIds: prereqIds.length > 0 ? prereqIds : undefined,
+              prerequisiteTaskKeys: prereqKeys.length > 0 ? prereqKeys : undefined,
+              fileLocks: combinedFiles.length > 0 ? combinedFiles : undefined,
+            });
+
+            if (format === "json") {
+              process.stdout.write(JSON.stringify(task, null, 2) + "\n");
+            } else {
+              const lines = [
+                `Frontier Engineer — Task Created`,
+                `  ID:       #${task.id} (Plan #${task.planId})`,
+                `  Key:      ${task.taskKey}`,
+                `  Title:    ${task.title}`,
+                `  Status:   ${task.status}`,
+                ...(task.assignedAgent ? [`  Agent:    ${task.assignedAgent}`] : []),
+                ...(task.priority ? [`  Priority: ${task.priority}`] : []),
+              ];
+              process.stdout.write(lines.join("\n") + "\n");
+            }
+            return 0;
+          } catch (err: any) {
+            outputError(err?.message || String(err), 1, format);
+            return 1;
+          }
+        }
+
+        if (action === "list") {
+          const planTarget = positional[2] ?? planOpt;
+          if (!planTarget) {
+            outputError("Missing required plan: frontier task list <plan_id_or_key>", 2, format);
+            return 2;
+          }
+          const plan = taskEngine.getPlan(repo.id, planTarget);
+          if (!plan) {
+            outputError(
+              `Execution plan '${planTarget}' not found in repository ${repo.id}.`,
+              4,
+              format,
+            );
+            return 4;
+          }
+          const tasks = taskEngine.listTasks(plan.id);
+
+          if (format === "json") {
+            process.stdout.write(JSON.stringify(tasks, null, 2) + "\n");
+          } else {
+            const lines = [`Frontier Engineer — Tasks for Plan #${plan.id} (${plan.title}):`];
+            for (const t of tasks) {
+              const agent = t.assignedAgent ? ` [@${t.assignedAgent}]` : "";
+              lines.push(`  #${t.id} [${t.status}] ${t.taskKey}: ${t.title}${agent}`);
+            }
+            process.stdout.write(lines.join("\n") + "\n");
+          }
+          return 0;
+        }
+
+        if (action === "next") {
+          const planTarget = positional[2] ?? planOpt;
+          if (!planTarget) {
+            outputError("Missing required plan: frontier task next <plan_id_or_key>", 2, format);
+            return 2;
+          }
+          const plan = taskEngine.getPlan(repo.id, planTarget);
+          if (!plan) {
+            outputError(
+              `Execution plan '${planTarget}' not found in repository ${repo.id}.`,
+              4,
+              format,
+            );
+            return 4;
+          }
+          const nextTasks = taskEngine.getNextExecutableTasks(plan.id);
+
+          if (format === "json") {
+            process.stdout.write(JSON.stringify(nextTasks, null, 2) + "\n");
+          } else {
+            const lines = [
+              `Frontier Engineer — Next Executable Tasks for Plan #${plan.id} (${nextTasks.length}):`,
+            ];
+            for (const t of nextTasks) {
+              const agent = t.assignedAgent ? ` [@${t.assignedAgent}]` : "";
+              lines.push(`  #${t.id} [READY] ${t.taskKey}: ${t.title}${agent}`);
+            }
+            process.stdout.write(lines.join("\n") + "\n");
+          }
+          return 0;
+        }
+
+        if (action === "show" || action === "get") {
+          const taskTarget = positional[2] ?? keyOpt;
+          if (!taskTarget) {
+            outputError(
+              "Missing task identifier: frontier task show <task_id_or_key> [--plan <plan>]",
+              2,
+              format,
+            );
+            return 2;
+          }
+          let task: any = null;
+          if (/^\d+$/.test(taskTarget)) {
+            task = store.getTaskById(parseInt(taskTarget, 10));
+          } else if (planOpt) {
+            const plan = taskEngine.getPlan(repo.id, planOpt);
+            if (plan) {
+              task = store.getTaskByKey(plan.id, taskTarget);
+            }
+          }
+          if (!task) {
+            outputError(`Task '${taskTarget}' not found.`, 4, format);
+            return 4;
+          }
+
+          const deps = store.getDependencies(task.planId, task.id);
+          const locks = store.getTaskLocks(task.id);
+          const runs = store.getTaskVerificationRuns(task.id);
+          const handoffs = store.getTaskHandoffs(task.id);
+          const payload = { task, dependencies: deps, locks, verificationRuns: runs, handoffs };
+
+          if (format === "json") {
+            process.stdout.write(JSON.stringify(payload, null, 2) + "\n");
+          } else {
+            const lines = [
+              `Frontier Engineer — Task #${task.id}: ${task.title}`,
+              `  Plan:         #${task.planId}`,
+              `  Key:          ${task.taskKey}`,
+              `  Status:       ${task.status}`,
+              ...(task.assignedAgent ? [`  Agent:        ${task.assignedAgent}`] : []),
+              ...(task.description ? [`  Description:  ${task.description}`] : []),
+              `  Dependencies: ${deps.length} prerequisites`,
+              `  Locks:        ${locks.filter((l) => l.status === "HELD").length} active held`,
+              `  Runs:         ${runs.length} verification records`,
+              `  Handoffs:     ${handoffs.length} audit records`,
+            ];
+            process.stdout.write(lines.join("\n") + "\n");
+          }
+          return 0;
+        }
+
+        if (action === "start") {
+          const taskTarget = positional[2] ?? keyOpt;
+          if (!taskTarget) {
+            outputError("Missing task identifier: frontier task start <task_id>", 2, format);
+            return 2;
+          }
+          const taskId = parseInt(taskTarget, 10);
+          if (isNaN(taskId)) {
+            outputError("Invalid task ID: must be a positive integer.", 2, format);
+            return 2;
+          }
+          const task = store.getTaskById(taskId);
+          if (!task) {
+            outputError(`Task #${taskId} not found.`, 4, format);
+            return 4;
+          }
+
+          try {
+            const res = taskEngine.startTask(task.planId, task.id, {
+              agent: agentProvided ? agentId : toAgentOpt,
+              fileLocks: combinedFiles.length > 0 ? combinedFiles : undefined,
+            });
+
+            if (format === "json") {
+              process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+            } else {
+              const lines = [
+                `Frontier Engineer — Task #${task.id} Started`,
+                `  Status:         ${res.task.status}`,
+                `  Acquired Locks: ${res.acquiredLocks.length > 0 ? res.acquiredLocks.join(", ") : "none"}`,
+              ];
+              process.stdout.write(lines.join("\n") + "\n");
+            }
+            return 0;
+          } catch (err: any) {
+            outputError(err?.message || String(err), 1, format);
+            return 1;
+          }
+        }
+
+        if (action === "complete") {
+          const taskTarget = positional[2] ?? keyOpt;
+          if (!taskTarget) {
+            outputError(
+              "Missing task identifier: frontier task complete <task_id> [--summary <summary>]",
+              2,
+              format,
+            );
+            return 2;
+          }
+          const taskId = parseInt(taskTarget, 10);
+          if (isNaN(taskId)) {
+            outputError("Invalid task ID: must be a positive integer.", 2, format);
+            return 2;
+          }
+          const task = store.getTaskById(taskId);
+          if (!task) {
+            outputError(`Task #${taskId} not found.`, 4, format);
+            return 4;
+          }
+
+          const summary = resultSummaryOpt ?? taskSummary;
+          try {
+            const res = taskEngine.completeTask(task.planId, task.id, {
+              resultSummary: summary,
+            });
+
+            if (format === "json") {
+              process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+            } else {
+              const lines = [
+                `Frontier Engineer — Task #${task.id} Completed`,
+                `  Status:         ${res.task.status}`,
+                `  Released Locks: ${res.releasedLocksCount}`,
+                `  Unblocked:      ${res.unblockedTasks.length} downstream tasks`,
+                `  Plan Complete:  ${res.planCompleted ? "YES" : "NO"}`,
+              ];
+              process.stdout.write(lines.join("\n") + "\n");
+            }
+            return 0;
+          } catch (err: any) {
+            outputError(err?.message || String(err), 1, format);
+            return 1;
+          }
+        }
+
+        if (action === "fail") {
+          const taskTarget = positional[2] ?? keyOpt;
+          if (!taskTarget) {
+            outputError(
+              "Missing task identifier: frontier task fail <task_id> [--reason <reason>]",
+              2,
+              format,
+            );
+            return 2;
+          }
+          const taskId = parseInt(taskTarget, 10);
+          if (isNaN(taskId)) {
+            outputError("Invalid task ID: must be a positive integer.", 2, format);
+            return 2;
+          }
+          const task = store.getTaskById(taskId);
+          if (!task) {
+            outputError(`Task #${taskId} not found.`, 4, format);
+            return 4;
+          }
+
+          try {
+            const res = taskEngine.failTask(task.planId, task.id, {
+              failureReason: reasonOpt,
+            });
+
+            if (format === "json") {
+              process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+            } else {
+              const lines = [
+                `Frontier Engineer — Task #${task.id} Failed`,
+                `  Status:         ${res.task.status}`,
+                `  Released Locks: ${res.releasedLocksCount}`,
+                `  Blocked:        ${res.blockedDependents.length} downstream tasks`,
+              ];
+              process.stdout.write(lines.join("\n") + "\n");
+            }
+            return 0;
+          } catch (err: any) {
+            outputError(err?.message || String(err), 1, format);
+            return 1;
+          }
+        }
+
+        if (action === "handoff") {
+          const taskTarget = positional[2] ?? taskIdOpt;
+          if (!taskTarget) {
+            outputError(
+              "Missing task identifier: frontier task handoff <task_id> --to <agent>",
+              2,
+              format,
+            );
+            return 2;
+          }
+          const taskId = parseInt(taskTarget, 10);
+          if (isNaN(taskId)) {
+            outputError("Invalid task ID: must be a positive integer.", 2, format);
+            return 2;
+          }
+          const task = store.getTaskById(taskId);
+          if (!task) {
+            outputError(`Task #${taskId} not found.`, 4, format);
+            return 4;
+          }
+          const targetAgent = toAgentOpt ?? positional[3];
+          if (!targetAgent) {
+            outputError("Missing required option: --to <agent_id>", 2, format);
+            return 2;
+          }
+
+          let payload: unknown;
+          if (inputPathOpt) {
+            const raw = fs.readFileSync(path.resolve(inputPathOpt), "utf8");
+            payload = JSON.parse(raw);
+          } else {
+            payload = {
+              contract: "frontier-engineer/handoff",
+              version: 1,
+              taskId: String(task.id),
+              requestSummary: task.title,
+              objective: objectiveOpt ?? task.description ?? task.title,
+              repositoryContext: repo.identity,
+              scope: scopeOpt.length > 0 ? scopeOpt : ["default"],
+              constraints: ["Follow engineering standards"],
+              relevantFiles: combinedFiles,
+              expectedDeliverables: ["Working implementation and verification"],
+              acceptanceCriteria: criteriaOpt.length > 0 ? criteriaOpt : ["All tests pass"],
+              risks: ["Regression risk"],
+              requiredVerification: ["npm test"],
+              toAgent: targetAgent,
+              fromAgent: fromAgentOpt ?? "coordinator",
+            };
+          }
+
+          const res = taskEngine.recordOutgoingHandoff(
+            task.planId,
+            task.id,
+            targetAgent,
+            payload,
+            fromAgentOpt ?? "coordinator",
+          );
+
+          if (format === "json") {
+            process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+          } else {
+            const lines = [
+              `Frontier Engineer — Handoff Recorded`,
+              `  Status:     ${res.handoffRecord.validationStatus}`,
+              `  To Agent:   ${res.handoffRecord.toAgent}`,
+              `  Handoff ID: #${res.handoffRecord.id}`,
+            ];
+            if (res.validationErrors && res.validationErrors.length > 0) {
+              lines.push(`  Errors:     ${res.validationErrors.join("; ")}`);
+            }
+            process.stdout.write(lines.join("\n") + "\n");
+          }
+          return res.success ? 0 : 1;
+        }
+
+        if (action === "response" || action === "validate-response") {
+          const taskTarget = positional[2] ?? taskIdOpt;
+          if (!taskTarget) {
+            outputError(
+              "Missing task identifier: frontier task validate-response <task_id> --input <file>",
+              2,
+              format,
+            );
+            return 2;
+          }
+          const taskId = parseInt(taskTarget, 10);
+          if (isNaN(taskId)) {
+            outputError("Invalid task ID: must be a positive integer.", 2, format);
+            return 2;
+          }
+          const task = store.getTaskById(taskId);
+          if (!task) {
+            outputError(`Task #${taskId} not found.`, 4, format);
+            return 4;
+          }
+
+          let payload: unknown;
+          if (inputPathOpt) {
+            const raw = fs.readFileSync(path.resolve(inputPathOpt), "utf8");
+            payload = JSON.parse(raw);
+          } else if (positional[3]) {
+            payload = JSON.parse(positional[3]);
+          } else {
+            outputError(
+              "Missing response payload: pass --input <file> or JSON payload string",
+              2,
+              format,
+            );
+            return 2;
+          }
+
+          const fromAgent = fromAgentOpt ?? (payload as any)?.fromAgent ?? "specialist";
+          const res = taskEngine.recordIncomingResponse(
+            task.planId,
+            task.id,
+            fromAgent,
+            payload,
+            toAgentOpt ?? "coordinator",
+          );
+
+          if (format === "json") {
+            process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+          } else {
+            const lines = [
+              `Frontier Engineer — Specialist Response Recorded`,
+              `  Validation: ${res.handoffRecord.validationStatus}`,
+              `  From Agent: ${res.handoffRecord.fromAgent}`,
+              `  Record ID:  #${res.handoffRecord.id}`,
+            ];
+            if (res.validationErrors && res.validationErrors.length > 0) {
+              lines.push(`  Errors:     ${res.validationErrors.join("; ")}`);
+            }
+            process.stdout.write(lines.join("\n") + "\n");
+          }
+          return res.success ? 0 : 1;
+        }
+
+        outputError(
+          `Unknown action '${action}' for task command. Use 'create', 'list', 'show', 'next', 'start', 'complete', 'fail', 'handoff', or 'validate-response'.`,
+          2,
+          format,
+        );
+        return 2;
+      }
+
       default:
         outputError(
           `Unknown subcommand: "${subcommand}". Use --help for available intelligence commands.`,
@@ -2376,6 +3135,10 @@ Commands:
   telemetry [list|summary|verify|show <id>] Query runtime audit telemetry logs, summary stats, and integrity
   audit [list|summary|verify|show <id>]     Alias for 'telemetry'
 
+  # Persistent Task Graph & Execution Plan Commands (2)
+  plan <create|list|show|progress|delete>   Manage execution plans and track progress
+  task <create|list|show|next|start|complete|fail|handoff|validate-response> Manage DAG tasks, file locks, and handoffs
+
 Options:
   --format <text|json|markdown> Output format (default: text; markdown supported for telemetry/audit)
   --workspace <path>         Target workspace root directory (default: current directory)
@@ -2443,6 +3206,18 @@ Options:
   --output-dir <path>        Custom output directory for Markdown projections
   --dry-run                  Preview operations without modifying disk or database state
   --fix, --reconcile         Apply safe drift reconciliation
+
+  # Plan & Task Graph Options
+  --plan <id-or-key>         Plan identifier for task operations
+  --description "<text>"     Description for execution plan or task
+  --priority <n>             Task execution priority
+  --depends-on <id,key...>   Prerequisite task IDs or keys (repeatable, comma-separated)
+  --files <path...>          Target file locks for task execution (repeatable, comma-separated)
+  --to <agent-id>            Target agent ID for task handoff
+  --objective "<text>"       Objective description for handoff bundle
+  --scope <item...>          Scope boundaries for handoff bundle (repeatable, comma-separated)
+  --criteria <item...>       Acceptance criteria for handoff bundle (repeatable, comma-separated)
+  --result-summary "<text>"  Verification and result summary for completed task
   --help, -h                 Display this help message
 
 Exit codes:
