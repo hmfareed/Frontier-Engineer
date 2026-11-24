@@ -2,7 +2,7 @@
 
 An AI software-engineering **agent system** distributed as a Google Antigravity plugin. It packages a coordinating agent, five specialist subagents, ten reusable engineering skills, persistent rules, and verification tooling into one versioned, installable unit.
 
-> **Status: Phase 7 Closure — Project Intelligence, Orchestration & Security Hardening (v0.7.0, Schema v3).** Six Antigravity lifecycle hooks (`SessionStart`, `PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`) operate with global matcher `*` across native file tools, shell commands, MCP tools, and specialist delegation (`invoke_subagent`, `send_message`, and marker-bearing payloads). Phase 7 (7.1–7.8.1) delivers a workspace-scoped embedded SQLite repository intelligence index (`.frontier/intelligence/index.sqlite`, schema version `3`), deterministic query and comparison engines, conjunctive engineering-memory verification, role-aware budgeted retrieval, fail-closed `frontier-engineer/handoff` v1 bundles, strict consumer validation, canonical secret redaction across scanner/extractor/retrieval/hooks (including single-line unterminated PEM tails), cycle-safe and `toJSON`-resistant audit log/diagnostic redaction, and repository-scoped storage integrity checks. Automated unit, CLI, and dispatcher subprocess tests pass locally; live Antigravity GUI host execution (interactive `force_ask`, host PostgreSQL MCP interception, live multi-agent delegation, and `PreToolUse` `overwrite`) remains unverified outside the host IDE.
+> **Status: Phase 8 Progression — Project Intelligence, Telemetry Engine, Behavioral Evaluations & Extraction Hardening (v0.7.0, Schema v3).** Six Antigravity lifecycle hooks (`SessionStart`, `PreToolUse`, `PostToolUse`, `PreInvocation`, `PostInvocation`, `Stop`) operate with global matcher `*` across native file tools, shell commands, MCP tools, and specialist delegation (`invoke_subagent`, `send_message`, and marker-bearing payloads). Phase 8 delivers: (1) a workspace-scoped embedded SQLite intelligence index (`.frontier/intelligence/index.sqlite`, schema version `3`) with true incremental refresh, content-hash extraction caching (`.frontier/cache/ast-extractions.json`), polyglot `.mts`/`.cts` AST extraction, fault-isolated indexing, and strict `PARTIAL` vs `COMPLETE` snapshot promotion gating; (2) deterministic telemetry logging, multi-generation query, and structural integrity diagnostics (`frontier telemetry` and `frontier audit`); (3) an executable behavioral evaluation engine with ephemeral sandbox isolation (`npm run eval:run`) and automated regression comparison gate (`npm run eval:check`); and (4) role-aware budgeted retrieval, fail-closed handoff bundles, and canonical secret redaction. Automated unit, integration, CLI, and dispatcher tests pass locally (104 test files, 1,006 tests); live Antigravity GUI host execution (interactive `force_ask`, host PostgreSQL MCP interception, live multi-agent delegation, and `PreToolUse` `overwrite`) remains unverified outside the host IDE.
 
 ## What this is
 
@@ -75,31 +75,33 @@ Canonical integration specifications live under [specs/integrations/](specs/inte
 
 ## Repository layout
 
-| Path                                                                           | Purpose                                                       |
-| ------------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| [plugin.json](plugin.json)                                                     | Antigravity plugin manifest (verified schema)                 |
-| [mcp_config.json](mcp_config.json)                                             | Generated Antigravity MCP configuration (disabled by default) |
-| [mcp_config.example.json](mcp_config.example.json)                             | Example MCP environment variable setup guide                  |
-| [agents/](agents/)                                                             | Generated Antigravity agent definitions (do not edit by hand) |
-| [specs/agents/](specs/agents/)                                                 | Canonical platform-independent agent specifications           |
-| [skills/](skills/)                                                             | Generated Antigravity skill definitions and references        |
-| [specs/skills/](specs/skills/)                                                 | Canonical platform-independent skill specifications           |
-| [rules/](rules/)                                                               | Generated Antigravity rules (1 global + 13 modular)           |
-| [specs/rules/](specs/rules/)                                                   | Canonical platform-independent rule specifications            |
-| [specs/integrations/](specs/integrations/)                                     | Canonical platform-independent MCP integration specifications |
-| [specs/adapters/](specs/adapters/README.md)                                    | Adapter registry and per-platform requirements                |
-| [specs/evaluation/scenarios.json](specs/evaluation/scenarios.json)             | Defined agent evaluation scenarios (unscored)                 |
-| [specs/evaluation/skill-scenarios.json](specs/evaluation/skill-scenarios.json) | Defined skill evaluation scenarios (unscored)                 |
-| [scripts/](scripts/)                                                           | TypeScript validation utilities and code generators           |
-| [schemas/](schemas/)                                                           | Local schema transcriptions and contract schemas              |
-| [tests/](tests/)                                                               | Unit and integration tests                                    |
-| [docs/](docs/README.md)                                                        | Product documentation                                         |
-| [assets/](assets/)                                                             | Plugin logo                                                   |
-| [frontier-engineer-docs/](frontier-engineer-docs/fe/README.md)                 | Original 26-part specification archive (unmodified reference) |
+| Path                                                                                     | Purpose                                                       |
+| ---------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| [plugin.json](plugin.json)                                                               | Antigravity plugin manifest (verified schema)                 |
+| [mcp_config.json](mcp_config.json)                                                       | Generated Antigravity MCP configuration (disabled by default) |
+| [mcp_config.example.json](mcp_config.example.json)                                       | Example MCP environment variable setup guide                  |
+| [agents/](agents/)                                                                       | Generated Antigravity agent definitions (do not edit by hand) |
+| [specs/agents/](specs/agents/)                                                           | Canonical platform-independent agent specifications           |
+| [skills/](skills/)                                                                       | Generated Antigravity skill definitions and references        |
+| [specs/skills/](specs/skills/)                                                           | Canonical platform-independent skill specifications           |
+| [rules/](rules/)                                                                         | Generated Antigravity rules (1 global + 13 modular)           |
+| [specs/rules/](specs/rules/)                                                             | Canonical platform-independent rule specifications            |
+| [specs/integrations/](specs/integrations/)                                               | Canonical platform-independent MCP integration specifications |
+| [specs/adapters/](specs/adapters/README.md)                                              | Adapter registry and per-platform requirements                |
+| [specs/evaluation/scenarios.json](specs/evaluation/scenarios.json)                       | Defined agent evaluation scenarios (unscored)                 |
+| [specs/evaluation/skill-scenarios.json](specs/evaluation/skill-scenarios.json)           | Defined skill evaluation scenarios (unscored)                 |
+| [specs/evaluation/executable-scenarios.json](specs/evaluation/executable-scenarios.json) | Executable behavioral evaluation scenarios (26 active)        |
+| [specs/evaluation/baseline-report.json](specs/evaluation/baseline-report.json)           | Canonical behavioral evaluation baseline report               |
+| [scripts/](scripts/)                                                                     | TypeScript validation utilities and code generators           |
+| [schemas/](schemas/)                                                                     | Local schema transcriptions and contract schemas              |
+| [tests/](tests/)                                                                         | Unit and integration tests (104 files, 1,006 tests)           |
+| [docs/](docs/README.md)                                                                  | Product documentation                                         |
+| [assets/](assets/)                                                                       | Plugin logo                                                   |
+| [frontier-engineer-docs/](frontier-engineer-docs/fe/README.md)                           | Original 26-part specification archive (unmodified reference) |
 
 ## Getting started
 
-Requires Node.js 22.6+ (native TypeScript execution) and npm.
+Requires Node.js 22.13+ (native TypeScript execution) and npm.
 
 ```bash
 npm install
@@ -107,7 +109,27 @@ npm run verify
 npm run frontier -- --help
 ```
 
-`npm run verify` runs the type check, full validation, unit tests, formatting check, and Markdown lint. `npm run frontier -- <command>` exposes the workspace intelligence and orchestration CLI (`status`, `overview`, `freshness`, `components`, `dependencies`, `cycles`, `compare`, `evolution`, `memories`, `retrieve`, `prepare-handoff`, `validate-handoff`; partial snapshots default to rejected unless `--allow-partial` is explicitly passed). After editing canonical agent, skill, or rule specs, regenerate the adapters:
+`npm run verify` runs TypeScript type checks (`tsc --noEmit`), full foundation validation, the full test suite (`vitest run`), behavioral evaluation regression checks (`scripts/evaluation/check-regression.ts`), code formatting check (`prettier --check`), and Markdown lint (`markdownlint-cli2`).
+
+### Architecture Intelligence & Telemetry CLI
+
+`npm run frontier -- <command>` exposes workspace intelligence, orchestration, and telemetry:
+
+- **Repository Intelligence:** `scan`, `refresh`, `status`, `overview`, `freshness`, `components`, `component <name>`, `dependencies <target>`, `dependents <target>`, `cycles`, `file <path>`, `symbol <name>`, `tests [target]`, `decisions`, `decision <id>`, `query <expr>`.
+- **Snapshot Diff & Evolution:** `compare <base-id> <target-id>`, `evolution <base-id> <target-id>`, `drift <base-id> <target-id>`, `debt <base-id> <target-id>`, `memories`, `memory <id>`.
+- **Agent Handoff & Retrieval:** `retrieve`, `prepare-handoff`, `validate-handoff` (enforces strict schema contracts; partial snapshots require explicit `--allow-partial`).
+- **Telemetry & Execution Audit:** `telemetry` (exact alias `audit`) with subcommands `list`, `summary`, `verify`, and `show <event-id>`.
+
+### Behavioral Evaluation Suite
+
+Frontier Engineer includes an automated, executable behavioral evaluation runner and deterministic regression comparator:
+
+```bash
+npm run eval:run     # Execute all 26 behavioral scenarios in ephemeral isolated sandboxes
+npm run eval:check   # Compare evaluation results against the canonical baseline (CI gate)
+```
+
+After editing canonical agent, skill, or rule specs, regenerate the adapters:
 
 ```bash
 npm run generate:agents
@@ -134,7 +156,7 @@ The CLI binary is `agy`. On Windows it is installed at `~/.gemini/bin/agy.exe`; 
 - **Skills:** [Architecture](docs/09-SKILLS-ARCHITECTURE.md), [Specifications](docs/10-SKILL-SPECIFICATIONS.md), [Activation](docs/11-SKILL-ACTIVATION.md), [Agent integration](docs/12-SKILL-AGENT-INTEGRATION.md), [Portability](docs/13-SKILL-PORTABILITY.md)
 - **Rules:** [Architecture](docs/15-RULES-ARCHITECTURE.md), [Specifications](docs/16-RULE-SPECIFICATIONS.md), [Activation](docs/17-RULE-ACTIVATION.md), [Priority and conflicts](docs/18-RULE-PRIORITY-AND-CONFLICTS.md), [Portability](docs/19-RULE-PORTABILITY.md)
 - **Integrations:** [MCP architecture](docs/21-MCP-ARCHITECTURE.md), [MCP integrations](docs/22-MCP-INTEGRATIONS.md), [MCP security](docs/23-MCP-SECURITY.md), [MCP configuration](docs/24-MCP-CONFIGURATION.md), [MCP portability](docs/25-MCP-PORTABILITY.md), [MCP operations](docs/26-MCP-OPERATIONS.md)
-- **Repository intelligence:** [Storage architecture](docs/34-STORAGE-ARCHITECTURE.md), [Graph engine architecture](docs/35-GRAPH-ENGINE-ARCHITECTURE.md), [Architecture intelligence](docs/36-ARCHITECTURE-INTELLIGENCE.md), [Architecture query CLI](docs/37-ARCHITECTURE-QUERY-CLI.md), [Engineering memory data model](docs/38-ENGINEERING-MEMORY-DATA-MODEL.md), [Snapshot comparator and diff engine](docs/39-SNAPSHOT-COMPARATOR-DIFF-ENGINE.md), [Agent retrieval and orchestration](docs/40-AGENT-RETRIEVAL-ORCHESTRATION.md)
+- **Repository intelligence:** [Storage architecture](docs/34-STORAGE-ARCHITECTURE.md), [Graph engine architecture](docs/35-GRAPH-ENGINE-ARCHITECTURE.md), [Architecture intelligence](docs/36-ARCHITECTURE-INTELLIGENCE.md), [Architecture query CLI](docs/37-ARCHITECTURE-QUERY-CLI.md), [Engineering memory data model](docs/38-ENGINEERING-MEMORY-DATA-MODEL.md), [Snapshot comparator and diff engine](docs/39-SNAPSHOT-COMPARATOR-DIFF-ENGINE.md), [Agent retrieval and orchestration](docs/40-AGENT-RETRIEVAL-ORCHESTRATION.md), [Hooks and telemetry runtime](docs/31-HOOKS-RUNTIME.md)
 - **Foundation:** [Project overview](docs/01-PROJECT-OVERVIEW.md), [Technology stack](docs/02-TECHNOLOGY-STACK.md), [System architecture](docs/03-SYSTEM-ARCHITECTURE.md), [Engineering principles](docs/14-ENGINEERING-PRINCIPLES.md), [Repository structure](docs/20-REPOSITORY-STRUCTURE.md), [Official format verification](docs/27-OFFICIAL-FORMAT-VERIFICATION.md)
 - **Decisions:** [ADR-001 Foundation](docs/adr/ADR-001-foundation.md), [ADR-002 Agent system](docs/adr/ADR-002-agent-system.md), [ADR-003 Skills system](docs/adr/ADR-003-skills-system.md), [ADR-004 Rules system](docs/adr/ADR-004-rules-system.md), [ADR-005 MCP integration architecture](docs/adr/ADR-005-mcp-integration-architecture.md), [ADR-006 Lifecycle hooks architecture](docs/adr/ADR-006-lifecycle-hooks-architecture.md), [ADR-007 Storage and graph engine](docs/adr/ADR-007-storage-and-graph-engine.md), [ADR-008 Agent retrieval and orchestration](docs/adr/ADR-008-agent-retrieval-orchestration.md), [Documentation index](docs/README.md)
 - **Policies:** [Security](SECURITY.md), [Contributing](CONTRIBUTING.md), [Changelog](CHANGELOG.md), [License](LICENSE).
@@ -143,19 +165,22 @@ The CLI binary is `agy`. On Windows it is installed at `~/.gemini/bin/agy.exe`; 
 
 `agy plugin validate --strict .` recognises ten skills, six agents, fourteen rules, six lifecycle hooks, and five MCP servers with zero findings. Everything that claims Antigravity compatibility is recorded in [the verification record](docs/27-OFFICIAL-FORMAT-VERIFICATION.md) with sources and dates.
 
-### Capability Status Summary (v0.7.0 / Phases 7.1–7.8.1)
+### Capability Status Summary (v0.7.0 / Phase 8.1-R1 & Phase 8.6 Roadmap)
 
-| Capability                                                             | Status                              | Evidence / Boundary                                                                                                          |
-| ---------------------------------------------------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| Deterministic scanner, AST extractor & SQLite schema v3                | **IMPLEMENTED AND VERIFIED**        | Verified across unit, integration, crash-recovery & synthetic scale benchmarks (up to 10,000 files on Windows Node v24.21.0) |
-| Engineering graph, architecture/ADR analysis & comparator              | **IMPLEMENTED AND VERIFIED**        | Verified across dependency, SCC cycle, drift, debt & snapshot diff tests                                                     |
-| Engineering memory lifecycle & conjunctive verification                | **IMPLEMENTED AND VERIFIED**        | Verified with SQLite immutability triggers and read-only evidence evaluation                                                 |
-| Role-aware retrieval, request validation & fail-closed handoffs        | **IMPLEMENTED AND VERIFIED**        | Verified via `RetrievalEngine`, schema validation, secret redaction & `parseAndValidateHandoffBundle`                        |
-| Cross-layer secret redaction & hardened audit log serialization        | **IMPLEMENTED AND VERIFIED**        | Verified in Phase 7.8 / 7.8.1 remediation suites (RFC-3986 URI `@` boundary & 255-char hyphenated Slack bound documented)    |
-| Delegation gating via `PreToolUse` & `FRONTIER_AUTO_PREPARE_HANDOFF=1` | **IMPLEMENTED, PARTIALLY VERIFIED** | Verified in handler/subprocess suites; live GUI host execution & `overwrite` payload mutation are **HOST-DEPENDENT**         |
-| Live host `force_ask` UI prompts & PostgreSQL MCP interception         | **NOT VERIFIED**                    | Blocked from non-interactive CLI subshells due to headless browser OAuth constraints                                         |
-| Windows unprivileged file symlink scanning                             | **IMPLEMENTED, PARTIALLY VERIFIED** | Directory traversal and containment verified; file symlink creation skipped on Windows without symlink privilege (`EPERM`)   |
-| Non-Antigravity runtime adapters                                       | **DOCUMENTED BUT NOT IMPLEMENTED**  | Only Antigravity adapter artifacts are generated (`agents/`, `skills/`, `rules/`, `hooks/`, `mcp_config.json`)               |
+| Capability                                                                           | Status                              | Evidence / Boundary                                                                                                                    |
+| ------------------------------------------------------------------------------------ | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Deterministic scanner, AST extractor & SQLite schema v3                              | **IMPLEMENTED AND VERIFIED**        | Verified across unit, integration, crash-recovery & synthetic scale benchmarks (up to 10,000 files on Windows Node v24.21.0)           |
+| True incremental refresh & AST extraction cache (Phase 8.1-R1)                       | **IMPLEMENTED AND VERIFIED**        | Verified via content-hash delta evaluation, `ExtractionCache` validation, version invalidation, and `.mts`/`.cts` polyglot test suites |
+| Engineering graph, architecture/ADR analysis & comparator                            | **IMPLEMENTED AND VERIFIED**        | Verified across dependency, SCC cycle, drift, debt & snapshot diff tests                                                               |
+| Engineering memory lifecycle & conjunctive verification                              | **IMPLEMENTED AND VERIFIED**        | Verified with SQLite immutability triggers and read-only evidence evaluation                                                           |
+| Role-aware retrieval, request validation & fail-closed handoffs                      | **IMPLEMENTED AND VERIFIED**        | Verified via `RetrievalEngine`, schema validation, secret redaction & `parseAndValidateHandoffBundle`                                  |
+| Deterministic hook telemetry, query engine & diagnostics (Phase 8.6A–8.6B)           | **IMPLEMENTED AND VERIFIED**        | Verified via JSONL persistence, reader, query aggregator, structural integrity diagnostics, and `frontier telemetry` CLI               |
+| Executable behavioral evaluation engine & CI regression comparator (Phase 8.6C–8.6D) | **IMPLEMENTED AND VERIFIED**        | Verified with 26 canonical scenarios in ephemeral sandboxes, `eval:run`, and zero-regression CI gate `eval:check`                      |
+| Cross-layer secret redaction & hardened audit log serialization                      | **IMPLEMENTED AND VERIFIED**        | Verified in Phase 7.8 / 7.8.1 remediation suites (RFC-3986 URI `@` boundary & 255-char hyphenated Slack bound documented)              |
+| Delegation gating via `PreToolUse` & `FRONTIER_AUTO_PREPARE_HANDOFF=1`               | **IMPLEMENTED, PARTIALLY VERIFIED** | Verified in handler/subprocess suites; live GUI host execution & `overwrite` payload mutation are **HOST-DEPENDENT**                   |
+| Live host `force_ask` UI prompts & PostgreSQL MCP interception                       | **NOT VERIFIED**                    | Blocked from non-interactive CLI subshells due to headless browser OAuth constraints                                                   |
+| Windows unprivileged file symlink scanning                                           | **IMPLEMENTED, PARTIALLY VERIFIED** | Directory traversal and containment verified; file symlink creation skipped on Windows without symlink privilege (`EPERM`)             |
+| Non-Antigravity runtime adapters                                                     | **DOCUMENTED BUT NOT IMPLEMENTED**  | Only Antigravity adapter artifacts are generated (`agents/`, `skills/`, `rules/`, `hooks/`, `mcp_config.json`)                         |
 
 **Runtime invocation, live specialist delegation, `PreToolUse` `overwrite` injection, skill activation, host-level PostgreSQL MCP interception, and interactive `force_ask` UI prompts in live Antigravity host user sessions have not been tested.** All verification of those paths reflects automated unit, handler, CLI, and dispatcher subprocess tests. No non-Antigravity adapter is implemented, and no evaluation score has been assigned. Installation and live host runtime discovery remain outside automated test scope.
 
