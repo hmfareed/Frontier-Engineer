@@ -73,3 +73,30 @@ Before snapshot promotion, `GraphValidator` executes integrity checks:
 2. Confirms that every edge references valid existing source and target nodes within the same scan.
 3. Confirms confidence values are within the range $[0.0, 1.0]$.
 4. Confirms composite foreign keys are not violated.
+
+## Structural Extraction Boundaries & Limitations
+
+The structural extraction pipeline balances deterministic precision with broad language coverage:
+
+### Supported Extensions
+
+AST parsing and symbol extraction support modern TypeScript and JavaScript source extensions:
+
+- TypeScript: `.ts`, `.tsx`, `.mts` (ES module TypeScript), `.cts` (CommonJS TypeScript).
+- JavaScript: `.js`, `.jsx`, `.mjs`, `.cjs`.
+
+### Call-Edge Resolution Boundaries
+
+Call expression resolution maps caller nodes to target symbols deterministically:
+
+1. **Direct Calls:** Unambiguous local functions and imported named symbols resolve with `confidence: 1.0`.
+2. **Namespace Imports:** Qualified calls such as `import * as api from './client'; api.fetchData()` resolve using the declared namespace alias and the target module's exported symbols.
+3. **Receiver Calls:** Member invocations with explicit `this.` inside classes resolve to methods defined in the same class scope.
+4. **Dynamic & Higher-Order Calls:** Dynamic expressions (`obj[fn]()`, computed property access, callbacks, reflection, and `eval`) are not resolved to symbol edges to prevent speculative or false associations.
+5. **Ambiguous Method Names:** When identical method names appear across multiple classes or scopes without qualified receivers, bare calls are intentionally left unlinked to preserve precision.
+
+### Safe Degradation & Fault Isolation
+
+- **File-Level Fault Isolation:** An unreadable, locked, or syntactically malformed file is caught at the file boundary, recorded as `FAILED`, and does not crash the indexing pipeline.
+- **Snapshot Completeness:** Any extraction that encounters partial syntax errors or file failures results in a `PARTIAL` snapshot status. A `PARTIAL` snapshot is never promoted to active `COMPLETE` status unless explicitly opted into.
+- **Ambiguous Symbol Queries:** Graph traversal queries targeting ambiguous symbol names do not arbitrarily choose a candidate with `LIMIT 1`; they traverse the canonical match, return `ambiguousCandidates`, and emit explicit disambiguation warnings.

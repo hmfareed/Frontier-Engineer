@@ -14,6 +14,7 @@ import {
   isAstExtractablePath,
   type ExtractionResult,
 } from "../extractor/index.ts";
+import { ExtractionCache } from "./extraction-cache.ts";
 import { ArchitectureAnalyzer } from "../architecture/architecture-analyzer.ts";
 import { FreshnessEvaluator } from "../query/freshness-evaluator.ts";
 import type { FreshnessAssessment } from "../query/types.ts";
@@ -59,6 +60,8 @@ export interface IndexExecutionReport {
     decisionsDetected: number;
     testAssociationsDetected: number;
     circularDependenciesDetected: number;
+    reusedExtractionsCount?: number;
+    reextractedFilesCount?: number;
   };
   lifecycleEvaluation: MemoryLifecycleSummary | null;
   durationMs: number;
@@ -202,6 +205,32 @@ export class IndexPipeline {
         signal: options.signal,
       });
 
+      const extractorVersion = options.extractorVersion ?? DEFAULT_PIPELINE_VERSION;
+      const extractionCache = new ExtractionCache(resolvedRoot);
+
+      // Check for previous active snapshot files if incremental
+      const isIncremental = options.incremental === true && previousActiveScanId !== null;
+      let prevFilesByPath = new Map<string, string | null>();
+      if (isIncremental) {
+        try {
+          const prevRows = db
+            .prepare(
+              "SELECT normalized_path AS normalizedPath, content_hash AS contentHash FROM files WHERE scan_id = ? AND repository_id = ?",
+            )
+            .all(previousActiveScanId, repo.id) as {
+            normalizedPath: string;
+            contentHash: string | null;
+          }[];
+          prevFilesByPath = new Map(prevRows.map((r) => [r.normalizedPath, r.contentHash]));
+        } catch {
+          // If query fails, proceed without reuse
+        }
+      }
+
+      let reusedExtractionCount = 0;
+      let reextractedCount = 0;
+      let failedExtractionCount = 0;
+
       // Extract symbols for eligible source files (polyglot-safe)
       const extractions = new Map<string, ExtractionResult>();
       for (const file of inventory.files) {
@@ -216,19 +245,72 @@ export class IndexPipeline {
         }
 
         if (isAstExtractablePath(file.canonicalPath)) {
-          const fullPath = path.join(resolvedRoot, file.canonicalPath);
-          const content = fs.readFileSync(fullPath, "utf8");
-          const extResult = await extractFileSymbols(file.canonicalPath, content, {
-            workspaceRoot: resolvedRoot,
-            cancellationToken: options.signal
-              ? {
-                  get isCancellationRequested() {
-                    return Boolean(options.signal?.aborted);
+          if (options.signal?.aborted) {
+            throw new Error("OPERATION_CANCELLED");
+          }
+
+          // True Incremental Reuse Check:
+          // If incremental, file existed in previous active snapshot, content hash is identical,
+          // and cached extraction exists with matching extractorVersion: reuse safely!
+          const canReuse =
+            isIncremental &&
+            file.contentHash !== null &&
+            prevFilesByPath.has(file.canonicalPath) &&
+            prevFilesByPath.get(file.canonicalPath) === file.contentHash;
+
+          let cachedResult: ExtractionResult | null = null;
+          if (canReuse) {
+            cachedResult = extractionCache.get(file.contentHash!, extractorVersion);
+          }
+
+          if (cachedResult) {
+            extractions.set(file.canonicalPath, {
+              ...cachedResult,
+              canonicalPath: file.canonicalPath,
+            });
+            reusedExtractionCount++;
+          } else {
+            // Per-file read and extraction failure isolation
+            try {
+              const fullPath = path.join(resolvedRoot, file.canonicalPath);
+              const content = fs.readFileSync(fullPath, "utf8");
+              const extResult = await extractFileSymbols(file.canonicalPath, content, {
+                workspaceRoot: resolvedRoot,
+                cancellationToken: options.signal
+                  ? {
+                      get isCancellationRequested() {
+                        return Boolean(options.signal?.aborted);
+                      },
+                    }
+                  : undefined,
+              });
+              extractions.set(file.canonicalPath, extResult);
+              if (file.contentHash && extResult.status !== "FAILED") {
+                extractionCache.set(file.contentHash, extractorVersion, extResult);
+              }
+              reextractedCount++;
+            } catch (err: unknown) {
+              if (options.signal?.aborted) {
+                throw err;
+              }
+              const errorMessage = err instanceof Error ? err.message : String(err);
+              extractions.set(file.canonicalPath, {
+                canonicalPath: file.canonicalPath,
+                symbols: [],
+                imports: [],
+                exports: [],
+                callExpressions: [],
+                status: "FAILED",
+                diagnostics: [
+                  {
+                    severity: "error",
+                    message: `Failed to read or extract '${file.canonicalPath}': ${errorMessage}`,
                   },
-                }
-              : undefined,
-          });
-          extractions.set(file.canonicalPath, extResult);
+                ],
+              });
+              failedExtractionCount++;
+            }
+          }
         } else {
           // Non-TS/JS source file (e.g., Python, Go, Rust, Java): record clean file-level extraction
           extractions.set(file.canonicalPath, {
@@ -242,6 +324,9 @@ export class IndexPipeline {
           });
         }
       }
+
+      // Persist extraction cache for future incremental refreshes
+      extractionCache.save();
 
       const snapResult = await sm.persistSnapshot({
         repositoryIdentity: repo.identity,
@@ -352,10 +437,17 @@ export class IndexPipeline {
           decisionsDetected,
           testAssociationsDetected,
           circularDependenciesDetected,
+          reusedExtractionsCount: reusedExtractionCount,
+          reextractedFilesCount: reextractedCount,
         },
         lifecycleEvaluation,
         durationMs: Date.now() - startTime,
-        diagnostics: snapResult.diagnostics,
+        diagnostics: isIncremental
+          ? [
+              ...snapResult.diagnostics,
+              `Incremental refresh: re-extracted ${reextractedCount} changed/added file(s), safely reused ${reusedExtractionCount} unchanged file(s).`,
+            ]
+          : snapResult.diagnostics,
       };
     } finally {
       await sm.close();

@@ -117,6 +117,7 @@ export class SnapshotWriter {
       let importsIndexedCount = 0;
       let exportsIndexedCount = 0;
       let filesFailedCount = 0;
+      let filesPartialCount = 0;
 
       for (const [canonicalPath, extraction] of input.extractions.entries()) {
         const fileId = pathToId.get(canonicalPath);
@@ -133,6 +134,13 @@ export class SnapshotWriter {
             `EXTRACTION_FAILED: Extraction failed for '${canonicalPath}' (${extraction.diagnostics[0]?.message ?? "unknown error"}).`,
           );
           continue;
+        }
+
+        if (extraction.status === "PARTIAL") {
+          filesPartialCount++;
+          diagnostics.push(
+            `EXTRACTION_PARTIAL: Extraction had syntax errors or partial recovery for '${canonicalPath}' (${extraction.diagnostics[0]?.message ?? "syntax recovery"}).`,
+          );
         }
 
         filteredExtractions.set(canonicalPath, extraction);
@@ -219,7 +227,9 @@ export class SnapshotWriter {
 
       // 7. Complete Scan Record
       const finalStatus: ScanRunStatus =
-        input.inventory.scanStatus === "COMPLETE" && filesFailedCount === 0
+        input.inventory.scanStatus === "COMPLETE" &&
+        filesFailedCount === 0 &&
+        filesPartialCount === 0
           ? "COMPLETE"
           : "PARTIAL";
 

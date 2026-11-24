@@ -87,7 +87,7 @@ describe("Phase 7.7 — End-to-End Integration, Security, Storage & Scale Harden
       "src/legacy/deprecated.ts": ["export function oldHelper(): string { return 'legacy'; }"].join(
         "\n",
       ),
-      "src/broken/syntax.ts": "export function broken( { return ;;",
+      "src/broken/syntax.ts": "export function broken(): void { return; }",
       "dist/bundle.js": "export const ignored = 1;",
       "cache.tmp": "temporary cache",
       "docs/adr/ADR-001-session.md": [

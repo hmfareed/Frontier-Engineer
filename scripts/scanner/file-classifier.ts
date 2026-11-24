@@ -5,6 +5,8 @@ import { evaluateSensitivePath } from "./sensitive-filter.ts";
 const SOURCE_EXTENSIONS = new Set([
   ".ts",
   ".tsx",
+  ".mts",
+  ".cts",
   ".js",
   ".jsx",
   ".mjs",

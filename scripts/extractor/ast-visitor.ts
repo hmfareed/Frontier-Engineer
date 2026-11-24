@@ -346,6 +346,7 @@ export function visitSourceFile(
         const isTypeOnly = Boolean(node.importClause?.isTypeOnly);
         const importedSymbols: ImportedSymbol[] = [];
         let isWildcard = false;
+        let namespaceAlias: string | undefined;
 
         if (node.importClause) {
           // Default import
@@ -361,6 +362,7 @@ export function visitSourceFile(
           if (bindings) {
             if (bindings.kind === parser.SyntaxKind.NamespaceImport) {
               isWildcard = true;
+              namespaceAlias = bindings.name?.text;
             } else if (bindings.kind === parser.SyntaxKind.NamedImports && bindings.elements) {
               for (const el of bindings.elements) {
                 const name = el.propertyName?.text || el.name.text;
@@ -379,6 +381,7 @@ export function visitSourceFile(
           specifier,
           resolvedPath: null,
           importedSymbols: isWildcard ? "*" : importedSymbols,
+          namespaceAlias,
           isTypeOnly,
           isDynamic: false,
           evidenceClassification: "syntactic_ast",
@@ -441,10 +444,16 @@ export function visitSourceFile(
         }
       }
 
-      const calleeName =
-        node.expression?.text ||
-        node.expression?.name?.text ||
-        (node.expression?.kind === parser.SyntaxKind.ImportKeyword ? "import" : "");
+      let calleeName = "";
+      if (node.expression?.kind === parser.SyntaxKind.ImportKeyword) {
+        calleeName = "import";
+      } else if (node.expression) {
+        try {
+          calleeName = node.expression.getText(sourceFile).trim();
+        } catch {
+          calleeName = node.expression.text || node.expression.name?.text || "";
+        }
+      }
 
       if (calleeName) {
         callExpressions.push({
