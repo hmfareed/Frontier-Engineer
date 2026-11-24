@@ -393,6 +393,17 @@ export interface CreateMemoryInput {
   lastSeenScanId?: number | null;
 }
 
+export interface UpdateMemoryInput {
+  repositoryId: number;
+  memoryId: number;
+  newTitle?: string;
+  newContent?: string;
+  newConfidence?: number;
+  newConfidenceTier?: MemoryConfidenceTier;
+  changeReason: string;
+  sourceScanId?: number | null;
+}
+
 export interface TransitionLifecycleInput {
   repositoryId: number;
   memoryId: number;

@@ -17,6 +17,14 @@ import { pathToFileURL } from "node:url";
 import { ConnectionManager } from "../storage/connection-manager.ts";
 import { MemoryStore } from "../storage/repositories/memory-store.ts";
 import { MemoryLifecycleEvaluator } from "../memory/memory-lifecycle-evaluator.ts";
+import {
+  MemoryAuthoringEngine,
+  VALID_CATEGORIES,
+  VALID_CONFIDENCE_TIERS,
+} from "../memory/memory-authoring.ts";
+import { AdrIngestEngine } from "../memory/adr-ingest.ts";
+import { MemoryProjector } from "../memory/memory-projector.ts";
+import { MemoryDriftDetector } from "../memory/memory-drift.ts";
 import { ArchitectureQueryEngine } from "../query/query-engine.ts";
 import { QueryGrammar } from "../query/query-grammar.ts";
 import { QueryFormatter } from "../query/query-formatter.ts";
@@ -117,6 +125,19 @@ export async function runCli(argv: string[]): Promise<number> {
   let sortOrderOpt: TelemetrySortOrder | undefined;
   let pageOpt: number | undefined;
   let pageSizeOpt: number | undefined;
+
+  // Memory authoring options (Phase 8.2)
+  let titleOpt: string | undefined;
+  let contentOpt: string | undefined;
+  let categoryOpt: string | undefined;
+  let keyOpt: string | undefined;
+  let confidenceOpt: number | undefined;
+  let confidenceTierOpt: string | undefined;
+  let reasonOpt: string | undefined;
+  let replacementOpt: string | undefined;
+  let outputDirOpt: string | undefined;
+  let dryRunOpt = false;
+  let fixOpt = false;
 
   // Manual argument parsing without external dependencies
   const positional: string[] = [];
@@ -561,6 +582,85 @@ export async function runCli(argv: string[]): Promise<number> {
       targetCategoriesOpt = splitList(raw);
     } else if (arg.startsWith("--target-categories=")) {
       targetCategoriesOpt = splitList(arg.slice("--target-categories=".length));
+    } else if (arg === "--title") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      titleOpt = raw;
+    } else if (arg.startsWith("--title=")) {
+      titleOpt = arg.slice("--title=".length);
+    } else if (arg === "--content") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      contentOpt = raw;
+    } else if (arg.startsWith("--content=")) {
+      contentOpt = arg.slice("--content=".length);
+    } else if (arg === "--category") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      categoryOpt = raw.trim();
+    } else if (arg.startsWith("--category=")) {
+      categoryOpt = arg.slice("--category=".length).trim();
+    } else if (arg === "--key") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      keyOpt = raw.trim();
+    } else if (arg.startsWith("--key=")) {
+      keyOpt = arg.slice("--key=".length).trim();
+    } else if (arg === "--confidence") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      const num = Number(raw.trim());
+      if (isNaN(num) || num < 0 || num > 1) {
+        outputError(
+          "Invalid --confidence option: must be a number between 0.0 and 1.0.",
+          2,
+          format,
+        );
+        return 2;
+      }
+      confidenceOpt = num;
+    } else if (arg.startsWith("--confidence=")) {
+      const num = Number(arg.slice("--confidence=".length).trim());
+      if (isNaN(num) || num < 0 || num > 1) {
+        outputError(
+          "Invalid --confidence option: must be a number between 0.0 and 1.0.",
+          2,
+          format,
+        );
+        return 2;
+      }
+      confidenceOpt = num;
+    } else if (arg === "--tier" || arg === "--confidence-tier") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      confidenceTierOpt = raw.trim().toUpperCase();
+    } else if (arg.startsWith("--tier=") || arg.startsWith("--confidence-tier=")) {
+      const val = arg.includes("--tier=")
+        ? arg.slice("--tier=".length)
+        : arg.slice("--confidence-tier=".length);
+      confidenceTierOpt = val.trim().toUpperCase();
+    } else if (arg === "--reason") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      reasonOpt = raw.trim();
+    } else if (arg.startsWith("--reason=")) {
+      reasonOpt = arg.slice("--reason=".length).trim();
+    } else if (arg === "--replacement") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      replacementOpt = raw.trim();
+    } else if (arg.startsWith("--replacement=")) {
+      replacementOpt = arg.slice("--replacement=".length).trim();
+    } else if (arg === "--output-dir") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      outputDirOpt = raw.trim();
+    } else if (arg.startsWith("--output-dir=")) {
+      outputDirOpt = arg.slice("--output-dir=".length).trim();
+    } else if (arg === "--dry-run") {
+      dryRunOpt = true;
+    } else if (arg === "--fix" || arg === "--reconcile") {
+      fixOpt = true;
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       return 0;
@@ -1593,17 +1693,264 @@ export async function runCli(argv: string[]): Promise<number> {
 
       case "memory": {
         if (!target) {
-          outputError("Missing required argument: <memory_key_or_id>", 2, format);
+          outputError("Missing required argument: <action_or_memory_key_or_id>", 2, format);
           return 2;
         }
+
         const db = connectionManager.getDatabase();
+        const action = positional[1]?.toLowerCase();
+
+        if (action === "record") {
+          if (!titleOpt) {
+            outputError("Missing required option for 'record': --title <title>", 2, format);
+            return 2;
+          }
+          if (!contentOpt) {
+            outputError("Missing required option for 'record': --content <content>", 2, format);
+            return 2;
+          }
+          if (!categoryOpt) {
+            outputError("Missing required option for 'record': --category <category>", 2, format);
+            return 2;
+          }
+
+          const authoring = new MemoryAuthoringEngine(db);
+          try {
+            const res = authoring.recordMemory({
+              repositoryId: repo.id,
+              category: categoryOpt as any,
+              title: titleOpt,
+              content: contentOpt,
+              key: keyOpt,
+              confidence: confidenceOpt,
+              confidenceTier: confidenceTierOpt as any,
+              scanId: scanId ?? repo.activeScanId,
+            });
+
+            if (format === "json") {
+              process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+            } else {
+              const lines = [
+                `Frontier Engineer — Engineering Memory Recorded`,
+                `  ID:       #${res.memory.id}`,
+                `  Key:      ${res.memory.memoryKey}`,
+                `  Category: ${res.memory.category}`,
+                `  Title:    ${res.memory.title}`,
+                `  Status:   ${res.memory.status} (v${res.memory.version})`,
+              ];
+              if (res.warning) {
+                lines.push(`  Warning:  ${res.warning}`);
+              }
+              process.stdout.write(lines.join("\n") + "\n");
+            }
+            return 0;
+          } catch (err) {
+            outputError(err instanceof Error ? err.message : String(err), 1, format);
+            return 1;
+          }
+        }
+
+        if (action === "supersede") {
+          const targetKeyOrId = positional[2] ?? keyOpt;
+          const replacementKeyOrId = replacementOpt ?? positional[3];
+
+          if (!targetKeyOrId) {
+            outputError(
+              "Missing target memory: frontier memory supersede <target> <replacement> --reason <reason>",
+              2,
+              format,
+            );
+            return 2;
+          }
+          if (!replacementKeyOrId) {
+            outputError(
+              "Missing replacement memory: frontier memory supersede <target> <replacement> --reason <reason>",
+              2,
+              format,
+            );
+            return 2;
+          }
+          if (!reasonOpt) {
+            outputError("Missing required option for 'supersede': --reason <reason>", 2, format);
+            return 2;
+          }
+
+          const authoring = new MemoryAuthoringEngine(db);
+          try {
+            const res = authoring.supersedeMemory({
+              repositoryId: repo.id,
+              targetIdOrKey: targetKeyOrId,
+              replacementIdOrKey: replacementKeyOrId,
+              reason: reasonOpt,
+              sourceScanId: scanId ?? repo.activeScanId,
+            });
+
+            if (format === "json") {
+              process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+            } else {
+              const lines = [
+                `Frontier Engineer — Memory Superseded`,
+                `  Target:       #${res.targetMemory.id} (${res.targetMemory.memoryKey}) -> SUPERSEDED (v${res.currentVersion})`,
+                `  Replacement:  #${res.replacementMemory.id} (${res.replacementMemory.memoryKey})`,
+                `  Reason:       ${res.changeReason}`,
+              ];
+              process.stdout.write(lines.join("\n") + "\n");
+            }
+            return 0;
+          } catch (err) {
+            outputError(err instanceof Error ? err.message : String(err), 1, format);
+            return 1;
+          }
+        }
+
+        if (action === "archive") {
+          const targetKeyOrId = positional[2] ?? keyOpt;
+          if (!targetKeyOrId) {
+            outputError(
+              "Missing target memory: frontier memory archive <target> --reason <reason>",
+              2,
+              format,
+            );
+            return 2;
+          }
+          if (!reasonOpt) {
+            outputError("Missing required option for 'archive': --reason <reason>", 2, format);
+            return 2;
+          }
+
+          const authoring = new MemoryAuthoringEngine(db);
+          try {
+            const res = authoring.archiveMemory({
+              repositoryId: repo.id,
+              targetIdOrKey: targetKeyOrId,
+              reason: reasonOpt,
+              sourceScanId: scanId ?? repo.activeScanId,
+            });
+
+            if (format === "json") {
+              process.stdout.write(JSON.stringify(res, null, 2) + "\n");
+            } else {
+              const lines = [
+                `Frontier Engineer — Memory Archived`,
+                `  Memory:  #${res.memory.id} (${res.memory.memoryKey}) -> ARCHIVED (v${res.currentVersion})`,
+                `  Reason:  ${res.changeReason}`,
+              ];
+              process.stdout.write(lines.join("\n") + "\n");
+            }
+            return 0;
+          } catch (err) {
+            outputError(err instanceof Error ? err.message : String(err), 1, format);
+            return 1;
+          }
+        }
+
+        if (action === "ingest-adr") {
+          const pathOrGlob = positional[2];
+          const ingestEngine = new AdrIngestEngine(db);
+          const report = ingestEngine.ingest(repo.id, workspaceRoot, {
+            pathOrGlob,
+            dryRun: dryRunOpt,
+            scanId: scanId ?? repo.activeScanId,
+          });
+
+          if (format === "json") {
+            process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+          } else {
+            const lines = [
+              `Frontier Engineer — ADR Ingestion Report${report.dryRun ? " (DRY RUN)" : ""}`,
+              `  Scanned:    ${report.totalScanned} files`,
+              `  Created:    ${report.created.length}`,
+              `  Updated:    ${report.updated.length}`,
+              `  Unchanged:  ${report.unchanged.length}`,
+            ];
+            for (const c of report.created) {
+              lines.push(`    + Created:   ${c.key} (${c.file})`);
+            }
+            for (const u of report.updated) {
+              lines.push(
+                `    ~ Updated:   ${u.key} v${u.previousVersion} -> v${u.currentVersion} (${u.file})`,
+              );
+            }
+            if (report.unresolvedSupersessions.length > 0) {
+              lines.push(`  Unresolved Supersessions (${report.unresolvedSupersessions.length}):`);
+              for (const un of report.unresolvedSupersessions) {
+                lines.push(`    ! ${un.sourceAdr} -> ${un.targetRef}: ${un.reason}`);
+              }
+            }
+            if (report.errors.length > 0) {
+              lines.push(`  Errors (${report.errors.length}):`);
+              for (const e of report.errors) {
+                lines.push(`    x ${e.file}: ${e.error}`);
+              }
+            }
+            process.stdout.write(lines.join("\n") + "\n");
+          }
+          return report.success ? 0 : 1;
+        }
+
+        if (action === "project-markdown") {
+          const projector = new MemoryProjector(db);
+          const report = projector.project(repo.id, workspaceRoot, {
+            key: keyOpt,
+            category: categoryOpt as any,
+            outputDir: outputDirOpt,
+            dryRun: dryRunOpt,
+          });
+
+          if (format === "json") {
+            process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+          } else {
+            const lines = [
+              `Frontier Engineer — Memory Markdown Projection${report.dryRun ? " (DRY RUN)" : ""}`,
+              `  Output Dir: ${report.outputDirectory}`,
+              `  Projected:  ${report.totalProjected} memories`,
+            ];
+            for (const f of report.files) {
+              lines.push(`    * [${f.status}] ${f.filePath}`);
+            }
+            if (report.errors.length > 0) {
+              lines.push(`  Errors (${report.errors.length}):`);
+              for (const e of report.errors) {
+                lines.push(`    x ${e.key}: ${e.error}`);
+              }
+            }
+            process.stdout.write(lines.join("\n") + "\n");
+          }
+          return report.success ? 0 : 1;
+        }
+
+        if (action === "drift") {
+          const detector = new MemoryDriftDetector(db);
+          const report = detector.detect(repo.id, workspaceRoot, {
+            memoriesDir: outputDirOpt,
+            reconcile: fixOpt,
+            dryRun: dryRunOpt,
+          });
+
+          if (format === "json") {
+            process.stdout.write(JSON.stringify(report, null, 2) + "\n");
+          } else {
+            const lines = [
+              `Frontier Engineer — Memory Drift Report`,
+              `  Repository: #${report.repositoryId} (${repo.identity})`,
+              `  Findings:   ${report.totalFindings} (critical: ${report.summary.critical}, warnings: ${report.summary.warnings}, info: ${report.summary.info})`,
+            ];
+            for (const f of report.findings) {
+              lines.push(`    [${f.severity}] ${f.code}: ${f.description}`);
+            }
+            process.stdout.write(lines.join("\n") + "\n");
+          }
+          return report.hasDrift ? 1 : 0;
+        }
+
+        const memoryKeyOrId = positional[1]?.trim() ?? target;
         const memStore = new MemoryStore(db);
-        const memory = /^\d+$/.test(target)
-          ? memStore.getMemory(repo.id, parseInt(target, 10))
-          : memStore.getMemoryByKey(repo.id, target);
+        const memory = /^\d+$/.test(memoryKeyOrId)
+          ? memStore.getMemory(repo.id, parseInt(memoryKeyOrId, 10))
+          : memStore.getMemoryByKey(repo.id, memoryKeyOrId);
         if (!memory) {
           outputError(
-            `Engineering memory '${target}' not found in repository ${repo.id}.`,
+            `Engineering memory '${memoryKeyOrId}' not found in repository ${repo.id}.`,
             4,
             format,
           );
@@ -2013,6 +2360,12 @@ Commands:
   debt <base-id> <target-id>      Analyze engineering debt (introduced, worsened, persisting, resolved)
   memories                        List durable engineering memories (use --scan-id for lifecycle validation)
   memory <key-or-id>              Inspect a single memory, its version history, evidence, and relationships
+  memory record                   Record a new active engineering memory (--title, --content, --category)
+  memory supersede <target> <rep> Supersede a memory with an active replacement (--reason)
+  memory archive <target>         Archive an active memory (--reason)
+  memory ingest-adr [path]        Explicitly ingest ADR Markdown documents into SQLite
+  memory project-markdown         Deterministically project SQLite memories to Markdown files
+  memory drift                    Detect drift between ADRs, SQLite memories, and projections
 
   # Agent Retrieval & Orchestration Commands (3)
   retrieve                        Retrieve role-aware, budgeted, evidence-backed task context for an agent
@@ -2079,6 +2432,17 @@ Options:
   --sort-order <asc|desc>    Sort direction (default: asc)
   --page <n>                 Page number for paginated results (1-based, default: 1)
   --page-size <n>            Results per page (1-1000, default: 50)
+  --title "<text>"           Title for memory record operation
+  --content "<text>"         Content for memory record operation
+  --category <category>      Memory category (engineering_convention, architectural_decision, etc.)
+  --key <key>                Custom deterministic key (auto-generated if omitted)
+  --confidence <0.0-1.0>     Memory confidence score
+  --tier <CONFIRMED|INFERRED|CANDIDATE> Memory confidence tier
+  --reason "<text>"          Reason for superseding or archiving a memory
+  --replacement <key-or-id>  Replacement memory identifier for supersession
+  --output-dir <path>        Custom output directory for Markdown projections
+  --dry-run                  Preview operations without modifying disk or database state
+  --fix, --reconcile         Apply safe drift reconciliation
   --help, -h                 Display this help message
 
 Exit codes:

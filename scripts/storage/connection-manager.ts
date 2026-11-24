@@ -26,6 +26,8 @@ export interface ConnectionManagerOptions {
   overrideDisplayName?: string;
   allowSharedIdentity?: boolean;
   allowProjectReplacement?: boolean;
+  skipMigrations?: boolean;
+  allowProductionMigration?: boolean;
 }
 
 export class RepositoryIdentityConflictError extends Error {
@@ -169,8 +171,22 @@ export class ConnectionManager {
       throw new Error(`Corrupt database detected at ${this.dbPath}: ${integrity.message}`);
     }
 
-    // Run database migrations
-    runMigrations(this.db.rawDb);
+    // Check if targeting the protected production database of Frontier-Engineer
+    const projectRoot = path.resolve(import.meta.dirname, "../..");
+    const isProtectedProductionDb =
+      !this.inMemory &&
+      (path.resolve(this.workspaceRoot).toLowerCase() === projectRoot.toLowerCase() ||
+        Boolean(process.env.FRONTIER_PROTECT_PRODUCTION_DB));
+
+    // Run database migrations on temporary/isolated databases, or if production migration is explicitly allowed
+    if (
+      !mergedOptions.skipMigrations &&
+      (!isProtectedProductionDb ||
+        mergedOptions.allowProductionMigration ||
+        Boolean(process.env.FRONTIER_ALLOW_PRODUCTION_MIGRATION))
+    ) {
+      runMigrations(this.db.rawDb);
+    }
 
     // Verify and synchronize repository identity
     this.repositoryRecord = this.resolveAndSyncRepository(mergedOptions);

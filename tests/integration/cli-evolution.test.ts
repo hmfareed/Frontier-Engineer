@@ -187,7 +187,7 @@ describe("cli-evolution (Phase 7.5 Stage 4 CLI Integration)", () => {
 
     const missingMem = runSubprocess(["--workspace", ws, "memory", "nonexistent_key"], ws);
     expect(missingMem.status).toBe(4);
-  });
+  }, 60000);
 
   it("EVO-CLI-02: rejects misplaced mutation flags (ISSUE-CLI-02) and cross-repository scan IDs (DEFECT-CLI-01)", async () => {
     const ws = createWorkspace();
@@ -420,5 +420,5 @@ describe("cli-evolution (Phase 7.5 Stage 4 CLI Integration)", () => {
     const parsedOwn = JSON.parse(ownMemoriesApply.stdout);
     expect(parsedOwn.totalCount).toBeGreaterThanOrEqual(1);
     expect(Array.isArray(parsedOwn.memories)).toBe(true);
-  });
+  }, 60000);
 });

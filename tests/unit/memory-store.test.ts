@@ -487,50 +487,87 @@ describe("memory-store (Atomic Lifecycle & Historical Consistency)", () => {
     expect(checkA1.status).toBe("SUPERSEDED");
     expect(checkA1.supersededById).toBe(memB.id);
 
-    // 4. Attempt to supersede B (pointing to C) via transitionLifecycle -> MUST FAIL
-    expect(() => {
-      store.transitionLifecycle({
-        repositoryId: repoId,
-        memoryId: memB.id,
-        targetStatus: "SUPERSEDED",
-        supersededById: memC.id,
-        changeReason: "Attempting to supersede replacement B",
-      });
-    }).toThrow(
-      /cannot transition memory \d+ to SUPERSEDED because it is currently an active replacement for superseded memories/,
-    );
+    // 4. Supersede B (pointing to C) via transitionLifecycle -> MUST SUCCEED (Option B multi-generation supersession)
+    const supersededB = store.transitionLifecycle({
+      repositoryId: repoId,
+      memoryId: memB.id,
+      targetStatus: "SUPERSEDED",
+      supersededById: memC.id,
+      changeReason: "Option B: Migrating replacement B to successor C",
+    });
 
-    // Verify B's status, version, and versions count remain unchanged
-    const checkBAfterSupersedeAttempt = store.getMemory(repoId, memB.id)!;
-    expect(checkBAfterSupersedeAttempt.status).toBe("ACTIVE");
-    expect(checkBAfterSupersedeAttempt.version).toBe(1);
-    expect(store.getMemoryVersions(memB.id)).toHaveLength(0);
+    expect(supersededB.status).toBe("SUPERSEDED");
+    expect(supersededB.supersededById).toBe(memC.id);
+    expect(supersededB.version).toBe(2);
+    expect(store.getMemoryVersions(memB.id)).toHaveLength(1);
 
-    // Verify existing supersession reference on A remains intact
+    // Verify existing supersession reference on A remains intact (A -> B -> C)
     const checkA2 = store.getMemory(repoId, memA.id)!;
     expect(checkA2.status).toBe("SUPERSEDED");
     expect(checkA2.supersededById).toBe(memB.id);
 
-    // 5. Verify B can still transition to an allowed non-terminal status (STALE and back to ACTIVE)
-    const staleB = store.transitionLifecycle({
-      repositoryId: repoId,
-      memoryId: memB.id,
-      targetStatus: "STALE",
-      changeReason: "Valid non-terminal transition to STALE",
-    });
-    expect(staleB.status).toBe("STALE");
-    expect(staleB.version).toBe(2);
-    expect(store.getMemoryVersions(memB.id)).toHaveLength(1);
+    // 5. Attempting to create a cycle (e.g. C -> A or C -> B) must be rejected
+    expect(() => {
+      store.transitionLifecycle({
+        repositoryId: repoId,
+        memoryId: memC.id,
+        targetStatus: "SUPERSEDED",
+        supersededById: memA.id,
+        changeReason: "Attempting cycle C -> A",
+      });
+    }).toThrow(/Illegal supersession/);
 
-    const reactivatedB = store.transitionLifecycle({
+    expect(() => {
+      store.transitionLifecycle({
+        repositoryId: repoId,
+        memoryId: memC.id,
+        targetStatus: "SUPERSEDED",
+        supersededById: memB.id,
+        changeReason: "Attempting cycle C -> B",
+      });
+    }).toThrow(/Illegal supersession/);
+  });
+
+  it("13. updates active memory content and records historical version via updateMemory", () => {
+    const mem = store.createMemory({
       repositoryId: repoId,
-      memoryId: memB.id,
-      targetStatus: "ACTIVE",
-      changeReason: "Valid non-terminal reactivation to ACTIVE",
+      memoryKey: "upd_mem_test",
+      category: "engineering_convention",
+      title: "Initial Title",
+      content: "Initial Content",
     });
-    expect(reactivatedB.status).toBe("ACTIVE");
-    expect(reactivatedB.version).toBe(3);
-    expect(store.getMemoryVersions(memB.id)).toHaveLength(2);
+
+    expect(mem.version).toBe(1);
+
+    const updated = store.updateMemory({
+      repositoryId: repoId,
+      memoryId: mem.id,
+      newTitle: "Updated Title",
+      newContent: "Updated Content",
+      changeReason: "Refined convention details",
+    });
+
+    expect(updated.version).toBe(2);
+    expect(updated.title).toBe("Updated Title");
+    expect(updated.content).toBe("Updated Content");
+
+    const versions = store.getMemoryVersions(mem.id);
+    expect(versions).toHaveLength(1);
+    expect(versions[0].version).toBe(1);
+    expect(versions[0].title).toBe("Initial Title");
+    expect(versions[0].content).toBe("Initial Content");
+    expect(versions[0].changeReason).toBe("Refined convention details");
+
+    // No-op update returns current without version bump
+    const noop = store.updateMemory({
+      repositoryId: repoId,
+      memoryId: mem.id,
+      newTitle: "Updated Title",
+      newContent: "Updated Content",
+      changeReason: "No change",
+    });
+    expect(noop.version).toBe(2);
+    expect(store.getMemoryVersions(mem.id)).toHaveLength(1);
   });
 
   it("13. enforces repository isolation on two-argument getMemoryVersions(repositoryId, memoryId)", () => {
