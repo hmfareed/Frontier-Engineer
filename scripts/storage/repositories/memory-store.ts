@@ -13,6 +13,7 @@ import type {
   MemoryEvidenceRecord,
   MemoryRelationshipRecord,
   CreateMemoryInput,
+  UpdateMemoryInput,
   CreateMemoryEvidenceInput,
   CreateMemoryRelationshipInput,
   TransitionLifecycleInput,
@@ -265,15 +266,32 @@ export class MemoryStore {
             `Replacement memory ${params.supersededById} not found in repository ${params.repositoryId}`,
           );
         }
+        if (replacement.repositoryId !== current.repositoryId) {
+          throw new Error(
+            `Illegal supersession: replacement memory must belong to repository ${params.repositoryId}`,
+          );
+        }
         if (replacement.status === "SUPERSEDED" || replacement.status === "ARCHIVED") {
           throw new Error(
             `Illegal supersession: replacement memory cannot be in ${replacement.status} status`,
           );
         }
+
+        // Cycle detection: ensure current.id does not appear in the replacement's supersession chain
+        let walkId: number | null = params.supersededById;
+        const visited = new Set<number>([current.id]);
+        while (walkId !== null) {
+          if (visited.has(walkId)) {
+            throw new Error("Illegal supersession: cycle detected in supersession chain");
+          }
+          visited.add(walkId);
+          const nextMem = this.getMemory(params.repositoryId, walkId);
+          walkId = nextMem?.supersededById ?? null;
+        }
       }
 
-      // Replacement lifecycle protection: a memory referenced by SUPERSEDED memories cannot become SUPERSEDED or ARCHIVED
-      if (params.targetStatus === "SUPERSEDED" || params.targetStatus === "ARCHIVED") {
+      // Replacement lifecycle protection: a memory referenced by SUPERSEDED memories cannot become ARCHIVED
+      if (params.targetStatus === "ARCHIVED") {
         const row = this.db
           .prepare(
             `SELECT COUNT(*) AS count FROM engineering_memories
@@ -283,7 +301,7 @@ export class MemoryStore {
 
         if (row && row.count > 0) {
           throw new Error(
-            `Illegal status transition: cannot transition memory ${current.id} to ${params.targetStatus} because it is currently an active replacement for superseded memories`,
+            `Illegal status transition: cannot transition memory ${current.id} to ARCHIVED because it is currently an active replacement for superseded memories`,
           );
         }
       }
@@ -372,6 +390,104 @@ export class MemoryStore {
           )
           .run(params.repositoryId, supersededById, current.id, now);
       }
+
+      const updated = this.getMemory(params.repositoryId, current.id);
+      if (!updated) {
+        throw new Error(`Failed to retrieve updated memory ${current.id}`);
+      }
+      return updated;
+    });
+  }
+
+  /**
+   * Updates an active or non-terminal memory's title, content, or confidence.
+   * Atomically snapshots the prior state into memory_versions and increments version.
+   * Terminal memories (SUPERSEDED or ARCHIVED) cannot be updated.
+   */
+  public updateMemory(params: UpdateMemoryInput): EngineeringMemoryRecord {
+    return this.runAtomic(() => {
+      const current = this.getMemory(params.repositoryId, params.memoryId);
+      if (!current) {
+        throw new Error(
+          `Engineering memory ${params.memoryId} not found in repository ${params.repositoryId}`,
+        );
+      }
+
+      if (current.status === "SUPERSEDED" || current.status === "ARCHIVED") {
+        throw new Error(
+          `Cannot update memory ${current.id}: memories in terminal status ${current.status} are immutable`,
+        );
+      }
+
+      const newTitle = params.newTitle ?? current.title;
+      const newContent = params.newContent ?? current.content;
+      const newConfidence = params.newConfidence ?? current.confidence;
+      const newConfidenceTier = params.newConfidenceTier ?? current.confidenceTier;
+
+      // No-op check
+      if (
+        newTitle === current.title &&
+        newContent === current.content &&
+        newConfidence === current.confidence &&
+        newConfidenceTier === current.confidenceTier
+      ) {
+        return current;
+      }
+
+      if (!params.changeReason || params.changeReason.trim().length === 0) {
+        throw new Error("Updating an engineering memory requires a non-empty changeReason");
+      }
+
+      const now = new Date().toISOString();
+      const prevHash = sha256(current.content);
+      const nextHash = sha256(newContent);
+      const sourceScanId: number | null = params.sourceScanId ?? current.lastSeenScanId ?? null;
+
+      // Record immutable historical snapshot of prior state
+      this.db
+        .prepare(
+          `INSERT INTO memory_versions (
+            repository_id, memory_id, version, title, content, status,
+            previous_content_hash, new_content_hash, change_reason, source_scan_id, created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          params.repositoryId,
+          current.id,
+          current.version,
+          current.title,
+          current.content,
+          current.status,
+          prevHash,
+          nextHash,
+          params.changeReason,
+          sourceScanId,
+          now,
+        );
+
+      const nextVersion = current.version + 1;
+
+      this.db
+        .prepare(
+          `UPDATE engineering_memories SET
+            version = ?,
+            title = ?,
+            content = ?,
+            confidence = ?,
+            confidence_tier = ?,
+            updated_at = ?
+          WHERE repository_id = ? AND id = ?`,
+        )
+        .run(
+          nextVersion,
+          newTitle,
+          newContent,
+          newConfidence,
+          newConfidenceTier,
+          now,
+          params.repositoryId,
+          current.id,
+        );
 
       const updated = this.getMemory(params.repositoryId, current.id);
       if (!updated) {
