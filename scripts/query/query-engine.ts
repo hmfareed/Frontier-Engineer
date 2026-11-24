@@ -866,6 +866,8 @@ export class ArchitectureQueryEngine {
     const { scanId } = this.resolveScanId(options.scanId, options.allowPartial === true);
     const depth = Math.min(Math.max(options.depth ?? 3, 1), 10);
     const limit = options.limit ?? 50;
+    const warnings: string[] = [];
+    let ambiguousCandidates: string[] | undefined;
 
     // Resolve target to node identity
     const cleanTarget = target.trim().replace(/\\/g, "/").replace(/^\.\//, "");
@@ -883,7 +885,7 @@ export class ArchitectureQueryEngine {
         // Check component
         const compNode = this.db
           .prepare(
-            "SELECT node_identity FROM graph_nodes WHERE scan_id = ? AND (node_identity = ? OR name = ?)",
+            "SELECT node_identity FROM graph_nodes WHERE scan_id = ? AND category = 'component' AND (node_identity = ? OR name = ?)",
           )
           .get(scanId, `comp:${cleanTarget}`, cleanTarget) as { node_identity: string } | undefined;
         if (compNode) {
@@ -898,15 +900,21 @@ export class ArchitectureQueryEngine {
           if (pkgNode) {
             nodeIdentity = pkgNode.node_identity;
           } else {
-            // Check symbol by name or identity
-            const symNode = this.db
+            // Check symbol by name or identity (eliminate arbitrary LIMIT 1 selection)
+            const matchingSyms = this.db
               .prepare(
-                "SELECT node_identity FROM graph_nodes WHERE scan_id = ? AND category = 'symbol' AND (node_identity = ? OR name = ?) ORDER BY id ASC LIMIT 1",
+                "SELECT node_identity FROM graph_nodes WHERE scan_id = ? AND category = 'symbol' AND (node_identity = ? OR name = ?) ORDER BY id ASC",
               )
-              .get(scanId, `sym:${cleanTarget}`, cleanTarget) as
-              { node_identity: string } | undefined;
-            if (symNode) {
-              nodeIdentity = symNode.node_identity;
+              .all(scanId, `sym:${cleanTarget}`, cleanTarget) as { node_identity: string }[];
+
+            if (matchingSyms.length > 0) {
+              nodeIdentity = matchingSyms[0].node_identity;
+              if (matchingSyms.length > 1) {
+                ambiguousCandidates = matchingSyms.map((s) => s.node_identity);
+                warnings.push(
+                  `Ambiguous symbol '${cleanTarget}' matches ${matchingSyms.length} symbol nodes (${matchingSyms.map((s) => s.node_identity).join(", ")}). Traversing '${nodeIdentity}'. Pass qualified identity 'sym:<id>' to target a specific symbol.`,
+                );
+              }
             } else {
               // Assume file:cleanTarget
               nodeIdentity = `file:${cleanTarget}`;
@@ -921,13 +929,21 @@ export class ArchitectureQueryEngine {
         ? await this.graphEngine.getDependencies(
             this.repository.id,
             nodeIdentity,
-            { maxDepth: depth },
+            {
+              maxDepth: depth,
+              relationshipTypes: options.relationshipTypes,
+              targetCategories: options.targetCategories,
+            },
             scanId,
           )
         : await this.graphEngine.getDependents(
             this.repository.id,
             nodeIdentity,
-            { maxDepth: depth },
+            {
+              maxDepth: depth,
+              relationshipTypes: options.relationshipTypes,
+              targetCategories: options.targetCategories,
+            },
             scanId,
           );
 
@@ -1000,6 +1016,7 @@ export class ArchitectureQueryEngine {
       unresolvedImports,
       hasCycles: traversal.hasCycles,
       depthReached: traversal.depthReached,
+      ambiguousCandidates,
     };
 
     const evidence: QueryEvidence[] = boundedDirect.map((d) => ({
@@ -1017,6 +1034,7 @@ export class ArchitectureQueryEngine {
       evidence,
       confidence: direct.every((d) => d.status === "CONFIRMED") ? "CONFIRMED" : "INFERRED",
       isMixedConfidence: !direct.every((d) => d.status === "CONFIRMED"),
+      warnings,
       limits: {
         depthLimit: depth,
         resultLimit: limit,

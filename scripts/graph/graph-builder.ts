@@ -135,6 +135,12 @@ export class GraphBuilder {
       const symNameMap = new Map<string, string>();
       fileSymbolNodeByName.set(filePath, symNameMap);
 
+      // Track bare names count to prevent ambiguous method linking
+      const seenBareNames = new Map<string, number>();
+      for (const sym of extraction.symbols) {
+        seenBareNames.set(sym.name, (seenBareNames.get(sym.name) ?? 0) + 1);
+      }
+
       // A. Symbols
       for (const sym of extraction.symbols) {
         const symNodeId = `sym:${sym.symbolId}`;
@@ -153,12 +159,16 @@ export class GraphBuilder {
 
         if (sym.parentScope) {
           symNameMap.set(`${sym.parentScope}.${sym.name}`, symNodeId);
-          if (!symNameMap.has(sym.name)) {
+          // Only map bare name if it is unique in this file to avoid ambiguous method linking
+          if (seenBareNames.get(sym.name) === 1) {
             symNameMap.set(sym.name, symNodeId);
           }
         } else {
-          if (sym.isExported || !symNameMap.has(sym.name)) {
-            symNameMap.set(sym.name, symNodeId);
+          // Top-level symbol
+          if (seenBareNames.get(sym.name) === 1 || sym.isExported) {
+            if (!symNameMap.has(sym.name) || sym.isExported) {
+              symNameMap.set(sym.name, symNodeId);
+            }
           }
         }
 
@@ -319,14 +329,24 @@ export class GraphBuilder {
         const targetSymMap = fileSymbolNodeByName.get(imp.resolvedPath);
         if (!targetSymMap) continue;
 
+        if (imp.namespaceAlias) {
+          importedReceiverToTargetPath.set(imp.namespaceAlias, imp.resolvedPath);
+        }
+
         if (imp.importedSymbols !== "*") {
           for (const spec of imp.importedSymbols) {
             const localAlias = spec.alias ?? spec.name;
-            const resolvedSymNode = targetSymMap.get(spec.name);
-            if (resolvedSymNode) {
-              importedSymbolToTargetNode.set(localAlias, resolvedSymNode);
+            if (spec.name === "*") {
+              if (spec.alias) {
+                importedReceiverToTargetPath.set(spec.alias, imp.resolvedPath);
+              }
+            } else {
+              const resolvedSymNode = targetSymMap.get(spec.name);
+              if (resolvedSymNode) {
+                importedSymbolToTargetNode.set(localAlias, resolvedSymNode);
+              }
+              importedReceiverToTargetPath.set(localAlias, imp.resolvedPath);
             }
-            importedReceiverToTargetPath.set(localAlias, imp.resolvedPath);
           }
         }
       }

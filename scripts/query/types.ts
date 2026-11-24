@@ -3,7 +3,14 @@
  * Stable public DTOs, query options, and evidence contracts for repository intelligence.
  */
 
-import type { FileRecord, SymbolRecord, ImportRecord, ExportRecord } from "../storage/types.ts";
+import type {
+  FileRecord,
+  SymbolRecord,
+  ImportRecord,
+  ExportRecord,
+  GraphRelationshipType,
+  GraphNodeCategory,
+} from "../storage/types.ts";
 import type {
   ArchitectureComponent,
   EntrypointFinding,
@@ -83,6 +90,8 @@ export interface QueryOptions {
 export interface TraversalQueryOptions extends QueryOptions {
   depth?: number;
   includeTransitive?: boolean;
+  relationshipTypes?: GraphRelationshipType[];
+  targetCategories?: GraphNodeCategory[];
 }
 
 export interface RepositoryStatusData {
@@ -204,6 +213,7 @@ export interface DependencyTraversalData {
   unresolvedImports: string[];
   hasCycles: boolean;
   depthReached: number;
+  ambiguousCandidates?: string[];
 }
 
 export interface CycleData {

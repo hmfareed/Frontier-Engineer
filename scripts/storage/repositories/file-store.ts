@@ -46,18 +46,19 @@ export class FileStore {
             : f.inspectionStatus;
 
         // Detect language from extension
-        const language = this.detectLanguage(f.fileExtension);
+        const rawExt = f.fileExtension ?? (f as any).extension ?? "";
+        const language = this.detectLanguage(rawExt);
 
         const res = insertStmt.run(
           repositoryId,
           scanId,
           f.canonicalPath,
           f.canonicalPath,
-          f.fileExtension,
+          rawExt,
           language,
           f.classification,
           f.sizeBytes,
-          f.mtimeMs,
+          f.mtimeMs ?? (f as any).modifiedAt ?? Date.now(),
           contentHash,
           sensitivityStatus,
           indexStatus,
@@ -116,9 +117,12 @@ export class FileStore {
   }
 
   private detectLanguage(ext: string): string {
+    if (!ext) return "plaintext";
     const map: Record<string, string> = {
       ".ts": "typescript",
       ".tsx": "typescriptreact",
+      ".mts": "typescript",
+      ".cts": "typescript",
       ".js": "javascript",
       ".jsx": "javascriptreact",
       ".mjs": "javascript",

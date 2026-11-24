@@ -84,6 +84,8 @@ export async function runCli(argv: string[]): Promise<number> {
   let includeHistorical = false;
   let baseScanIdOpt: number | undefined;
   let targetScanIdOpt: number | undefined;
+  let relationshipTypesOpt: string[] | undefined;
+  let targetCategoriesOpt: string[] | undefined;
   const targetFiles: string[] = [];
   const targetSymbols: string[] = [];
   const targetComponents: string[] = [];
@@ -544,6 +546,21 @@ export async function runCli(argv: string[]): Promise<number> {
         );
         return 2;
       }
+    } else if (arg === "--relationship-types" || arg === "--edge-types") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      relationshipTypesOpt = splitList(raw);
+    } else if (arg.startsWith("--relationship-types=") || arg.startsWith("--edge-types=")) {
+      const val = arg.includes("--relationship-types=")
+        ? arg.slice("--relationship-types=".length)
+        : arg.slice("--edge-types=".length);
+      relationshipTypesOpt = splitList(val);
+    } else if (arg === "--target-categories") {
+      const raw = nextVal(arg);
+      if (raw === null) return 2;
+      targetCategoriesOpt = splitList(raw);
+    } else if (arg.startsWith("--target-categories=")) {
+      targetCategoriesOpt = splitList(arg.slice("--target-categories=".length));
     } else if (arg === "--help" || arg === "-h") {
       printHelp();
       return 0;
@@ -806,6 +823,80 @@ export async function runCli(argv: string[]): Promise<number> {
 
   if (REQUIRES_TARGET[subcommand] && !target) {
     outputError(`Missing required argument: ${REQUIRES_TARGET[subcommand]}`, 2, format);
+    return 2;
+  }
+
+  // Enforce zero positional arguments for commands that do not take a target
+  const NO_POSITIONAL_COMMANDS = new Set([
+    "scan",
+    "refresh",
+    "status",
+    "overview",
+    "components",
+    "entrypoints",
+    "cycles",
+    "freshness",
+  ]);
+
+  if (NO_POSITIONAL_COMMANDS.has(subcommand) && positional.length > 1) {
+    outputError(
+      `Unexpected positional argument(s) for '${subcommand}': '${positional.slice(1).join(" ")}'. '${subcommand}' takes no positional arguments.`,
+      2,
+      format,
+    );
+    return 2;
+  }
+
+  if (subcommand === "scan" || subcommand === "refresh") {
+    if (scanId !== undefined) {
+      outputError(`--scan-id is not supported for '${subcommand}'.`, 2, format);
+      return 2;
+    }
+    if (limit !== undefined) {
+      outputError(`--limit is not supported for '${subcommand}'.`, 2, format);
+      return 2;
+    }
+    if (depth !== undefined) {
+      outputError(`--depth is not supported for '${subcommand}'.`, 2, format);
+      return 2;
+    }
+    if (relationshipTypesOpt !== undefined || targetCategoriesOpt !== undefined) {
+      outputError(
+        `--relationship-types and --target-categories are only supported for graph traversal commands.`,
+        2,
+        format,
+      );
+      return 2;
+    }
+  }
+
+  if (
+    depth !== undefined &&
+    subcommand !== "dependencies" &&
+    subcommand !== "deps" &&
+    subcommand !== "dependents" &&
+    subcommand !== "retrieve" &&
+    subcommand !== "prepare-handoff"
+  ) {
+    outputError(
+      `--depth is only supported for dependency traversal and retrieval subcommands (got '${subcommand}').`,
+      2,
+      format,
+    );
+    return 2;
+  }
+
+  if (
+    (relationshipTypesOpt !== undefined || targetCategoriesOpt !== undefined) &&
+    subcommand !== "dependencies" &&
+    subcommand !== "deps" &&
+    subcommand !== "dependents"
+  ) {
+    outputError(
+      `--relationship-types and --target-categories are only supported for 'dependencies' and 'dependents' subcommands (got '${subcommand}').`,
+      2,
+      format,
+    );
     return 2;
   }
 
@@ -1264,6 +1355,8 @@ export async function runCli(argv: string[]): Promise<number> {
       depth,
       scanId,
       allowPartial: allowPartialOpt === true,
+      relationshipTypes: relationshipTypesOpt as any,
+      targetCategories: targetCategoriesOpt as any,
     };
 
     let result: any;

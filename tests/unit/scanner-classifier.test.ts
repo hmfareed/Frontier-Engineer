@@ -4,6 +4,8 @@ import { classifyFile } from "../../scripts/scanner/file-classifier.ts";
 describe("file-classifier", () => {
   it("classifies programming language source files as 'source'", () => {
     expect(classifyFile("src/index.ts")).toBe("source");
+    expect(classifyFile("src/esm.mts")).toBe("source");
+    expect(classifyFile("src/cjs.cts")).toBe("source");
     expect(classifyFile("src/App.tsx")).toBe("source");
     expect(classifyFile("lib/utils.js")).toBe("source");
     expect(classifyFile("components/Button.jsx")).toBe("source");

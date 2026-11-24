@@ -73,6 +73,7 @@ export interface ImportRecord {
   specifier: string;
   resolvedPath: string | null;
   importedSymbols: ImportedSymbol[] | "*";
+  namespaceAlias?: string;
   isTypeOnly: boolean;
   isDynamic: boolean;
   evidenceClassification: EvidenceClassification;

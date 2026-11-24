@@ -73,3 +73,27 @@ interface ArchitectureFinding {
   relevantLineRanges?: [number, number][];
 }
 ```
+
+## Structural Extraction Boundaries & Limitations
+
+To ensure architectural findings remain reproducible, reliable, and free of false inferences, the extraction subsystem operates under clear boundaries:
+
+### File Extension Matrix
+
+The scanner and extractor maintain a unified extension matrix across all indexing phases:
+
+- Modern TypeScript: `.ts`, `.tsx`, `.mts`, `.cts`.
+- Standard JavaScript: `.js`, `.jsx`, `.mjs`, `.cjs`.
+- Architectural Artifacts: `package.json`, `tsconfig.json`, ADR markdown documents (`docs/adr/*.md`).
+
+### Heuristic AST Limitations
+
+1. **Resolution Determinism:** Identifiers are resolved through static AST traversal only. Runtime duck-typing, polymorphic dispatch, and monkey-patching are never inferred.
+2. **Namespace Import Aliasing:** Module namespace imports (`import * as X from './module'`) are mapped to the target file's exports table.
+3. **Ambiguity Rejection:** When two or more classes define methods of the same name (e.g. `execute()`), unqualified calls are omitted from graph linking rather than guessing.
+
+### Safe Degradation & Resilience
+
+1. **Resilient Indexing:** Per-file I/O or syntax recovery errors record `status: "PARTIAL"` or `status: "FAILED"` without aborting the overall indexing run.
+2. **Snapshot Integrity:** A scan containing unrecovered errors cannot promote to active status and displace an existing valid snapshot without `--allow-partial`.
+3. **Disambiguation Warnings:** Queries against ambiguous symbols present all matching candidates and prompt the operator to supply a fully-qualified node identity (`sym:<id>`).
