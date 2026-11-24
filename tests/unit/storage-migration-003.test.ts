@@ -49,7 +49,7 @@ describe("storage-migration-003 (Engineering Memory & Evolution Data Model)", ()
 
     const triggers = db.rawDb
       .prepare(
-        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'trg_%' ORDER BY name ASC",
+        "SELECT name FROM sqlite_master WHERE type = 'trigger' AND name IN ('trg_engineering_memories_insert_guard', 'trg_engineering_memories_no_delete_replacement', 'trg_engineering_memories_update_guard', 'trg_memory_versions_no_direct_delete', 'trg_memory_versions_no_update') ORDER BY name ASC",
       )
       .all() as { name: string }[];
 

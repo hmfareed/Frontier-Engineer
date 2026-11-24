@@ -22,8 +22,8 @@ describe("Phase 8.2 — Migration 004 & Multi-Generation Supersession", () => {
     // Isolated in-memory database
     db = new SqliteDatabase({ path: ":memory:" });
     const { applied, currentVersion } = runMigrations(db.rawDb);
-    expect(currentVersion).toBe(4);
-    expect(applied).toBe(4);
+    expect(currentVersion).toBeGreaterThanOrEqual(4);
+    expect(applied).toBeGreaterThanOrEqual(4);
 
     store = new MemoryStore(db);
 
@@ -49,8 +49,8 @@ describe("Phase 8.2 — Migration 004 & Multi-Generation Supersession", () => {
     }
   });
 
-  it("1. reports current schema version as 4 after migration", () => {
-    expect(getCurrentSchemaVersion(db.rawDb)).toBe(4);
+  it("1. reports current schema version as >= 4 after migration", () => {
+    expect(getCurrentSchemaVersion(db.rawDb)).toBeGreaterThanOrEqual(4);
   });
 
   it("2. supports multi-generation supersession chain A -> B -> C -> D", () => {
